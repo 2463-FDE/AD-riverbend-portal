@@ -1,0 +1,23 @@
+{
+  "description": "Contractor's retrieval gold-set for the records helper. Looked great in the demo.",
+  "cases": [
+    {
+      "query": "show me Maria Gonzalez's allergies",
+      "expected_patient_id": 1042,
+      "expected_answer": "No known allergies on file.",
+      "cites_records": [1]
+    },
+    {
+      "query": "what medications is James O'Brien on?",
+      "expected_patient_id": 1043,
+      "expected_answer": "None on file.",
+      "cites_records": [4]
+    },
+    {
+      "query": "latest lab results for M. Gonzalez",
+      "expected_patient_id": 1588,
+      "expected_answer": "CBC panel within normal limits (2026-05-19).",
+      "cites_records": [3]
+    }
+  ]
+}

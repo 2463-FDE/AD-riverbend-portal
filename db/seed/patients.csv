@@ -1,0 +1,6 @@
+id,name,dob,ssn,address,created_via,created_at
+1042,Maria Gonzalez,1971-03-02,412-55-9981,"118 Maple Ave, Beverly Hills, CA 90210",self_service,2026-06-22 09:14:06
+1043,James O'Brien,1958-11-19,501-22-7734,"42 Birch St, Riverbend, CA 90211",self_service,2026-06-22 09:17:27
+1330,Maria Gonzales,1971-03-02,412-55-9981,"118 Maple Ave, Beverly Hills, CA 90210",self_service,2026-06-22 09:21:45
+1588,M. Gonzalez,1971-02-03,412-55-9981,"118 Maple Ave, Beverly Hills, CA 90210",self_service,2026-06-22 09:55:06
+1601,Aisha Khan,1989-07-14,623-41-2210,"900 Cedar Rd, Riverbend, CA 90211",front_desk,2026-06-23 10:02:00

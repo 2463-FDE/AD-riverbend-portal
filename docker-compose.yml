@@ -1,0 +1,155 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ${DB_NAME:-riverbend}
+      POSTGRES_USER: ${DB_USER:-riverbend_app}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./db/seed/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-riverbend_app} -d ${DB_NAME:-riverbend}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  gateway:
+    build: ./services/gateway
+    env_file: .env
+    environment:
+      INTAKE_URL: http://intake-service:8071
+      ELIGIBILITY_URL: http://eligibility-service:8072
+      RECORDS_URL: http://records-service:8073
+      SCHEDULING_URL: http://scheduling-service:8074
+      AI_URL: http://ai-orchestrator:8077
+    ports:
+      - "8070:8070"
+    depends_on:
+      - intake-service
+      - records-service
+      - scheduling-service
+      - ai-orchestrator
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8070/healthz')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  intake-service:
+    build: ./services/intake-service
+    env_file: .env
+    environment:
+      ELIGIBILITY_URL: http://eligibility-service:8072
+    ports:
+      - "8071:8071"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8071/healthz')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  eligibility-service:
+    build: ./services/eligibility-service
+    env_file: .env
+    ports:
+      - "8072:8072"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8072/healthz')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  records-service:
+    build: ./services/records-service
+    env_file: .env
+    ports:
+      - "8073:8073"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8073/healthz')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  scheduling-service:
+    build: ./services/scheduling-service
+    env_file: .env
+    ports:
+      - "8074:8074"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8074/healthz')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  interop-service:
+    build: ./services/interop-service
+    env_file: .env
+    ports:
+      - "8075:8075"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8075/healthz')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  roi-service:
+    build: ./services/roi-service
+    env_file: .env
+    ports:
+      - "8076:8076"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8076/healthz')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  ai-orchestrator:
+    build: ./services/ai-orchestrator
+    env_file: .env
+    environment:
+      USE_STUB_BEDROCK: "true"
+    ports:
+      - "8077:8077"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8077/healthz')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  frontend:
+    build: ./frontend
+    environment:
+      GATEWAY_URL: http://gateway:8070
+    ports:
+      - "3070:3070"
+    depends_on:
+      - gateway
+
+volumes:
+  pgdata:
