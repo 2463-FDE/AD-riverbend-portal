@@ -1,0 +1,5 @@
+# intake-service configuration
+self_service_intake: true
+match_key: none          # no de-dup on name / dob / ssn at create time
+require_consent: true
+eligibility_check: inline
