@@ -1,0 +1,4 @@
+# auth / session configuration
+SESSION_TIMEOUT: never      # tokens issued at login do not expire
+mfa_enabled: false          # password login only
+password_min_length: 6
