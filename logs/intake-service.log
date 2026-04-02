@@ -1,0 +1,14 @@
+2026-06-22 09:11:48 INFO  intake-service started on :8071 env=development
+2026-06-22 09:11:48 INFO  connected to postgres host=postgres db=riverbend
+2026-06-22 09:13:55 INFO  GET /healthz 200 0.4ms
+2026-06-22 09:14:02 INFO  POST /intake body={"name":"Maria Gonzalez","dob":"1971-03-02","ssn":"412-55-9981","insurance_id":"BCBS4471","address":"118 Maple Ave, Beverly Hills, CA 90210","phone":"310-555-0147"}
+2026-06-22 09:14:06 INFO  POST /intake 201 patient_id=1042 elapsed=4.31s
+2026-06-22 09:17:23 INFO  POST /intake body={"name":"James O'Brien","dob":"1958-11-19","ssn":"501-22-7734","insurance_id":"AETNA9920","address":"42 Birch St, Riverbend, CA 90211","phone":"310-555-0199"}
+2026-06-22 09:17:27 INFO  POST /intake 201 patient_id=1043 elapsed=4.58s
+2026-06-22 09:21:40 INFO  POST /intake body={"name":"Maria Gonzales","dob":"1971-03-02","ssn":"412-55-9981","insurance_id":"BCBS4471","address":"118 Maple Ave, Beverly Hills, CA 90210","phone":"310-555-0147"}
+2026-06-22 09:21:45 INFO  POST /intake 201 patient_id=1330 elapsed=4.42s
+2026-06-22 09:31:04 INFO  POST /appointments body={"patient_id":1042,"slot_id":88231} 201 elapsed=2.11s
+2026-06-22 09:31:04 INFO  POST /appointments body={"patient_id":1588,"slot_id":88231} 201 elapsed=0.38s
+2026-06-22 09:42:10 WARN  eligibility call slow elapsed=2.0s payer=acme-clearinghouse
+2026-06-22 09:55:01 INFO  POST /intake body={"name":"M. Gonzalez","dob":"1971-02-03","ssn":"412-55-9981","insurance_id":"BCBS4471","address":"118 Maple Ave, Beverly Hills, CA 90210","phone":"310-555-0147"}
+2026-06-22 09:55:06 INFO  POST /intake 201 patient_id=1588 elapsed=4.95s
