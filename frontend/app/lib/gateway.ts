@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// Server-side base URL for the API gateway. Route handlers run on the server,
-// so this is the only place GATEWAY_URL is read for proxying.
-export const GATEWAY_URL = process.env.GATEWAY_URL || "http://localhost:8070";
+// Server-side base URL for the API gateway. Read at REQUEST time (not as a
+// module-level const) so the container's GATEWAY_URL env is honored at runtime
+// and never constant-folded into the standalone build (which baked localhost).
+export function gatewayUrl(): string {
+  return process.env.GATEWAY_URL || "http://localhost:8070";
+}
 
 // Build headers for an upstream gateway call, forwarding the caller's bearer
 // token. The browser keeps the token in localStorage and attaches it as an
@@ -32,7 +35,7 @@ export async function proxy(
   const method = opts.method ?? "GET";
   const sendJson = opts.json ?? method !== "GET";
   try {
-    const res = await fetch(`${GATEWAY_URL}${path}`, {
+    const res = await fetch(`${gatewayUrl()}${path}`, {
       method,
       headers: gatewayHeaders(req, sendJson),
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
