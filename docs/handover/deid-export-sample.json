@@ -1,7 +1,0 @@
-{
-  "_comment": "Output of contractor's deidentify.py for the analytics export. Name removed; everything else kept.",
-  "rows": [
-    { "zip": "90210", "dob": "1971-03-02", "mrn": "M4471", "device_id": "IPAD-07", "visit_date": "2026-06-14", "diagnosis": "sinusitis" },
-    { "zip": "90211", "dob": "1958-11-19", "mrn": "M5012", "device_id": "IPAD-03", "visit_date": "2026-02-20", "diagnosis": "hearing_eval" }
-  ]
-}
