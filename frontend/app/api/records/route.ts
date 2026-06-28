@@ -1,18 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
-
-const GATEWAY_URL = process.env.GATEWAY_URL || "http://localhost:8070";
+import { NextRequest } from "next/server";
+import { proxy } from "@/app/lib/gateway";
 
 export async function GET(req: NextRequest) {
   const patientId = req.nextUrl.searchParams.get("patient_id") ?? "";
-  try {
-    // No ownership check — whatever id is passed is fetched.
-    const res = await fetch(`${GATEWAY_URL}/patients/${patientId}/records`);
-    const data = await res.json();
-    return NextResponse.json(data);
-  } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "gateway unreachable" },
-      { status: 502 }
-    );
-  }
+  // IDOR (intentional teaching point): the records view loads by a patient id
+  // taken straight from the URL/input. The id is a sequential integer and the
+  // backend performs NO ownership check — whatever id is passed is fetched.
+  return proxy(req, `/patients/${encodeURIComponent(patientId)}/records`);
 }

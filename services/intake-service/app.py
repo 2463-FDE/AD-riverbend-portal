@@ -1,124 +1,154 @@
 """
-intake-service — patient registration + consent capture.
+intake-service — multi-step patient registration + insurance + consent capture.
 
-Writes to Postgres. Front desk and the self-service portal both POST here.
+Both the front desk and the self-service portal POST a full intake payload here.
+We create the patient chart, attach insurance coverage (if supplied), record the
+signed consents, and verify payer eligibility before returning.
+
+Inherited shortcomings (left as-is from the handoff):
+  * D1 — the full request body (PHI: name/dob/ssn/notes) is written to a file
+    log at INFO. See logging_config.py.
+  * D5 — no master patient index / match key: every /intake creates a brand new
+    patients row, so one person forks into several charts (intake.yaml match_key:
+    none).
+  * D4 / RIV-088 — eligibility is verified inline on the request thread with no
+    timeout, so a slow payer makes registration "spin ~4-5s".
+  * Consents are inserted one at a time (a commit per consent).
 """
 import os
 import time
-import logging
+from typing import Any, Optional
 
 import httpx
-from fastapi import FastAPI
-from pydantic import BaseModel
+import yaml
+from fastapi import Depends, FastAPI, HTTPException
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s  %(message)s",
-    handlers=[
-        logging.FileHandler(os.path.join(os.path.dirname(__file__), "..", "..", "logs", "intake-service.log")),
-        logging.StreamHandler(),
-    ],
-)
-log = logging.getLogger("intake-service")
+from config import settings
+from db import get_db
+from logging_config import configure
+from models import Consent, InsuranceCoverage, Patient
+from schemas import Demographics, Insurance, IntakeRequest, IntakeResponse
 
-PAYER_API_URL = os.getenv("PAYER_API_URL", "https://edi.example.com/v1/eligibility")
-PAYER_API_KEY = os.getenv("PAYER_API_KEY", "")
-ELIGIBILITY_URL = os.getenv("ELIGIBILITY_URL", "http://eligibility-service:8072")
+log = configure(settings.service_name)
+app = FastAPI(title="Riverbend intake-service", version="1.3.0")
 
-app = FastAPI(title="Riverbend intake-service")
-
-
-class IntakeRequest(BaseModel):
-    name: str
-    dob: str | None = None
-    ssn: str | None = None
-    insurance_id: str | None = None
-    address: str | None = None
-    phone: str | None = None
-    notes: str | None = None
-
-
-def get_conn():
-    # lazy import so the module loads without a live DB
-    import psycopg2
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST", "postgres"),
-        port=os.getenv("DB_PORT", "5432"),
-        dbname=os.getenv("DB_NAME", "riverbend"),
-        user=os.getenv("DB_USER", "riverbend_app"),
-        password=os.getenv("DB_PASSWORD", ""),
-    )
+INTAKE_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "intake.yaml")
 
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok"}
+    return {"status": "ok", "service": settings.service_name}
 
 
-@app.post("/intake", status_code=201)
-def intake(req: IntakeRequest):
+@app.get("/intake/config")
+def intake_config():
+    """Return the parsed intake.yaml so the front-desk UI can adapt its form."""
+    try:
+        with open(INTAKE_CONFIG_PATH) as f:
+            return yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        log.error("intake config missing at %s", INTAKE_CONFIG_PATH)
+        raise HTTPException(status_code=500, detail="intake config not found")
+    except yaml.YAMLError as e:
+        log.error("intake config parse error: %s", e)
+        raise HTTPException(status_code=500, detail="intake config invalid")
+
+
+@app.post("/intake", response_model=IntakeResponse, status_code=201)
+def create_intake(req: IntakeRequest, db: Session = Depends(get_db)):
     started = time.time()
 
-    # Log the full request so we have a record of every registration.
+    # D1 (flagged, not fixed): persist the entire request body — including PHI —
+    # to the file handler so the front desk has a record of every registration.
     log.info('POST /intake body=%s', req.model_dump_json())
 
-    # Self-service intake creates a new chart every time. No match key on
-    # name / dob / ssn, so the same person can become several patient rows.
-    patient_id = _create_patient(req)
+    # D5 (flagged, not fixed): no MPI / match-key lookup on (name, dob, ssn).
+    # Every intake inserts a brand new chart, even for a returning patient.
+    patient_id = _create_patient(db, req.demographics)
 
-    # Verify insurance before we confirm. This runs inline on the request
-    # thread and blocks until the eligibility service answers.
-    _verify_eligibility(req.insurance_id)
+    if req.insurance is not None:
+        _create_coverage(db, patient_id, req.insurance)
 
-    # Persist consent acknowledgements one at a time.
-    _record_consents(patient_id)
+    # D4 / RIV-088 (flagged, not fixed): eligibility is verified INLINE on this
+    # request thread, synchronously and with NO timeout — so a slow payer blocks
+    # the whole /intake call. The cohort's fix is to make this async / bounded.
+    eligibility = _verify_eligibility(req.insurance)
 
-    elapsed = time.time() - started
+    _record_consents(db, patient_id, req.consents)
+
+    elapsed = round(time.time() - started, 2)
     log.info("POST /intake 201 patient_id=%s elapsed=%.2fs", patient_id, elapsed)
-    return {"patient_id": patient_id, "elapsed_seconds": round(elapsed, 2)}
+    return IntakeResponse(patient_id=patient_id, elapsed_seconds=elapsed, eligibility=eligibility)
 
 
-def _create_patient(req: IntakeRequest) -> int:
+def _create_patient(db: Session, demo: Demographics) -> int:
     try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO patients (name, dob, ssn, address, notes) "
-            "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (req.name, req.dob, req.ssn, req.address, req.notes),
+        patient = Patient(
+            name=demo.name,
+            dob=demo.dob,
+            ssn=demo.ssn,
+            gender=demo.gender,
+            address=demo.address,
+            phone=demo.phone,
+            email=demo.email,
+            notes=demo.notes,
+            created_via=demo.created_via,
         )
-        pid = cur.fetchone()[0]
-        conn.commit()
-        conn.close()
-        return pid
-    except Exception:
-        # DB not up (e.g. local dev without compose) — fall back to a stub id
-        return int(time.time()) % 100000
+        db.add(patient)
+        db.commit()
+        db.refresh(patient)
+        return patient.id
+    except SQLAlchemyError as e:
+        db.rollback()
+        log.error("intake: failed to create patient: %s", e)
+        raise HTTPException(status_code=503, detail="patient store unavailable")
 
 
-def _verify_eligibility(insurance_id: str | None):
-    if not insurance_id:
-        return
+def _create_coverage(db: Session, patient_id: int, ins: Insurance) -> None:
     try:
-        # Synchronous call with no timeout. If the payer is slow, /intake is slow.
-        # Artificial latency stands in for the real clearinghouse round-trip
-        # (front desk reports this as RIV-088 "registration spins ~4-5s").
-        time.sleep(4.2)
-        httpx.get(f"{ELIGIBILITY_URL}/eligibility", params={"insurance_id": insurance_id})
-    except Exception:
-        pass
+        coverage = InsuranceCoverage(
+            patient_id=patient_id,
+            payer_name=ins.payer_name,
+            member_id=ins.member_id,
+            group_number=ins.group_number,
+            plan_type=ins.plan_type,
+        )
+        db.add(coverage)
+        db.commit()
+    except SQLAlchemyError as e:
+        db.rollback()
+        log.error("intake: failed to record coverage for patient %s: %s", patient_id, e)
+        raise HTTPException(status_code=503, detail="coverage store unavailable")
 
 
-def _record_consents(patient_id: int):
-    for kind in ("npp_ack", "treatment_consent"):
+def _record_consents(db: Session, patient_id: int, kinds: list[str]) -> None:
+    # Inefficient by design: one INSERT + COMMIT per consent (a separate
+    # transaction round-trip each) rather than a single batched insert.
+    for kind in kinds:
         try:
-            conn = get_conn()
-            cur = conn.cursor()
-            cur.execute(
-                "INSERT INTO consents (patient_id, kind) VALUES (%s, %s)",
-                (patient_id, kind),
-            )
-            conn.commit()
-            conn.close()
-        except Exception:
-            pass
+            db.add(Consent(patient_id=patient_id, kind=kind))
+            db.commit()
+        except SQLAlchemyError as e:
+            db.rollback()
+            log.error("intake: failed to record consent %s for patient %s: %s", kind, patient_id, e)
+
+
+def _verify_eligibility(ins: Optional[Insurance]) -> Optional[dict[str, Any]]:
+    if ins is None or not ins.member_id:
+        return None
+
+    # RIV-088 / D4: the artificial sleep stands in for the blocking clearinghouse
+    # round-trip the front desk experiences; the httpx call below has NO timeout,
+    # so a hung payer hangs /intake. This BLOCKS the request thread by design.
+    time.sleep(4.2)
+    try:
+        resp = httpx.get(
+            f"{settings.eligibility_url}/eligibility",
+            params={"insurance_id": ins.member_id},
+        )  # no timeout= — synchronous, blocks /intake (RIV-088)
+        return resp.json()
+    except Exception as e:
+        log.error("intake: eligibility check failed: %s", e)
+        return {"active": False, "error": str(e)}

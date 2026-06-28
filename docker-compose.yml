@@ -35,14 +35,23 @@ services:
       ELIGIBILITY_URL: http://eligibility-service:8072
       RECORDS_URL: http://records-service:8073
       SCHEDULING_URL: http://scheduling-service:8074
-      AI_URL: http://ai-orchestrator:8077
+      INTEROP_URL: http://interop-service:8075
+      ROI_URL: http://roi-service:8076
     ports:
       - "8070:8070"
     depends_on:
-      - intake-service
-      - records-service
-      - scheduling-service
-      - ai-orchestrator
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      intake-service:
+        condition: service_started
+      records-service:
+        condition: service_started
+      scheduling-service:
+        condition: service_started
+      roi-service:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8070/healthz')\""]
       interval: 10s
@@ -125,19 +134,6 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8076/healthz')\""]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  ai-orchestrator:
-    build: ./services/ai-orchestrator
-    env_file: .env
-    environment:
-      USE_STUB_BEDROCK: "true"
-    ports:
-      - "8077:8077"
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8077/healthz')\""]
       interval: 10s
       timeout: 3s
       retries: 5

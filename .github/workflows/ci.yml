@@ -31,7 +31,6 @@ jobs:
           - scheduling-service
           - interop-service
           - roi-service
-          - ai-orchestrator
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,11 +42,26 @@ jobs:
         working-directory: services/${{ matrix.service }}
         run: python -c "import app; print('${{ matrix.service }} ok')"
 
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test deps
+        run: pip install -r requirements-dev.txt
+      - name: Run unit tests
+        # NOTE: integration tests (marked @pytest.mark.integration) need a live
+        # Postgres + Redis and are skipped here. Coverage of the security/auth
+        # paths is thin — tracked in RIV-201.
+        run: pytest -m "not integration" -q
+
   # NOTE: no dependency vulnerability scan, no container image scan, and no
   # secret-scanning step. Images are built and pushed straight from main.
   docker-build:
     runs-on: ubuntu-latest
-    needs: [frontend, services]
+    needs: [frontend, services, tests]
     steps:
       - uses: actions/checkout@v4
       - name: Build images

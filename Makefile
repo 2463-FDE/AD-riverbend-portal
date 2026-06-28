@@ -1,4 +1,4 @@
-.PHONY: up down logs build seed psql frontend-dev fmt
+.PHONY: up down logs ps build seed seed-gen psql test frontend-dev config
 
 up:            ## start the whole stack
 	docker compose up -d
@@ -6,18 +6,28 @@ up:            ## start the whole stack
 down:          ## stop the stack
 	docker compose down
 
-build:         ## build all images
-	docker compose build
-
 logs:          ## tail logs
 	docker compose logs -f
+
+ps:            ## service status
+	docker compose ps
+
+build:         ## build all images
+	docker compose build
 
 seed:          ## load schema + demo data (re-runs against a running db)
 	docker compose exec -T postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend} < db/schema.sql
 	docker compose exec -T postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend} < db/seed/seed.sql
 
+seed-gen:      ## regenerate db/seed/seed.sql from the generator (deterministic)
+	python3 db/seed/generate_seed.py > db/seed/seed.sql
+
 psql:          ## open a psql shell
 	docker compose exec postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend}
+
+test:          ## run unit tests (no infra needed)
+	pip install -r requirements-dev.txt >/dev/null
+	pytest -m "not integration" -q
 
 frontend-dev:  ## run the Next.js dev server
 	cd frontend && npm install && npm run dev

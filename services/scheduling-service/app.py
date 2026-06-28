@@ -1,27 +1,144 @@
 """
 scheduling-service — appointment slots (FHIR Appointment / Slot shaped).
+
+Read endpoints use the SQLAlchemy ORM. Booking deliberately still goes through
+the legacy raw-psycopg2 path in book.py to preserve the check-then-insert race.
 """
-from fastapi import FastAPI
-from pydantic import BaseModel
+from typing import Optional
+
+from fastapi import Depends, FastAPI, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from book import book
+from config import settings
+from db import get_db
+from logging_config import configure
+from models import Appointment, Provider, Slot
+from schemas import (
+    AppointmentListResponse,
+    AppointmentOut,
+    BookingRequest,
+    BookingResponse,
+    CancelResponse,
+    SlotListResponse,
+    SlotOut,
+)
+
+log = configure(settings.service_name)
 
 app = FastAPI(title="Riverbend scheduling-service")
 
 
-class BookingRequest(BaseModel):
-    patient_id: int
-    slot_id: int
-
-
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok"}
+    return {"status": "ok", "service": settings.service_name}
 
 
-@app.post("/appointments", status_code=201)
+@app.get("/slots", response_model=SlotListResponse)
+def list_slots(
+    provider_id: Optional[int] = Query(None, gt=0),
+    limit: int = Query(settings.default_page_limit, ge=1, le=settings.max_page_limit),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """List open slots, joined to the provider name. Paginated."""
+    stmt = (
+        select(Slot, Provider.name)
+        .join(Provider, Provider.id == Slot.provider_id, isouter=True)
+        .where(Slot.status == "open")
+    )
+    if provider_id is not None:
+        stmt = stmt.where(Slot.provider_id == provider_id)
+    stmt = stmt.order_by(Slot.start_at).limit(limit).offset(offset)
+
+    try:
+        rows = db.execute(stmt).all()
+    except Exception:
+        log.exception("failed to list slots")
+        raise HTTPException(status_code=503, detail="database unavailable")
+
+    items = []
+    for slot, provider_name in rows:
+        out = SlotOut.model_validate(slot)
+        out.provider = provider_name
+        items.append(out)
+
+    log.info("listed %d open slots (provider_id=%s)", len(items), provider_id)
+    return SlotListResponse(items=items, count=len(items), limit=limit, offset=offset)
+
+
+@app.get("/appointments", response_model=AppointmentListResponse)
+def list_appointments(
+    patient_id: int = Query(..., gt=0),
+    db: Session = Depends(get_db),
+):
+    """List a patient's appointments, most recent first."""
+    stmt = (
+        select(Appointment)
+        .where(Appointment.patient_id == patient_id)
+        .order_by(Appointment.created_at.desc())
+    )
+    try:
+        rows = db.execute(stmt).scalars().all()
+    except Exception:
+        log.exception("failed to list appointments for patient %s", patient_id)
+        raise HTTPException(status_code=503, detail="database unavailable")
+
+    items = [AppointmentOut.model_validate(a) for a in rows]
+    log.info("listed %d appointments for patient %s", len(items), patient_id)
+    return AppointmentListResponse(items=items, count=len(items))
+
+
+@app.post("/appointments", status_code=201, response_model=BookingResponse)
 def create_appointment(req: BookingRequest):
-    appointment_id = book(req.patient_id, req.slot_id)
+    """Book a slot for a patient.
+
+    Delegates to book.py, which performs a read-check-then-insert with no UNIQUE
+    constraint on slot_id and no idempotency key (intentional race — D5).
+    """
+    try:
+        appointment_id = book(
+            req.patient_id,
+            req.slot_id,
+            provider=req.provider,
+            reason=req.reason,
+            location=req.location,
+            scheduled_for=req.scheduled_for,
+        )
+    except Exception:
+        log.exception(
+            "booking failed for patient=%s slot=%s", req.patient_id, req.slot_id
+        )
+        raise HTTPException(status_code=503, detail="database unavailable")
+
     if appointment_id is None:
-        return {"status": "slot_taken"}
-    return {"appointment_id": appointment_id, "status": "confirmed"}
+        log.info("slot %s already taken (patient=%s)", req.slot_id, req.patient_id)
+        return BookingResponse(status="slot_taken")
+
+    log.info(
+        "booked appointment %s (patient=%s slot=%s)",
+        appointment_id,
+        req.patient_id,
+        req.slot_id,
+    )
+    return BookingResponse(appointment_id=appointment_id, status="confirmed")
+
+
+@app.post("/appointments/{appointment_id}/cancel", response_model=CancelResponse)
+def cancel_appointment(appointment_id: int, db: Session = Depends(get_db)):
+    """Cancel an appointment. 404 if it does not exist."""
+    appt = db.get(Appointment, appointment_id)
+    if appt is None:
+        raise HTTPException(status_code=404, detail="appointment not found")
+
+    appt.status = "cancelled"
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        log.exception("failed to cancel appointment %s", appointment_id)
+        raise HTTPException(status_code=503, detail="database unavailable")
+
+    log.info("cancelled appointment %s", appointment_id)
+    return CancelResponse(appointment_id=appointment_id, status="cancelled")

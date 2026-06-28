@@ -1,0 +1,10 @@
+# Test/dev dependencies (superset of what the unit tests import).
+pytest==8.3.4
+redis==5.2.1
+requests==2.32.3
+httpx==0.28.1
+pydantic==2.10.4
+SQLAlchemy==2.0.36
+psycopg2-binary==2.9.10
+fastapi==0.115.6
+PyYAML==6.0.2

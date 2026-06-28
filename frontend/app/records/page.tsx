@@ -1,73 +1,194 @@
 "use client";
 
 import { useState } from "react";
+import Card from "../components/Card";
+import StatusBadge, { statusVariant } from "../components/StatusBadge";
+import { IconRecords, IconLab, IconSearch, IconStethoscope } from "../components/icons";
+import { apiFetch } from "../lib/session";
+import type { EncounterBlock, RecordItem } from "../lib/types";
+import { fmtDate } from "../lib/format";
 
-interface RecordItem {
-  id: number;
-  kind: string;
-  body: string;
-}
-interface EncounterBlock {
-  encounter: { id: number; type: string; provider: string; summary: string };
-  records: RecordItem[];
+function isResult(r: RecordItem): boolean {
+  return Boolean(r.test || r.value !== undefined || r.reference_range);
 }
 
 export default function RecordsPage() {
-  // The records view loads by patient id straight off the URL/input. The id is
-  // a sequential integer and the backend does not check ownership (IDOR — see
-  // docs/handover/portal.har).
+  // The records view loads by a patient id taken straight off the input/URL.
+  // The id is a sequential integer and the backend does NOT check ownership
+  // (IDOR — intentional teaching point; see docs/handover/portal.har). We pass
+  // whatever id is entered straight through to /api/records.
   const [patientId, setPatientId] = useState("1042");
   const [data, setData] = useState<EncounterBlock[] | null>(null);
+  const [selected, setSelected] = useState<EncounterBlock | null>(null);
   const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
 
   async function load() {
-    setStatus("Loading…");
+    setBusy(true);
+    setStatus("");
+    setSelected(null);
     try {
-      const res = await fetch(`/api/records?patient_id=${patientId}`);
+      const res = await apiFetch(`/api/records?patient_id=${encodeURIComponent(patientId)}`);
       const json = await res.json();
-      setData(json.encounters ?? []);
-      setStatus("");
+      const encounters: EncounterBlock[] = json.encounters ?? [];
+      setData(encounters);
+      setSelected(encounters[0] ?? null);
+      if (encounters.length === 0) setStatus("No records found for this patient.");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "error");
+      setStatus(e instanceof Error ? e.message : "Could not load records.");
+      setData([]);
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
-    <div>
-      <h1>My Records</h1>
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        <input
-          value={patientId}
-          onChange={(e) => setPatientId(e.target.value)}
-          style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }}
-        />
-        <button onClick={load} style={{ padding: "8px 16px" }}>
-          Load
-        </button>
+    <div className="rb-stack">
+      <div className="rb-page-head">
+        <h1>Health Records</h1>
+        <p>Look up a patient&apos;s encounters and lab results.</p>
       </div>
-      {status && <p>{status}</p>}
-      {data?.map((block) => (
-        <div
-          key={block.encounter.id}
-          style={{
-            background: "white",
-            padding: 16,
-            borderRadius: 6,
-            marginBottom: 12,
-            border: "1px solid #e0e6ed",
-          }}
-        >
-          <strong>
-            {block.encounter.type} — {block.encounter.provider}
-          </strong>
-          <p>{block.encounter.summary}</p>
-          {block.records.map((r) => (
-            <div key={r.id} style={{ fontSize: 14, color: "#445" }}>
-              [{r.kind}] {r.body}
-            </div>
-          ))}
+
+      <Card>
+        <div className="rb-field" style={{ maxWidth: 360, marginBottom: 0 }}>
+          <label className="rb-field__label" htmlFor="rec-patient">
+            Patient ID
+          </label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              id="rec-patient"
+              className="rb-input"
+              value={patientId}
+              onChange={(e) => setPatientId(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && load()}
+              inputMode="numeric"
+            />
+            <button className="rb-btn rb-btn--primary" onClick={load} disabled={busy} type="button">
+              {busy ? "Loading…" : <><IconSearch width={16} height={16} /> Load</>}
+            </button>
+          </div>
+          <span className="rb-field__hint">Demo patient ID defaults to 1042.</span>
         </div>
-      ))}
+      </Card>
+
+      {status && (
+        <div className="rb-alert rb-alert--info" role="status">
+          {status}
+        </div>
+      )}
+
+      {data && data.length > 0 && (
+        <div className="rb-grid rb-grid--2">
+          {/* Encounter list */}
+          <Card title="Encounters" icon={<IconRecords />}>
+            <div className="rb-list">
+              {data.map((block) => {
+                const active = selected?.encounter.id === block.encounter.id;
+                return (
+                  <button
+                    key={block.encounter.id}
+                    type="button"
+                    className="rb-listrow rb-listrow--clickable"
+                    aria-pressed={active}
+                    style={active ? { borderColor: "var(--rb-primary)" } : undefined}
+                    onClick={() => setSelected(block)}
+                  >
+                    <div className="rb-listrow__main">
+                      <div className="rb-listrow__title">{block.encounter.type}</div>
+                      <div className="rb-listrow__meta">
+                        <span><IconStethoscope width={15} height={15} /> {block.encounter.provider}</span>
+                        {block.encounter.date && <span>{fmtDate(block.encounter.date)}</span>}
+                        <span>{block.records.length} record{block.records.length === 1 ? "" : "s"}</span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </Card>
+
+          {/* Encounter detail */}
+          <Card
+            title={selected ? selected.encounter.type : "Encounter detail"}
+            icon={<IconLab />}
+          >
+            {selected ? (
+              <EncounterDetail block={selected} />
+            ) : (
+              <div className="rb-empty">Select an encounter to view details.</div>
+            )}
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EncounterDetail({ block }: { block: EncounterBlock }) {
+  const results = block.records.filter(isResult);
+  const notes = block.records.filter((r) => !isResult(r));
+
+  return (
+    <div>
+      <div className="rb-listrow__meta" style={{ marginBottom: 6 }}>
+        <span><IconStethoscope width={15} height={15} /> {block.encounter.provider}</span>
+        {block.encounter.date && <span>{fmtDate(block.encounter.date)}</span>}
+      </div>
+      {block.encounter.summary && (
+        <p className="rb-muted">{block.encounter.summary}</p>
+      )}
+
+      {results.length > 0 && (
+        <>
+          <h3 style={{ marginTop: 18 }}>Lab results</h3>
+          <table className="rb-table">
+            <thead>
+              <tr>
+                <th>Test</th>
+                <th>Value</th>
+                <th>Reference range</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.map((r) => {
+                const abnormal = statusVariant(r.status) === "bad";
+                return (
+                  <tr key={r.id}>
+                    <td>{r.test || r.kind}</td>
+                    <td className={`rb-table__num${abnormal ? " rb-table__num--abnormal" : ""}`}>
+                      {r.value ?? "—"}
+                      {r.unit ? ` ${r.unit}` : ""}
+                    </td>
+                    <td className="rb-ref">{r.reference_range ?? "—"}</td>
+                    <td><StatusBadge status={r.status || "normal"} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {notes.length > 0 && (
+        <>
+          <h3 style={{ marginTop: 18 }}>Records &amp; notes</h3>
+          <div className="rb-list">
+            {notes.map((r) => (
+              <div key={r.id} className="rb-listrow" style={{ display: "block" }}>
+                <span className="rb-badge rb-badge--neutral" style={{ marginBottom: 6 }}>
+                  {r.kind}
+                </span>
+                <div>{r.body}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {results.length === 0 && notes.length === 0 && (
+        <div className="rb-empty">No records in this encounter.</div>
+      )}
     </div>
   );
 }

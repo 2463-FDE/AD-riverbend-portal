@@ -1,88 +1,161 @@
 """
-records-service — patient record read façade (FHIR-ish).
+records-service — patient + records read façade (FHIR-ish).
 
-Serves a patient's encounters and records to the portal.
+Serves patient demographics and a patient's encounters/records to the portal.
 """
-import os
+from fastapi import Depends, FastAPI, HTTPException, Query
+from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
-from fastapi import FastAPI, Header
+from config import settings
+from db import get_db
+from logging_config import configure
+from models import Encounter, Patient, Record
+from schemas import (
+    EncounterOut,
+    EncounterWithRecords,
+    PatientChart,
+    PatientDetail,
+    PatientPage,
+    PatientSummary,
+    RecordOut,
+    RecordSearchHit,
+)
+
+log = configure(settings.service_name)
 
 app = FastAPI(title="Riverbend records-service")
 
 
-def get_conn():
-    import psycopg2
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST", "postgres"),
-        port=os.getenv("DB_PORT", "5432"),
-        dbname=os.getenv("DB_NAME", "riverbend"),
-        user=os.getenv("DB_USER", "riverbend_app"),
-        password=os.getenv("DB_PASSWORD", ""),
-    )
-
-
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok"}
+    return {"status": "ok", "service": settings.service_name}
 
 
-@app.get("/patients/{patient_id}/records")
-def get_records(patient_id: int, authorization: str | None = Header(default=None)):
-    """
-    Assemble a patient's full record.
+@app.get("/patients", response_model=PatientPage)
+def list_patients(
+    q: str | None = Query(default=None, description="ILIKE filter on patient name"),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """Paginated patient list. `q` does a case-insensitive name match."""
+    try:
+        base = select(Patient)
+        count_q = select(func.count()).select_from(Patient)
+        if q:
+            pattern = f"%{q}%"
+            base = base.where(Patient.name.ilike(pattern))
+            count_q = count_q.where(Patient.name.ilike(pattern))
 
-    A bearer token is required to reach this endpoint, but we never check that
-    the token's subject actually matches {patient_id}. {patient_id} is the
-    sequential primary key, so any logged-in user can walk 1042, 1043, 1044...
-    and pull anyone's chart.
-    """
-    # (no ownership / authorization check here)
+        total = db.execute(count_q).scalar_one()
+        rows = (
+            db.execute(
+                base.order_by(Patient.id).limit(limit).offset(offset)
+            )
+            .scalars()
+            .all()
+        )
+    except SQLAlchemyError:
+        log.exception("list_patients: database error")
+        raise HTTPException(status_code=503, detail="database unavailable")
 
-    encounters = _list_encounters(patient_id)
-
-    # N+1: one query per encounter to fetch its records.
-    result = []
-    for enc in encounters:
-        recs = _records_for_encounter(enc["id"])
-        result.append({"encounter": enc, "records": recs})
-    return {"patient_id": patient_id, "encounters": result}
-
-
-@app.get("/records/search")
-def search_records(q: str):
-    """Free-text search across records. Full-table scan, no index, no limit."""
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT id, patient_id, kind, body FROM records WHERE body ILIKE %s", (f"%{q}%",))
-    rows = cur.fetchall()
-    conn.close()
-    return [{"id": r[0], "patient_id": r[1], "kind": r[2], "body": r[3]} for r in rows]
-
-
-def _list_encounters(patient_id: int):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT id, encounter_type, provider, summary, allergies, medications "
-        "FROM encounters WHERE patient_id = %s",
-        (patient_id,),
+    return PatientPage(
+        items=[PatientSummary.model_validate(p) for p in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
     )
-    rows = cur.fetchall()
-    conn.close()
-    return [
-        {"id": r[0], "type": r[1], "provider": r[2], "summary": r[3],
-         "allergies": r[4], "medications": r[5]}
-        for r in rows
-    ]
 
 
-def _records_for_encounter(encounter_id: int):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT id, kind, body FROM records WHERE encounter_id = %s",
-        (encounter_id,),
-    )
-    rows = cur.fetchall()
-    conn.close()
-    return [{"id": r[0], "kind": r[1], "body": r[2]} for r in rows]
+@app.get("/patients/{patient_id}", response_model=PatientDetail)
+def get_patient(patient_id: int, db: Session = Depends(get_db)):
+    """Patient demographics, or 404."""
+    try:
+        patient = db.get(Patient, patient_id)
+    except SQLAlchemyError:
+        log.exception("get_patient: database error for patient_id=%s", patient_id)
+        raise HTTPException(status_code=503, detail="database unavailable")
+
+    if patient is None:
+        raise HTTPException(status_code=404, detail="patient not found")
+    return PatientDetail.model_validate(patient)
+
+
+@app.get("/patients/{patient_id}/records", response_model=PatientChart)
+def get_patient_records(patient_id: int, db: Session = Depends(get_db)):
+    """
+    Assemble a patient's full chart: their encounters and, per encounter, its records.
+
+    DEBT D11 (IDOR): patient_id is the sequential integer PK and is served to any
+    caller with no verification that the caller owns / is authorized for it. A
+    logged-in user can walk 1042, 1043, 1044... and pull anyone's chart.
+
+    DEBT D8 (N+1): encounters are fetched first, then we loop and run ONE query per
+    encounter to load that encounter's records (no JOIN, no selectinload).
+    """
+    # no ownership / authorization check
+    try:
+        encounters = (
+            db.execute(
+                select(Encounter)
+                .where(Encounter.patient_id == patient_id)
+                .order_by(Encounter.id)
+            )
+            .scalars()
+            .all()
+        )
+
+        chart: list[EncounterWithRecords] = []
+        # N+1: one extra query per encounter (deliberate — do not collapse to a join)
+        for enc in encounters:
+            recs = (
+                db.execute(
+                    select(Record)
+                    .where(Record.encounter_id == enc.id)
+                    .order_by(Record.id)
+                )
+                .scalars()
+                .all()
+            )
+            chart.append(
+                EncounterWithRecords(
+                    encounter=EncounterOut.model_validate(enc),
+                    records=[RecordOut.model_validate(r) for r in recs],
+                )
+            )
+    except SQLAlchemyError:
+        log.exception(
+            "get_patient_records: database error for patient_id=%s", patient_id
+        )
+        raise HTTPException(status_code=503, detail="database unavailable")
+
+    return PatientChart(patient_id=patient_id, encounters=chart)
+
+
+@app.get("/records/search", response_model=list[RecordSearchHit])
+def search_records(
+    q: str = Query(..., min_length=1, description="free-text query"),
+    db: Session = Depends(get_db),
+):
+    """
+    Free-text search across records.
+
+    DEBT D8: full-table ILIKE scan on records.body with NO supporting index and
+    NO result limit. On a real chart corpus this scans every row every call.
+    """
+    try:
+        # full-table scan on body — no index, no limit (deliberate debt)
+        rows = (
+            db.execute(
+                select(Record).where(Record.body.ilike(f"%{q}%"))
+            )
+            .scalars()
+            .all()
+        )
+    except SQLAlchemyError:
+        log.exception("search_records: database error")
+        raise HTTPException(status_code=503, detail="database unavailable")
+
+    return [RecordSearchHit.model_validate(r) for r in rows]
