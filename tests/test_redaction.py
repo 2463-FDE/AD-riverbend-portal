@@ -99,6 +99,50 @@ def test_copies_have_identical_phi_fields():
     assert ai_redaction.PHI_FIELDS == intake_redaction.PHI_FIELDS
 
 
+# --- PHI smuggled into non-PHI keys (PR #2 adversarial review) --------------
+# The key-based layer only masks known PHI field names. A hostile or malformed
+# client can put PHI in an unconstrained field; the pattern layer must catch it.
+
+
+def test_redact_scrubs_ssn_hidden_in_consents_list():
+    payload = {"consents": ["npp_ack", "I am 123-45-6789"]}
+    out = ai_redaction.redact(payload)
+    assert out["consents"][0] == "npp_ack"
+    assert "123-45-6789" not in out["consents"][1]
+    assert ai_redaction.REDACTED in out["consents"][1]
+
+
+def test_redact_scrubs_phi_in_unknown_scalar_key():
+    payload = {"free_text": "call jane at 555-867-5309 or jane@example.com"}
+    out = ai_redaction.redact(payload)
+    assert "555-867-5309" not in out["free_text"]
+    assert "jane@example.com" not in out["free_text"]
+
+
+def test_both_copies_scrub_phi_in_non_phi_key():
+    payload = {"consents": ["ssn 123-45-6789"]}
+    ai_out = ai_redaction.redact(payload)
+    intake_out = intake_redaction.redact(payload)
+    assert ai_out == intake_out
+    assert "123-45-6789" not in ai_out["consents"][0]
+
+
+def test_safe_log_payload_masks_phi_in_every_field():
+    """End-to-end log-scan: plant PHI in PHI keys, non-PHI keys, and list items;
+    assert none of it survives into the string that reaches the log."""
+    req = intake_schemas.IntakeRequest(
+        demographics=intake_schemas.Demographics(
+            name="Jane Doe", dob="1985-03-12", ssn="123-45-6789"
+        ),
+        insurance=intake_schemas.Insurance(member_id="BCBS4471"),
+        consents=["npp_ack", "contact me at jane@example.com / 555-867-5309"],
+    )
+    logged = ai_redaction.safe_log_payload(req)
+    for phi in ("Jane Doe", "123-45-6789", "BCBS4471", "jane@example.com", "555-867-5309"):
+        assert phi not in logged
+    assert "npp_ack" in logged  # non-PHI consent value survives
+
+
 def test_copies_produce_identical_output():
     assert ai_redaction.redact(SAMPLE) == intake_redaction.redact(SAMPLE)
     assert ai_redaction.safe_log_payload(SAMPLE) == intake_redaction.safe_log_payload(SAMPLE)

@@ -55,13 +55,16 @@ def _status_error(cls, status_code):
 
 
 class _FakeMessages:
-    def __init__(self, count=100, response=None, create_exc=None):
+    def __init__(self, count=100, response=None, create_exc=None, count_exc=None):
         self.count = count
         self.response = response or _response()
         self.create_exc = create_exc
+        self.count_exc = count_exc
         self.create_calls = []
 
     def count_tokens(self, **kwargs):
+        if self.count_exc is not None:
+            raise self.count_exc
         return SimpleNamespace(input_tokens=self.count)
 
     def create(self, **kwargs):
@@ -155,6 +158,62 @@ def test_connection_error_maps_to_unavailable(monkeypatch):
     _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
     with pytest.raises(llm_mod.LLMUnavailable):
         llm_mod.complete("hello")
+
+
+# --- SDK exception mapping: the token-count call ---------------------------
+# count_tokens is an SDK request too; a failure there must map to the same
+# typed errors and must never reach client.messages.create (RIV review, PR #2).
+
+
+def test_count_tokens_auth_error_maps_to_config_error(monkeypatch):
+    exc = _status_error(anthropic.AuthenticationError, 401)
+    fake = _patch_client(monkeypatch, _FakeMessages(count_exc=exc))
+    with pytest.raises(llm_mod.LLMConfigError):
+        llm_mod.complete("hello")
+    assert fake.create_calls == []
+
+
+def test_count_tokens_not_found_maps_to_config_error(monkeypatch):
+    exc = _status_error(anthropic.NotFoundError, 404)
+    fake = _patch_client(monkeypatch, _FakeMessages(count_exc=exc))
+    with pytest.raises(llm_mod.LLMConfigError):
+        llm_mod.complete("hello")
+    assert fake.create_calls == []
+
+
+def test_count_tokens_rate_limit_maps_to_unavailable(monkeypatch):
+    exc = _status_error(anthropic.RateLimitError, 429)
+    fake = _patch_client(monkeypatch, _FakeMessages(count_exc=exc))
+    with pytest.raises(llm_mod.LLMUnavailable):
+        llm_mod.complete("hello")
+    assert fake.create_calls == []
+
+
+def test_count_tokens_status_error_maps_to_unavailable(monkeypatch):
+    exc = _status_error(anthropic.APIStatusError, 503)
+    fake = _patch_client(monkeypatch, _FakeMessages(count_exc=exc))
+    with pytest.raises(llm_mod.LLMUnavailable):
+        llm_mod.complete("hello")
+    assert fake.create_calls == []
+
+
+def test_count_tokens_connection_error_maps_to_unavailable(monkeypatch):
+    exc = anthropic.APIConnectionError(
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    )
+    fake = _patch_client(monkeypatch, _FakeMessages(count_exc=exc))
+    with pytest.raises(llm_mod.LLMUnavailable):
+        llm_mod.complete("hello")
+    assert fake.create_calls == []
+
+
+def test_count_tokens_error_message_carries_no_prompt(monkeypatch):
+    exc = _status_error(anthropic.RateLimitError, 429)
+    _patch_client(monkeypatch, _FakeMessages(count_exc=exc))
+    with pytest.raises(llm_mod.LLMError) as excinfo:
+        llm_mod.complete(PHI_PROMPT)
+    assert "Jane Doe" not in str(excinfo.value)
+    assert "123-45-6789" not in str(excinfo.value)
 
 
 # --- PHI safety ------------------------------------------------------------

@@ -132,6 +132,19 @@ tests/                 # pytest; integration tests marked and need live infra
   no ROI authorization tests; no input-normalization / dup-patient tests. (RIV-201.)
 - **Brownfield rule:** before refactoring untested code, write **characterization tests**
   capturing current behavior first, then change under green.
+- **Negative-test rule for PHI/security code (RIV, PR #2 lesson):** any redaction,
+  authz, or sanitization function needs at least one **adversarial** test — the input
+  placed where the code does *not* expect it (PHI in a non-PHI key, an SSN inside a
+  free-text/list field, a request that skips the happy path). Happy-path tests confirm
+  intended behavior; they do not prove the safety boundary holds. The `consents` PHI
+  leak shipped green because every redaction test asserted the *intended* shape and none
+  planted PHI in the wrong place. For anything that writes a payload to a log, add an
+  **end-to-end scan test**: feed PHI into every field (incl. non-PHI keys + list items),
+  call the real log-formatting path, assert no raw PHI survives (see
+  `tests/test_redaction.py::test_safe_log_payload_masks_phi_in_every_field`).
+- **Run `/security-review` (or a local adversarial pass) on the diff before opening a PR**
+  touching auth/PHI/ROI — the adversarial bot caught both PR #2 leaks *after* push; pull
+  that net earlier.
 
 ---
 

@@ -38,7 +38,13 @@ _PHONE_RE = re.compile(r"\(?\b\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
 
 
 def redact(value: Any) -> Any:
-    """Recursively replace PHI field values with REDACTED. Never mutates input."""
+    """Recursively replace PHI field values with REDACTED. Never mutates input.
+
+    Two layers: (1) values under a known PHI key are fully masked; (2) EVERY
+    remaining string scalar is pattern-scrubbed with ``redact_text``. Layer 2
+    is what stops PHI smuggled into an unconstrained field (e.g. an SSN inside
+    an ``IntakeRequest.consents`` string) from reaching the log unmasked.
+    """
     if isinstance(value, dict):
         return {
             key: REDACTED if str(key).lower() in PHI_FIELDS else redact(val)
@@ -46,6 +52,8 @@ def redact(value: Any) -> Any:
         }
     if isinstance(value, (list, tuple)):
         return [redact(item) for item in value]
+    if isinstance(value, str):
+        return redact_text(value)
     return value
 
 

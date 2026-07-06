@@ -117,10 +117,13 @@ def _call(
 
     Maps SDK exceptions to this module's typed errors, most specific first.
     Exception messages carry status/request metadata only.
-    """
-    input_tokens = count_input_tokens(messages, system=system)
-    _enforce_budget(input_tokens, max_tokens)
 
+    Both the token-count call and the completion call are SDK requests that can
+    fail with auth/rate-limit/5xx/connection errors, so BOTH sit inside the
+    mapping ``try``. ``_enforce_budget`` runs between them and raises
+    ``LLMBudgetExceeded`` — an ``LLMError``, not an ``anthropic.*`` type, so it
+    passes through the except clauses below untouched.
+    """
     kwargs: Dict[str, Any] = {
         "model": settings.anthropic_model,
         "max_tokens": max_tokens,
@@ -132,6 +135,8 @@ def _call(
         kwargs["extra_body"] = extra_body
 
     try:
+        input_tokens = count_input_tokens(messages, system=system)
+        _enforce_budget(input_tokens, max_tokens)
         return client.messages.create(**kwargs)
     except (anthropic.NotFoundError, anthropic.AuthenticationError) as exc:
         raise LLMConfigError(
