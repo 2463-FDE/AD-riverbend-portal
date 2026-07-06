@@ -7,3 +7,6 @@ dist/
 *.log.1
 *.log.2
 .venv/
+
+# Claude Code local (machine-specific) settings
+.claude/settings.local.json

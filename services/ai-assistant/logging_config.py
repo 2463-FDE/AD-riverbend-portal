@@ -1,10 +1,9 @@
-"""Logging setup for intake-service (copy-pasted per service — see ADR 0001).
+"""Logging setup for ai-assistant (copy-pasted per service — see ADR 0001).
 
-Note: this service writes the intake request body to a repo-level file handler
-(logs/intake-service.log) so the front desk has a record of every registration.
-As of 2026-07 new writes are REDACTED via redaction.safe_log_payload (D1 fix);
-the file's historical entries still contain plaintext PHI — purge/gitignore is
-an open ops item (docs/phi-logging-policy.md).
+Contract for this service: prompt and completion bodies are NEVER logged, to
+any handler. Log metadata only (model, token counts, cost, latency, request
+id). Anything that must log payload-shaped data goes through
+redaction.safe_log_payload. See docs/phi-logging-policy.md.
 """
 import logging
 import os

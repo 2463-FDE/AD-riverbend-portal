@@ -6,8 +6,9 @@ We create the patient chart, attach insurance coverage (if supplied), record the
 signed consents, and verify payer eligibility before returning.
 
 Inherited shortcomings (left as-is from the handoff):
-  * D1 — the full request body (PHI: name/dob/ssn/notes) is written to a file
-    log at INFO. See logging_config.py.
+  * D1 — REMEDIATED 2026-07: the request body is now logged redacted via
+    redaction.safe_log_payload (see docs/phi-logging-policy.md). The historical
+    logs/intake-service.log still contains pre-fix PHI — open ops item.
   * D5 — no master patient index / match key: every /intake creates a brand new
     patients row, so one person forks into several charts (intake.yaml match_key:
     none).
@@ -29,6 +30,7 @@ from config import settings
 from db import get_db
 from logging_config import configure
 from models import Consent, InsuranceCoverage, Patient
+from redaction import safe_log_payload
 from schemas import Demographics, Insurance, IntakeRequest, IntakeResponse
 
 log = configure(settings.service_name)
@@ -60,9 +62,9 @@ def intake_config():
 def create_intake(req: IntakeRequest, db: Session = Depends(get_db)):
     started = time.time()
 
-    # D1 (flagged, not fixed): persist the entire request body — including PHI —
-    # to the file handler so the front desk has a record of every registration.
-    log.info('POST /intake body=%s', req.model_dump_json())
+    # D1 (remediated 2026-07): the front desk still gets a record of every
+    # registration, but PHI fields are redacted — see docs/phi-logging-policy.md.
+    log.info('POST /intake body=%s', safe_log_payload(req))
 
     # D5 (flagged, not fixed): no MPI / match-key lookup on (name, dob, ssn).
     # Every intake inserts a brand new chart, even for a returning patient.
