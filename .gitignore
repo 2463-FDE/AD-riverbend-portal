@@ -4,6 +4,8 @@ __pycache__/
 .next/
 dist/
 .DS_Store
+# Application logs may contain PHI (see docs/phi-logging-policy.md) — never track them.
+*.log
 *.log.1
 *.log.2
 .venv/

@@ -94,6 +94,27 @@ def count_input_tokens(messages: List[Dict[str, Any]], system: Optional[str] = N
     return client.messages.count_tokens(**kwargs).input_tokens
 
 
+def _input_char_count(messages: List[Dict[str, Any]], system: Optional[str]) -> int:
+    total = len(system or "")
+    for message in messages:
+        content = message.get("content", "")
+        total += len(content) if isinstance(content, str) else len(str(content))
+    return total
+
+
+def _enforce_char_cap(messages: List[Dict[str, Any]], system: Optional[str]) -> None:
+    """Local preflight — no network. Rejects grossly oversized prompts BEFORE any
+    SDK call, so an over-budget (possibly PHI-bearing) payload never egresses via
+    count_tokens. The exact token cap is still enforced downstream by
+    _enforce_budget for prompts that pass this gate."""
+    chars = _input_char_count(messages, system)
+    if chars > settings.llm_max_input_chars:
+        raise LLMBudgetExceeded(
+            "input %d chars exceeds local cap %d — no upstream call made"
+            % (chars, settings.llm_max_input_chars)
+        )
+
+
 def _enforce_budget(input_tokens: int, max_tokens: int) -> None:
     if input_tokens > settings.llm_max_input_tokens:
         raise LLMBudgetExceeded(
@@ -123,7 +144,13 @@ def _call(
     mapping ``try``. ``_enforce_budget`` runs between them and raises
     ``LLMBudgetExceeded`` — an ``LLMError``, not an ``anthropic.*`` type, so it
     passes through the except clauses below untouched.
+
+    ``_enforce_char_cap`` runs FIRST, before the ``try`` and before any SDK
+    call: ``count_tokens`` is itself a network request that would egress the
+    payload, so a grossly oversized prompt must be rejected locally.
     """
+    _enforce_char_cap(messages, system)
+
     kwargs: Dict[str, Any] = {
         "model": settings.anthropic_model,
         "max_tokens": max_tokens,

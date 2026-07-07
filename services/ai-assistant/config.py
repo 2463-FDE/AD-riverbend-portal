@@ -23,6 +23,12 @@ class Settings:
     llm_max_input_tokens = int(os.getenv("LLM_MAX_INPUT_TOKENS", "20000"))
     llm_max_output_tokens = int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "2048"))
     llm_max_cost_per_request_usd = float(os.getenv("LLM_MAX_COST_PER_REQUEST_USD", "0.50"))
+    # Local preflight cap, checked BEFORE any SDK call. count_tokens is itself a
+    # network request that egresses the full payload, so a grossly oversized
+    # prompt must be rejected locally first (~4 chars/token is a conservative
+    # English estimate; the exact count_tokens result still enforces the real
+    # token cap for prompts that pass this gate).
+    llm_max_input_chars = int(os.getenv("LLM_MAX_INPUT_CHARS", str(llm_max_input_tokens * 4)))
 
 
 settings = Settings()

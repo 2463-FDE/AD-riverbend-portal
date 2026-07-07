@@ -61,8 +61,10 @@ class _FakeMessages:
         self.create_exc = create_exc
         self.count_exc = count_exc
         self.create_calls = []
+        self.count_calls = []
 
     def count_tokens(self, **kwargs):
+        self.count_calls.append(kwargs)
         if self.count_exc is not None:
             raise self.count_exc
         return SimpleNamespace(input_tokens=self.count)
@@ -95,6 +97,33 @@ def test_cost_cap_refuses_before_calling(monkeypatch):
     with pytest.raises(llm_mod.LLMBudgetExceeded):
         llm_mod.complete("hello")
     assert fake.create_calls == []
+
+
+def test_char_cap_refuses_before_any_sdk_call(monkeypatch):
+    # The over-budget prompt must NOT reach count_tokens (an SDK egress) or create.
+    fake = _patch_client(monkeypatch, _FakeMessages())
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_chars", 50)
+    with pytest.raises(llm_mod.LLMBudgetExceeded):
+        llm_mod.complete("x" * 500)
+    assert fake.count_calls == []
+    assert fake.create_calls == []
+
+
+def test_char_cap_error_carries_no_prompt(monkeypatch):
+    _patch_client(monkeypatch, _FakeMessages())
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_chars", 10)
+    with pytest.raises(llm_mod.LLMBudgetExceeded) as excinfo:
+        llm_mod.complete(PHI_PROMPT)
+    assert "Jane Doe" not in str(excinfo.value)
+    assert "123-45-6789" not in str(excinfo.value)
+
+
+def test_within_char_cap_proceeds_to_count(monkeypatch):
+    # A prompt under the char gate still reaches count_tokens for exact accounting.
+    fake = _patch_client(monkeypatch, _FakeMessages())
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_chars", 10_000)
+    llm_mod.complete("short prompt")
+    assert len(fake.count_calls) == 1
 
 
 def test_estimate_cost_math():
