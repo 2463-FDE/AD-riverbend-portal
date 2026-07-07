@@ -21,10 +21,16 @@
   in git, the exposure extends to every clone of the repository, forever,
   unless history is scrubbed.
 - **Ticket:** — (found in handoff docs, not client-reported)
-- **Status:** **code fixed 2026-07-05** — bodies now redacted via
-  `redaction.safe_log_payload`. OPEN ops items: purge/gitignore the log file;
-  decide on git-history scrub; fix remaining sites (see
-  `docs/phi-logging-policy.md` §violations).
+- **Status:** **code fixed 2026-07-05**; **tip-of-tree hygiene fixed
+  2026-07-06; history remediation still open** — `*.log` added to `.gitignore`
+  and `logs/intake-service.log` untracked (`git rm --cached`), so no new PHI
+  enters the tree. Bodies now redacted via `redaction.safe_log_payload`.
+  The repository remains contaminated until history is rewritten: the
+  plaintext PHI is still recoverable from **git history** (and from PR
+  diffs/CI artifacts that displayed it) — untracking does not remove it.
+  See the **Remediation runbook** below for the owned, ordered purge plan.
+  Also open: fix remaining log sites
+  (see `docs/phi-logging-policy.md` §violations).
 
 ### D4 — no-timeout inline eligibility call ("spinning registration")
 - **Location:** `services/intake-service/app.py` `_verify_eligibility` (inline
@@ -63,10 +69,43 @@
 | D8 | `services/records-service/app.py:95,145` | N+1 encounter queries + full-table ILIKE search with no index → chart loads degrade with data growth | — | OPEN |
 | D11 | `services/records-service/app.py:91` | IDOR: sequential integer `patient_id` served to any logged-in user; sessions not patient-bound — cross-patient chart reads succeed | — | OPEN (xfail test in suite) |
 
+## Remediation runbook — PHI + secret history purge (human-run, irreversible)
+
+> Covers the two history-contamination items: the PHI in the tracked
+> `logs/intake-service.log` blob (D1) and the credentials in the tracked
+> `.env` (cross-cutting table below). These steps are **irreversible** and
+> touch every clone, so they are run by named humans in this exact order —
+> not by tooling or AI agents. An item is "done" only when its verification
+> criterion passes.
+
+| # | Step | Owner | Ticket | Definition of done |
+|---|------|-------|--------|--------------------|
+| 1 | **Rotate every secret in `.env`** (`SESSION_SECRET`, `DB_PASSWORD`, `PAYER_API_KEY`, HL7 feed credentials) and any `ANTHROPIC_API_KEY` ever placed in a tracked file. Rotate **before** the scrub — history rewrite doesn't help while the old values still work. | Riverbend IT/ops lead | to file (RIV, "rotate committed credentials") | Old values rejected by each downstream (payer sandbox call fails with old key; old `SESSION_SECRET` no longer validates a session). |
+| 2 | **Scrub git history** of `logs/intake-service.log` and `.env` (`git filter-repo` or BFG), incl. GitHub PR diffs/CI artifacts that displayed the PHI (contact GitHub support for cached views if needed). | Riverbend IT/ops lead, paired with FDE (A. Dhanoa) for verification | to file (RIV, "purge PHI/secrets from git history") | `git log --all -- logs/intake-service.log .env` empty; `git rev-list --all \| xargs git grep <known SSN fragment>` finds nothing. |
+| 3 | **Force-push rewritten history + coordinate clones.** Announce a freeze, force-push all branches, have every collaborator delete and re-clone (not pull). Rebase/re-point open PRs. | Riverbend IT/ops lead | same ticket as step 2 | All active collaborators confirm re-clone; no fork/clone with pre-scrub history remains in org control. |
+| 4 | **Verify secret scan clean** — run a secret scanner (e.g. gitleaks/trufflehog) across full rewritten history; add it to CI so regression is caught (CI currently has no secret scanning). | FDE (A. Dhanoa) | to file (RIV, "add secret scanning to CI") | Scanner reports zero findings on full history; CI job green on main. |
+| 5 | **Document the exposure window** — first-commit date of each contaminated blob → scrub date; enumerate known clones/forks/CI caches in that window; hand to the privacy officer for breach assessment (45 CFR 164.400+ notification duties). | Riverbend privacy/compliance officer, input from FDE | to file (RIV, "PHI exposure breach assessment") | Written assessment on file stating exposure window, audience, and notify/no-notify determination. |
+
+Until steps 1–3 complete, treat the repository and all clones as containing
+live PHI and credentials.
+
+## Follow-up tickets to file (docs corrections)
+
+- **README false HIPAA/encryption claims — docs correction required.**
+  `README.md:1,82` assert PHI is encrypted and the system is fully HIPAA
+  compliant; the schema stores PHI as plaintext `TEXT` (see cross-cutting
+  table below). Deliberately scoped out of this PR (README is client-facing
+  handoff material); filed here as an explicit follow-up: correct the README
+  to match `ARCHITECTURE.md §7`, or implement column-level encryption to make
+  the claim true. Owner: FDE (A. Dhanoa), needs client sign-off on wording.
+  Ticket: to file (RIV, "correct README compliance claims").
+
 ## Cross-cutting (no D-number)
 
 | Item | Business risk | Status |
 |------|---------------|--------|
-| `.env` committed with secrets | Credential exposure to anyone with repo access; rotation required before production claims | OPEN |
+| `.env` committed with secrets | Tracked `.env` holds live credentials: `SESSION_SECRET` (forge any session → full portal access, since sessions never expire + single role), `DB_PASSWORD`, `PAYER_API_KEY`, HL7 feed endpoint. A repo leak hands all of these over with **no cracking required**. The secrets are in **git history**, so deleting the file is insufficient — history rewrite **and** rotation of every credential are required. | OPEN — see **Remediation runbook** above (steps 1–4) |
+| README claims "PHI is encrypted / fully HIPAA compliant" — contradicts reality | `README.md:1,82` assert all PHI is encrypted and the system is fully HIPAA compliant. `db/schema.sql` stores `ssn`, `notes`, `dob`, `address`, etc. as plaintext `TEXT`; the only encryption is disk/volume-level (`ARCHITECTURE.md:76`), which protects a stolen disk and nothing else (DB dump, SQL injection, compromised app, committed logs all see cleartext). The overstatement is itself compliance risk — a documented false assurance. `ARCHITECTURE.md §7` is the honest account. Fix: correct the README to match `ARCHITECTURE.md`, or implement column-level encryption to make the claim true. | OPEN — filed under **Follow-up tickets** above |
+| Seeded demo password reuse | All seeded accounts share `portal123` (`db/seed/generate_seed.py`); hashing scheme (pbkdf2_sha256, 260k iters) fully disclosed. If any non-dev environment reused the seed, these are live valid logins on repo leak. | OPEN |
 | Sessions never expire, single role, no MFA | Any leaked cookie is a permanent all-access credential | OPEN (approval-gated) |
 | No secret/dependency/image scanning in CI | Vulnerable deps and committed secrets ship silently | OPEN |
