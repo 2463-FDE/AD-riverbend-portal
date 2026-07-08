@@ -58,3 +58,27 @@ logs, no ROI authorization — ARCHITECTURE.md §7) offers no safety net.
 - The ROI authorization gap (D12) remains a hard prerequisite: no AI feature
   may source patient data through roi-service until authorization enforcement
   exists.
+
+## Amendment — 2026-07-08 (PR #2 review)
+
+The original **Budgeted** guarantee (Decision 2) was implemented by calling
+`client.messages.count_tokens()` to get an exact input-token count, then
+enforcing the token/cost caps on the result. `count_tokens` is itself an SDK
+request that egresses the full `messages` payload to the vendor. A prompt under
+`LLM_MAX_INPUT_CHARS` but over the token/cost budget therefore left the trust
+boundary **before** being rejected — contradicting "refused before any request
+is sent" and disclosing a possibly PHI-bearing payload.
+
+The gate is now **fully local**. Budget is enforced against a deterministic
+local token *estimate* (`estimate_input_tokens` = chars ÷
+`LLM_CHARS_PER_TOKEN_ESTIMATE`, default 3.0, biased conservative) plus the
+worst-case cost, both checked before any SDK call. No vendor call — not even
+`count_tokens` — participates in the preflight; the completion `create` call is
+the sole egress, and its response `usage` supplies the real token count as
+post-approval telemetry (logging + cost).
+
+Trade-off: the token gate is now a heuristic, not an exact count. The absolute
+hard boundary on egress size remains the local char cap (`LLM_MAX_INPUT_CHARS`),
+which bounds the payload regardless of tokenization; the token estimate is
+best-effort budget layered on top. Decision 2 above is preserved as the original
+record; this amendment is the current behavior.

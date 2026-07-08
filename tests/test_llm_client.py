@@ -55,18 +55,18 @@ def _status_error(cls, status_code):
 
 
 class _FakeMessages:
-    def __init__(self, count=100, response=None, create_exc=None, count_exc=None):
+    # count_tokens is retained purely as an EGRESS TRIPWIRE: the client no
+    # longer calls it (budget is enforced against a local estimate), so tests
+    # assert count_calls stays empty to prove no payload left the boundary.
+    def __init__(self, count=100, response=None, create_exc=None):
         self.count = count
         self.response = response or _response()
         self.create_exc = create_exc
-        self.count_exc = count_exc
         self.create_calls = []
         self.count_calls = []
 
     def count_tokens(self, **kwargs):
         self.count_calls.append(kwargs)
-        if self.count_exc is not None:
-            raise self.count_exc
         return SimpleNamespace(input_tokens=self.count)
 
     def create(self, **kwargs):
@@ -84,19 +84,48 @@ def _patch_client(monkeypatch, fake_messages):
 # --- budget guard ---------------------------------------------------------
 
 
-def test_input_token_cap_refuses_before_calling(monkeypatch):
-    fake = _patch_client(monkeypatch, _FakeMessages(count=999_999))
+def test_input_token_cap_refuses_before_any_sdk_call(monkeypatch):
+    # Local estimate over the token cap must reject with NO egress at all —
+    # not the completion call, and not count_tokens (the tripwire).
+    fake = _patch_client(monkeypatch, _FakeMessages())
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_tokens", 1)
     with pytest.raises(llm_mod.LLMBudgetExceeded):
-        llm_mod.complete("hello")
+        llm_mod.complete("hello world this easily exceeds one token")
+    assert fake.count_calls == []
     assert fake.create_calls == []
 
 
-def test_cost_cap_refuses_before_calling(monkeypatch):
-    fake = _patch_client(monkeypatch, _FakeMessages(count=10_000))
+def test_cost_cap_refuses_before_any_sdk_call(monkeypatch):
+    fake = _patch_client(monkeypatch, _FakeMessages())
     monkeypatch.setattr(llm_mod.settings, "llm_max_cost_per_request_usd", 0.001)
     with pytest.raises(llm_mod.LLMBudgetExceeded):
         llm_mod.complete("hello")
+    assert fake.count_calls == []
     assert fake.create_calls == []
+
+
+def test_over_budget_phi_prompt_never_egresses(monkeypatch):
+    # Regression (PR #2 review): a PHI-bearing prompt UNDER the gross char cap
+    # but OVER the token budget must be rejected locally — it must never reach
+    # count_tokens (the pre-fix egress) or create. Fails against pre-fix code,
+    # where count_tokens was called before _enforce_budget.
+    fake = _patch_client(monkeypatch, _FakeMessages())
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_chars", 100_000)  # char gate wide open
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_tokens", 1)  # token gate closed
+    with pytest.raises(llm_mod.LLMBudgetExceeded) as excinfo:
+        llm_mod.complete(PHI_PROMPT)
+    assert fake.count_calls == []
+    assert fake.create_calls == []
+    assert "Jane Doe" not in str(excinfo.value)
+    assert "123-45-6789" not in str(excinfo.value)
+
+
+def test_estimate_input_tokens_is_conservative():
+    # Estimator must over-count vs the ~3.8-4 chars/token English reality so it
+    # never under-counts a PHI-dense payload past the budget. With the 3.0
+    # default ratio, a 30-char message estimates >= 10 tokens.
+    messages = [{"role": "user", "content": "x" * 30}]
+    assert llm_mod.estimate_input_tokens(messages) >= 10
 
 
 def test_char_cap_refuses_before_any_sdk_call(monkeypatch):
@@ -118,12 +147,14 @@ def test_char_cap_error_carries_no_prompt(monkeypatch):
     assert "123-45-6789" not in str(excinfo.value)
 
 
-def test_within_char_cap_proceeds_to_count(monkeypatch):
-    # A prompt under the char gate still reaches count_tokens for exact accounting.
+def test_within_budget_proceeds_to_create_without_count_tokens(monkeypatch):
+    # A within-budget prompt reaches create — and never count_tokens, which is
+    # no longer part of the flow (local estimate is the only preflight).
     fake = _patch_client(monkeypatch, _FakeMessages())
     monkeypatch.setattr(llm_mod.settings, "llm_max_input_chars", 10_000)
     llm_mod.complete("short prompt")
-    assert len(fake.count_calls) == 1
+    assert len(fake.create_calls) == 1
+    assert fake.count_calls == []
 
 
 def test_estimate_cost_math():
@@ -189,60 +220,10 @@ def test_connection_error_maps_to_unavailable(monkeypatch):
         llm_mod.complete("hello")
 
 
-# --- SDK exception mapping: the token-count call ---------------------------
-# count_tokens is an SDK request too; a failure there must map to the same
-# typed errors and must never reach client.messages.create (RIV review, PR #2).
-
-
-def test_count_tokens_auth_error_maps_to_config_error(monkeypatch):
-    exc = _status_error(anthropic.AuthenticationError, 401)
-    fake = _patch_client(monkeypatch, _FakeMessages(count_exc=exc))
-    with pytest.raises(llm_mod.LLMConfigError):
-        llm_mod.complete("hello")
-    assert fake.create_calls == []
-
-
-def test_count_tokens_not_found_maps_to_config_error(monkeypatch):
-    exc = _status_error(anthropic.NotFoundError, 404)
-    fake = _patch_client(monkeypatch, _FakeMessages(count_exc=exc))
-    with pytest.raises(llm_mod.LLMConfigError):
-        llm_mod.complete("hello")
-    assert fake.create_calls == []
-
-
-def test_count_tokens_rate_limit_maps_to_unavailable(monkeypatch):
-    exc = _status_error(anthropic.RateLimitError, 429)
-    fake = _patch_client(monkeypatch, _FakeMessages(count_exc=exc))
-    with pytest.raises(llm_mod.LLMUnavailable):
-        llm_mod.complete("hello")
-    assert fake.create_calls == []
-
-
-def test_count_tokens_status_error_maps_to_unavailable(monkeypatch):
-    exc = _status_error(anthropic.APIStatusError, 503)
-    fake = _patch_client(monkeypatch, _FakeMessages(count_exc=exc))
-    with pytest.raises(llm_mod.LLMUnavailable):
-        llm_mod.complete("hello")
-    assert fake.create_calls == []
-
-
-def test_count_tokens_connection_error_maps_to_unavailable(monkeypatch):
-    exc = anthropic.APIConnectionError(
-        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")
-    )
-    fake = _patch_client(monkeypatch, _FakeMessages(count_exc=exc))
-    with pytest.raises(llm_mod.LLMUnavailable):
-        llm_mod.complete("hello")
-    assert fake.create_calls == []
-
-
-def test_count_tokens_error_message_carries_no_prompt(monkeypatch):
-    exc = _status_error(anthropic.RateLimitError, 429)
-    _patch_client(monkeypatch, _FakeMessages(count_exc=exc))
-    with pytest.raises(llm_mod.LLMError) as excinfo:
-        llm_mod.complete(PHI_PROMPT)
-    assert "Jane Doe" not in str(excinfo.value)
-    assert "123-45-6789" not in str(excinfo.value)
+# NOTE: the count_tokens SDK-exception-mapping tests were removed with the
+# count_tokens preflight itself (PR #2 review round 4). Budget is now enforced
+# against a local estimate before any SDK call, so count_tokens is no longer in
+# the request path — the only egress that can raise is create, covered above.
 
 
 # --- PHI safety ------------------------------------------------------------

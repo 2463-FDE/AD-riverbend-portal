@@ -3,7 +3,11 @@
 Contract (see ADR 0004):
   * every call is bounded — connect/read timeouts and SDK-managed retries
     with exponential backoff (the opposite of the D4 no-timeout pattern);
-  * a token/cost budget is enforced BEFORE any request is sent;
+  * a token/cost budget is enforced BEFORE any request is sent, using a
+    deterministic LOCAL estimate — no vendor call (not even count_tokens)
+    participates in the preflight gate, so an over-budget, possibly
+    PHI-bearing payload never crosses the trust boundary. The only egress is
+    the completion call itself, whose usage is post-approval telemetry;
   * structured output is validated against a Pydantic model;
   * failures raise typed exceptions — never the repo's
     ``{"error": str(e)}`` 200-OK anti-pattern;
@@ -17,6 +21,7 @@ manually. When the toolchain moves to 3.9+, upgrade the pin and switch to
 ``messages.parse``.
 """
 import json
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Type
@@ -87,11 +92,19 @@ def estimate_cost(input_tokens: int, output_tokens: int) -> float:
     ) / 1_000_000
 
 
-def count_input_tokens(messages: List[Dict[str, Any]], system: Optional[str] = None) -> int:
-    kwargs: Dict[str, Any] = {"model": settings.anthropic_model, "messages": messages}
-    if system is not None:
-        kwargs["system"] = system
-    return client.messages.count_tokens(**kwargs).input_tokens
+def estimate_input_tokens(messages: List[Dict[str, Any]], system: Optional[str] = None) -> int:
+    """Deterministic LOCAL token estimate — NO network call.
+
+    Budget enforcement runs against this, never against the vendor's
+    count_tokens, which is itself an SDK egress of the full payload. The
+    estimate is biased conservative (see settings.llm_chars_per_token_estimate)
+    so it over-counts typical text rather than under-counting it. It is a
+    heuristic, not a guarantee — the absolute hard boundary on egress size is
+    the char cap in _enforce_char_cap. The real token count arrives on the
+    completion response as post-approval telemetry.
+    """
+    chars = _input_char_count(messages, system)
+    return math.ceil(chars / settings.llm_chars_per_token_estimate)
 
 
 def _input_char_count(messages: List[Dict[str, Any]], system: Optional[str]) -> int:
@@ -103,10 +116,10 @@ def _input_char_count(messages: List[Dict[str, Any]], system: Optional[str]) -> 
 
 
 def _enforce_char_cap(messages: List[Dict[str, Any]], system: Optional[str]) -> None:
-    """Local preflight — no network. Rejects grossly oversized prompts BEFORE any
-    SDK call, so an over-budget (possibly PHI-bearing) payload never egresses via
-    count_tokens. The exact token cap is still enforced downstream by
-    _enforce_budget for prompts that pass this gate."""
+    """Local gross-size backstop — no network. Rejects grossly oversized prompts
+    BEFORE any SDK call. The token/cost budget is enforced separately and also
+    locally by _enforce_budget (against estimate_input_tokens); this cap is a
+    cheap independent hard stop, not the token gate."""
     chars = _input_char_count(messages, system)
     if chars > settings.llm_max_input_chars:
         raise LLMBudgetExceeded(
@@ -134,22 +147,23 @@ def _call(
     max_tokens: int,
     extra_body: Optional[Dict[str, Any]] = None,
 ) -> "anthropic.types.Message":
-    """Pre-flight budget check, then one bounded, retried API call.
+    """Fully-local pre-flight budget check, then one bounded, retried API call.
 
-    Maps SDK exceptions to this module's typed errors, most specific first.
-    Exception messages carry status/request metadata only.
+    The ENTIRE budget gate runs before the ``try`` and before any SDK call:
+    ``_enforce_char_cap`` (gross-size backstop) and ``_enforce_budget`` (token +
+    cost caps) both check a deterministic LOCAL estimate. No vendor request —
+    not even ``count_tokens`` — participates in the gate, because such a request
+    would egress the full (possibly PHI-bearing, possibly over-budget) payload
+    across the trust boundary. The completion ``create`` call is the sole
+    egress; its ``usage`` is post-approval telemetry consumed downstream.
 
-    Both the token-count call and the completion call are SDK requests that can
-    fail with auth/rate-limit/5xx/connection errors, so BOTH sit inside the
-    mapping ``try``. ``_enforce_budget`` runs between them and raises
-    ``LLMBudgetExceeded`` — an ``LLMError``, not an ``anthropic.*`` type, so it
-    passes through the except clauses below untouched.
-
-    ``_enforce_char_cap`` runs FIRST, before the ``try`` and before any SDK
-    call: ``count_tokens`` is itself a network request that would egress the
-    payload, so a grossly oversized prompt must be rejected locally.
+    The ``try`` maps SDK exceptions from that one call to this module's typed
+    errors, most specific first. Exception messages carry status/request
+    metadata only.
     """
     _enforce_char_cap(messages, system)
+    input_tokens = estimate_input_tokens(messages, system=system)
+    _enforce_budget(input_tokens, max_tokens)
 
     kwargs: Dict[str, Any] = {
         "model": settings.anthropic_model,
@@ -162,8 +176,6 @@ def _call(
         kwargs["extra_body"] = extra_body
 
     try:
-        input_tokens = count_input_tokens(messages, system=system)
-        _enforce_budget(input_tokens, max_tokens)
         return client.messages.create(**kwargs)
     except (anthropic.NotFoundError, anthropic.AuthenticationError) as exc:
         raise LLMConfigError(

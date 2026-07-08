@@ -19,15 +19,26 @@ class Settings:
     llm_read_timeout_seconds = float(os.getenv("LLM_READ_TIMEOUT_SECONDS", "30"))
     llm_max_retries = int(os.getenv("LLM_MAX_RETRIES", "3"))
 
-    # Budget guardrails, enforced before any request is sent.
+    # Budget guardrails, enforced entirely LOCALLY before any request is sent.
+    # No vendor call participates in the preflight gate: token/cost budget is
+    # checked against a deterministic local estimate so a PHI-bearing,
+    # over-budget prompt never crosses the trust boundary. Real token counts
+    # come back on the completion response as post-approval telemetry.
     llm_max_input_tokens = int(os.getenv("LLM_MAX_INPUT_TOKENS", "20000"))
     llm_max_output_tokens = int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "2048"))
     llm_max_cost_per_request_usd = float(os.getenv("LLM_MAX_COST_PER_REQUEST_USD", "0.50"))
-    # Local preflight cap, checked BEFORE any SDK call. count_tokens is itself a
-    # network request that egresses the full payload, so a grossly oversized
-    # prompt must be rejected locally first (~4 chars/token is a conservative
-    # English estimate; the exact count_tokens result still enforces the real
-    # token cap for prompts that pass this gate).
+    # Local token estimator: chars / this ratio, biased CONSERVATIVE (fewer
+    # chars/token than real English prose, which is ~3.8-4). Digit- and
+    # PHI-dense strings (SSNs, phone numbers) tokenize denser, so a low ratio
+    # over-counts on purpose. This is a HEURISTIC, not a guarantee: a
+    # pathological input (long digit runs, base64) can still tokenize denser
+    # than this ratio. anthropic 0.72 ships no offline tokenizer for Claude 3+,
+    # so an exact local count is not available. Lower = stricter.
+    llm_chars_per_token_estimate = float(os.getenv("LLM_CHARS_PER_TOKEN_ESTIMATE", "3.0"))
+    # The TRUE hard boundary on egress size: a local char cap that bounds the
+    # absolute payload regardless of how it tokenizes. The token estimate above
+    # is best-effort budget on top of this; this cap is what actually guarantees
+    # an over-sized payload never crosses the trust boundary.
     llm_max_input_chars = int(os.getenv("LLM_MAX_INPUT_CHARS", str(llm_max_input_tokens * 4)))
 
 
