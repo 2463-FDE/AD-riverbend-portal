@@ -65,5 +65,9 @@ jobs:
     needs: [frontend, services, tests]
     steps:
       - uses: actions/checkout@v4
+      # .env is gitignored (untracked secret file). Compose validates env_file:
+      # .env at parse time, so seed a non-secret one from the committed example.
+      - name: Seed non-secret env from example
+        run: cp .env.example .env
       - name: Build images
         run: docker compose build
