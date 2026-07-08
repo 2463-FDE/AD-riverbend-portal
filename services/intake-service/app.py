@@ -158,5 +158,10 @@ def _verify_eligibility(ins: Optional[Insurance]) -> Optional[dict[str, Any]]:
         )  # no timeout= — synchronous, blocks /intake (RIV-088)
         return resp.json()
     except Exception as e:
-        log.error("intake: eligibility check failed: %s", e)
-        return {"active": False, "error": str(e)}
+        # PHI policy rule 3: never stringify an outbound exception here. The
+        # request URL carries insurance_id=<member_id> as a query param, and
+        # httpx embeds the failing URL in its exception message — so str(e)
+        # would leak a PHI-adjacent external identifier into the log AND the
+        # /intake response. Log the exception class only, return a generic error.
+        log.error("intake: eligibility check failed (%s)", type(e).__name__)
+        return {"active": False, "error": "eligibility check failed"}

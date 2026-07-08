@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import anthropic
 import httpx
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from conftest import load_module
 
@@ -237,6 +237,42 @@ def test_complete_structured_invalid_json_raises(monkeypatch):
     _patch_client(monkeypatch, _FakeMessages(response=_response(text="not json at all")))
     with pytest.raises(llm_mod.LLMResponseError):
         llm_mod.complete_structured("summarize", SampleOutput)
+
+
+def test_structured_schema_counted_in_token_budget(monkeypatch):
+    # Regression (Codex review): complete_structured serializes the output schema
+    # into extra_body, which the API counts as input. The budget gate must count
+    # it too — a large schema must be rejected LOCALLY even when the prompt alone
+    # is under the cap, with no egress. Fails against pre-fix code, where the
+    # schema was ignored by the gate and the request reached create().
+    fake = _patch_client(monkeypatch, _FakeMessages())
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_chars", 10_000_000)  # char gate wide open
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_tokens", 40)  # prompt alone passes
+
+    class BigSchema(BaseModel):
+        # A long field description balloons model_json_schema() well past the
+        # 40-token cap; the 9-char prompt alone is ~25 tokens and would pass.
+        field_one: str = Field(description="D" * 2000)
+
+    with pytest.raises(llm_mod.LLMBudgetExceeded):
+        llm_mod.complete_structured("summarize", BigSchema)
+    assert fake.create_calls == []
+    assert fake.count_calls == []
+
+
+def test_structured_schema_counted_in_char_cap(monkeypatch):
+    # The gross-size char backstop must also count the schema, not just the prompt.
+    fake = _patch_client(monkeypatch, _FakeMessages())
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_tokens", 10_000_000)  # token gate wide open
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_chars", 200)  # tiny prompt passes
+
+    class BigSchema(BaseModel):
+        field_one: str = Field(description="D" * 2000)
+
+    with pytest.raises(llm_mod.LLMBudgetExceeded):
+        llm_mod.complete_structured("summarize", BigSchema)
+    assert fake.create_calls == []
+    assert fake.count_calls == []
 
 
 # --- SDK exception mapping -------------------------------------------------

@@ -105,7 +105,22 @@ _BASE_TOKEN_OVERHEAD = 8
 _PER_MESSAGE_TOKEN_OVERHEAD = 8
 
 
-def max_input_tokens(messages: List[Dict[str, Any]], system: Optional[str] = None) -> int:
+def _extra_body_text(extra_body: Optional[Dict[str, Any]]) -> str:
+    """Deterministic serialization of extra_body for budget accounting.
+
+    extra_body carries the structured-output JSON schema (and any other tooling
+    payload). The API counts it as input, so it MUST be inside the budget gate —
+    otherwise a large/nested schema egresses unbounded (Codex review). Serialized
+    with the same default=str fallback used for logging so non-JSON-native values
+    never raise here."""
+    return "" if extra_body is None else json.dumps(extra_body, default=str, sort_keys=True)
+
+
+def max_input_tokens(
+    messages: List[Dict[str, Any]],
+    system: Optional[str] = None,
+    extra_body: Optional[Dict[str, Any]] = None,
+) -> int:
     """Guaranteed LOCAL upper bound on input tokens — NO network call, and it
     can only over-count, never under-count.
 
@@ -114,30 +129,46 @@ def max_input_tokens(messages: List[Dict[str, Any]], system: Optional[str] = Non
     prompt that passes the token cap here is guaranteed under the real cap, so
     no over-budget — possibly PHI-bearing — payload can egress. The exact token
     count arrives on the completion response as post-approval telemetry.
+
+    extra_body (the structured-output schema) is bounded by its serialized byte
+    length so it cannot bypass the gate.
     """
     total = _BASE_TOKEN_OVERHEAD + len((system or "").encode("utf-8"))
     for message in messages:
         content = message.get("content", "")
         text = content if isinstance(content, str) else str(content)
         total += _PER_MESSAGE_TOKEN_OVERHEAD + len(text.encode("utf-8"))
+    extra_text = _extra_body_text(extra_body)
+    if extra_text:
+        total += _PER_MESSAGE_TOKEN_OVERHEAD + len(extra_text.encode("utf-8"))
     return total
 
 
-def _input_char_count(messages: List[Dict[str, Any]], system: Optional[str]) -> int:
+def _input_char_count(
+    messages: List[Dict[str, Any]],
+    system: Optional[str],
+    extra_body: Optional[Dict[str, Any]] = None,
+) -> int:
     total = len(system or "")
     for message in messages:
         content = message.get("content", "")
         total += len(content) if isinstance(content, str) else len(str(content))
+    total += len(_extra_body_text(extra_body))
     return total
 
 
-def _enforce_char_cap(messages: List[Dict[str, Any]], system: Optional[str]) -> None:
+def _enforce_char_cap(
+    messages: List[Dict[str, Any]],
+    system: Optional[str],
+    extra_body: Optional[Dict[str, Any]] = None,
+) -> None:
     """Local gross-size backstop — no network. Rejects grossly oversized prompts
     BEFORE any SDK call. The token/cost budget is enforced separately and also
     locally by _enforce_budget (against max_input_tokens, a guaranteed byte-based
     upper bound); this char cap is a cheap independent defense-in-depth stop, not
-    the token gate."""
-    chars = _input_char_count(messages, system)
+    the token gate. extra_body counts toward the cap so an oversized schema is
+    rejected here too."""
+    chars = _input_char_count(messages, system, extra_body)
     if chars > settings.llm_max_input_chars:
         raise LLMBudgetExceeded(
             "input %d chars exceeds local cap %d — no upstream call made"
@@ -178,8 +209,8 @@ def _call(
     errors, most specific first. Exception messages carry status/request
     metadata only.
     """
-    _enforce_char_cap(messages, system)
-    input_tokens = max_input_tokens(messages, system=system)
+    _enforce_char_cap(messages, system, extra_body)
+    input_tokens = max_input_tokens(messages, system=system, extra_body=extra_body)
     _enforce_budget(input_tokens, max_tokens)
 
     kwargs: Dict[str, Any] = {
