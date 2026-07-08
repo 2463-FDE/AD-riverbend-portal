@@ -1,10 +1,12 @@
 """Logging setup for intake-service (copy-pasted per service — see ADR 0001).
 
-Note: this service writes the intake request body to a repo-level file handler
+Note: this service writes a per-registration line to a repo-level file handler
 (logs/intake-service.log) so the front desk has a record of every registration.
-As of 2026-07 new writes are REDACTED via redaction.safe_log_payload (D1 fix);
-the file's historical entries still contain plaintext PHI — purge/gitignore is
-an open ops item (docs/phi-logging-policy.md).
+As of 2026-07 new writes log only an allowlisted, non-PHI metadata shape
+(schemas.log_metadata) — the request body is never logged (D1 fix). Redacting
+the body was insufficient: pattern redaction misses names/DOBs in free-text
+fields. The file's historical entries still contain plaintext PHI — purge/
+gitignore is an open ops item (docs/phi-logging-policy.md).
 """
 import logging
 import os

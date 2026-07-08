@@ -6,10 +6,20 @@
 
 ## Rules
 
-1. **Never log a request or response body raw.** If a payload must be logged,
-   it goes through `redaction.safe_log_payload(obj)` — no exceptions. Grep-able
-   red flag: `model_dump_json()` or f-string interpolation of a Pydantic model
-   inside a `log.*` call.
+1. **Never log a request or response body raw.** Grep-able red flag:
+   `model_dump_json()` or f-string interpolation of a Pydantic model inside a
+   `log.*` call.
+   - **Prefer an allowlisted metadata projection over a redacted body.**
+     `redaction.safe_log_payload(obj)` only pattern-scrubs SSN/email/phone; it
+     does **not** catch names, DOBs, or arbitrary PHI stuffed into a free-text
+     or unconstrained field. So it is safe **only** for structures whose string
+     values are all constrained/known — never for a body with open string
+     fields. For request bodies, build a purpose-shaped dict of allowlisted
+     values (enums + boolean presence flags), like
+     `intake-service/schemas.py::log_metadata`, and log that. This mirrors the
+     LLM metadata-only rule (rule 4).
+   - `safe_log_payload` remains the fallback for internal payloads with no
+     open free-text fields; keep it parity-tested.
 2. **Identifier rules.**
    - Never loggable, even alone: `ssn`, `name`, `dob`, `address`, `phone`,
      `email`, free-text `notes`.
@@ -38,7 +48,7 @@
 
 | Site | Status | Notes |
 |------|--------|-------|
-| `services/intake-service/app.py:67` full body at INFO | **FIXED 2026-07-05** | Now `safe_log_payload(req)`; was raw `model_dump_json()` (D1) |
+| `services/intake-service/app.py:67` full body at INFO | **FIXED 2026-07-08** | Now logs allowlisted metadata (`schemas.log_metadata`), body never logged. Interim `safe_log_payload(req)` (2026-07-05) still leaked names/DOBs via the open `consents` list — pattern scrub misses them; `consents` is now a `ConsentKind` enum (Codex review). |
 | `logs/intake-service.log` (git-tracked) | **OPEN — ops** | Historical entries contain plaintext PHI. Needs: purge, gitignore, and a git-history-scrub decision. The code fix stops new leakage only. |
 | `services/eligibility-service/app.py:44` logs `insurance_id` | OPEN | Violates rule 2 (external identifier) |
 | `services/intake-service/app.py` `_verify_eligibility` error path | OPEN | `str(e)` can embed the payer URL + `insurance_id` query param (rule 3) |

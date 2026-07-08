@@ -128,14 +128,19 @@ def test_both_copies_scrub_phi_in_non_phi_key():
 
 
 def test_safe_log_payload_masks_phi_in_every_field():
-    """End-to-end log-scan: plant PHI in PHI keys, non-PHI keys, and list items;
-    assert none of it survives into the string that reaches the log."""
+    """End-to-end log-scan on the redaction helper: plant PHI in keyed PHI
+    fields and assert none survives into the string that reaches the log.
+
+    NOTE: consents can no longer smuggle free text into an IntakeRequest — it is
+    a ConsentKind enum now — so the list-item smuggle vector is exercised on a
+    raw dict in test_redact_scrubs_ssn_hidden_in_consents_list, not here."""
     req = intake_schemas.IntakeRequest(
         demographics=intake_schemas.Demographics(
-            name="Jane Doe", dob="1985-03-12", ssn="123-45-6789"
+            name="Jane Doe", dob="1985-03-12", ssn="123-45-6789",
+            email="jane@example.com", phone="555-867-5309",
         ),
         insurance=intake_schemas.Insurance(member_id="BCBS4471"),
-        consents=["npp_ack", "contact me at jane@example.com / 555-867-5309"],
+        consents=["npp_ack", "treatment_consent"],
     )
     logged = ai_redaction.safe_log_payload(req)
     for phi in ("Jane Doe", "123-45-6789", "BCBS4471", "jane@example.com", "555-867-5309"):
