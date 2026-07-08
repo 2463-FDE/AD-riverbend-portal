@@ -69,16 +69,29 @@ request that egresses the full `messages` payload to the vendor. A prompt under
 boundary **before** being rejected — contradicting "refused before any request
 is sent" and disclosing a possibly PHI-bearing payload.
 
-The gate is now **fully local**. Budget is enforced against a deterministic
-local token *estimate* (`estimate_input_tokens` = chars ÷
-`LLM_CHARS_PER_TOKEN_ESTIMATE`, default 3.0, biased conservative) plus the
-worst-case cost, both checked before any SDK call. No vendor call — not even
-`count_tokens` — participates in the preflight; the completion `create` call is
-the sole egress, and its response `usage` supplies the real token count as
-post-approval telemetry (logging + cost).
+The gate is now **fully local** and enforced against a **guaranteed upper
+bound**, not an estimate. `max_input_tokens` returns the UTF-8 byte length of
+the prompt (plus a small fixed per-message framing allowance). Claude's
+byte-level BPE tokenizer keeps all 256 single-byte tokens in vocabulary, so no
+input can ever produce more tokens than it has bytes — the byte length can only
+over-count, never under-count, for **any** input including all-digit,
+high-entropy, and multibyte-unicode payloads. The token and worst-case-cost
+caps are checked against this bound before any SDK call. No vendor call — not
+even `count_tokens` — participates in the preflight; the completion `create`
+call is the sole egress, and its response `usage` supplies the real token count
+as post-approval telemetry (logging + cost).
 
-Trade-off: the token gate is now a heuristic, not an exact count. The absolute
-hard boundary on egress size remains the local char cap (`LLM_MAX_INPUT_CHARS`),
-which bounds the payload regardless of tokenization; the token estimate is
-best-effort budget layered on top. Decision 2 above is preserved as the original
-record; this amendment is the current behavior.
+An earlier revision of this fix (commit `0d303ed`) used a tunable heuristic
+(`chars ÷ LLM_CHARS_PER_TOKEN_ESTIMATE`, default 3.0). A subsequent adversarial
+review (Codex) correctly flagged that a heuristic is not a hard bound: a dense
+payload can tokenize tighter than the ratio, so an over-budget prompt could
+still pass and egress. The heuristic and its loosening env knob were removed in
+favor of the byte-based bound above.
+
+Trade-off: the bound is conservative for prose (~1 token per ~4 bytes), so the
+usable prompt size is smaller than the nominal `LLM_MAX_INPUT_TOKENS` for
+natural-language input. Raise `LLM_MAX_INPUT_TOKENS` if legitimate prompts are
+refused; there is intentionally no knob that loosens the bound itself. The local
+char cap (`LLM_MAX_INPUT_CHARS`) remains as an independent gross-size backstop.
+Decision 2 above is preserved as the original record; this amendment is the
+current behavior.

@@ -4,10 +4,12 @@ Contract (see ADR 0004):
   * every call is bounded — connect/read timeouts and SDK-managed retries
     with exponential backoff (the opposite of the D4 no-timeout pattern);
   * a token/cost budget is enforced BEFORE any request is sent, using a
-    deterministic LOCAL estimate — no vendor call (not even count_tokens)
-    participates in the preflight gate, so an over-budget, possibly
-    PHI-bearing payload never crosses the trust boundary. The only egress is
-    the completion call itself, whose usage is post-approval telemetry;
+    guaranteed LOCAL upper bound on the token count (UTF-8 byte length, which
+    a byte-level BPE tokenizer can never exceed) — no vendor call (not even
+    count_tokens) participates in the preflight gate, and the bound cannot
+    under-count, so an over-budget, possibly PHI-bearing payload never crosses
+    the trust boundary. The only egress is the completion call itself, whose
+    usage is post-approval telemetry;
   * structured output is validated against a Pydantic model;
   * failures raise typed exceptions — never the repo's
     ``{"error": str(e)}`` 200-OK anti-pattern;
@@ -21,7 +23,6 @@ manually. When the toolchain moves to 3.9+, upgrade the pin and switch to
 ``messages.parse``.
 """
 import json
-import math
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Type
@@ -92,19 +93,34 @@ def estimate_cost(input_tokens: int, output_tokens: int) -> float:
     ) / 1_000_000
 
 
-def estimate_input_tokens(messages: List[Dict[str, Any]], system: Optional[str] = None) -> int:
-    """Deterministic LOCAL token estimate — NO network call.
+# Claude's tokenizer is byte-level BPE: all 256 single-byte tokens are in the
+# vocabulary, so no input can ever produce more tokens than it has UTF-8 bytes.
+# The UTF-8 byte length is therefore a GUARANTEED upper bound on the real input
+# token count for ANY input — high-entropy, all-digit, or multibyte-unicode
+# payloads that tokenize denser than prose included. This is a hard ceiling,
+# not a heuristic, and there is no env knob to loosen it. Plus a small fixed
+# allowance for the role/structure tokens the API counts around the system
+# prompt and each message.
+_BASE_TOKEN_OVERHEAD = 8
+_PER_MESSAGE_TOKEN_OVERHEAD = 8
 
-    Budget enforcement runs against this, never against the vendor's
-    count_tokens, which is itself an SDK egress of the full payload. The
-    estimate is biased conservative (see settings.llm_chars_per_token_estimate)
-    so it over-counts typical text rather than under-counting it. It is a
-    heuristic, not a guarantee — the absolute hard boundary on egress size is
-    the char cap in _enforce_char_cap. The real token count arrives on the
-    completion response as post-approval telemetry.
+
+def max_input_tokens(messages: List[Dict[str, Any]], system: Optional[str] = None) -> int:
+    """Guaranteed LOCAL upper bound on input tokens — NO network call, and it
+    can only over-count, never under-count.
+
+    The budget gate runs against this, never against the vendor's count_tokens
+    (itself an SDK egress of the full payload). Because it cannot under-count, a
+    prompt that passes the token cap here is guaranteed under the real cap, so
+    no over-budget — possibly PHI-bearing — payload can egress. The exact token
+    count arrives on the completion response as post-approval telemetry.
     """
-    chars = _input_char_count(messages, system)
-    return math.ceil(chars / settings.llm_chars_per_token_estimate)
+    total = _BASE_TOKEN_OVERHEAD + len((system or "").encode("utf-8"))
+    for message in messages:
+        content = message.get("content", "")
+        text = content if isinstance(content, str) else str(content)
+        total += _PER_MESSAGE_TOKEN_OVERHEAD + len(text.encode("utf-8"))
+    return total
 
 
 def _input_char_count(messages: List[Dict[str, Any]], system: Optional[str]) -> int:
@@ -118,8 +134,9 @@ def _input_char_count(messages: List[Dict[str, Any]], system: Optional[str]) -> 
 def _enforce_char_cap(messages: List[Dict[str, Any]], system: Optional[str]) -> None:
     """Local gross-size backstop — no network. Rejects grossly oversized prompts
     BEFORE any SDK call. The token/cost budget is enforced separately and also
-    locally by _enforce_budget (against estimate_input_tokens); this cap is a
-    cheap independent hard stop, not the token gate."""
+    locally by _enforce_budget (against max_input_tokens, a guaranteed byte-based
+    upper bound); this char cap is a cheap independent defense-in-depth stop, not
+    the token gate."""
     chars = _input_char_count(messages, system)
     if chars > settings.llm_max_input_chars:
         raise LLMBudgetExceeded(
@@ -162,7 +179,7 @@ def _call(
     metadata only.
     """
     _enforce_char_cap(messages, system)
-    input_tokens = estimate_input_tokens(messages, system=system)
+    input_tokens = max_input_tokens(messages, system=system)
     _enforce_budget(input_tokens, max_tokens)
 
     kwargs: Dict[str, Any] = {

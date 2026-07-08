@@ -27,18 +27,14 @@ class Settings:
     llm_max_input_tokens = int(os.getenv("LLM_MAX_INPUT_TOKENS", "20000"))
     llm_max_output_tokens = int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "2048"))
     llm_max_cost_per_request_usd = float(os.getenv("LLM_MAX_COST_PER_REQUEST_USD", "0.50"))
-    # Local token estimator: chars / this ratio, biased CONSERVATIVE (fewer
-    # chars/token than real English prose, which is ~3.8-4). Digit- and
-    # PHI-dense strings (SSNs, phone numbers) tokenize denser, so a low ratio
-    # over-counts on purpose. This is a HEURISTIC, not a guarantee: a
-    # pathological input (long digit runs, base64) can still tokenize denser
-    # than this ratio. anthropic 0.72 ships no offline tokenizer for Claude 3+,
-    # so an exact local count is not available. Lower = stricter.
-    llm_chars_per_token_estimate = float(os.getenv("LLM_CHARS_PER_TOKEN_ESTIMATE", "3.0"))
-    # The TRUE hard boundary on egress size: a local char cap that bounds the
-    # absolute payload regardless of how it tokenizes. The token estimate above
-    # is best-effort budget on top of this; this cap is what actually guarantees
-    # an over-sized payload never crosses the trust boundary.
+    # The token gate uses a GUARANTEED local upper bound on input tokens — the
+    # UTF-8 byte length, which a byte-level BPE tokenizer can never exceed
+    # (llm_client.max_input_tokens). There is deliberately NO ratio/estimate
+    # knob here: a tunable heuristic could under-count a dense (all-digit,
+    # high-entropy, multibyte-unicode) payload and let over-budget PHI egress.
+    # The bound is conservative for prose (~1 token per ~4 bytes), so raise
+    # LLM_MAX_INPUT_TOKENS if legitimate prompts are refused.
+    # Independent gross-size backstop (defense-in-depth), also local.
     llm_max_input_chars = int(os.getenv("LLM_MAX_INPUT_CHARS", str(llm_max_input_tokens * 4)))
 
 

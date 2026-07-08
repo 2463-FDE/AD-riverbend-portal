@@ -120,12 +120,57 @@ def test_over_budget_phi_prompt_never_egresses(monkeypatch):
     assert "123-45-6789" not in str(excinfo.value)
 
 
-def test_estimate_input_tokens_is_conservative():
-    # Estimator must over-count vs the ~3.8-4 chars/token English reality so it
-    # never under-counts a PHI-dense payload past the budget. With the 3.0
-    # default ratio, a 30-char message estimates >= 10 tokens.
-    messages = [{"role": "user", "content": "x" * 30}]
-    assert llm_mod.estimate_input_tokens(messages) >= 10
+def test_max_input_tokens_never_undercounts_bytes():
+    # The bound must be >= the UTF-8 byte length of the content, which is the
+    # hard ceiling on real tokens for byte-level BPE. Multibyte unicode makes
+    # bytes exceed the Python character (codepoint) count — the bound must
+    # follow bytes, not codepoints, or it could under-count.
+    text = "🔒 patient café résumé 日本語 123456"
+    messages = [{"role": "user", "content": text}]
+    bound = llm_mod.max_input_tokens(messages)
+    assert bound >= len(text.encode("utf-8"))
+    assert bound > len(text)  # bytes > codepoints for this multibyte string
+
+
+# --- adversarial: dense payloads a chars/N heuristic would under-count -------
+# Each of these tokenizes DENSER than prose. The pre-fix chars/3.0 estimator
+# would pass them under the token cap and egress; the byte-based upper bound
+# must reject them with zero SDK calls. (These fail against the chars/3.0 code.)
+
+
+def test_all_digit_over_budget_never_egresses(monkeypatch):
+    fake = _patch_client(monkeypatch, _FakeMessages())
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_chars", 10_000_000)  # char gate wide open
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_tokens", 100)
+    # 250 ASCII digits: 250 bytes > 100 cap. chars/3.0 == 84, which would pass.
+    with pytest.raises(llm_mod.LLMBudgetExceeded):
+        llm_mod.complete("1234567890" * 25)
+    assert fake.count_calls == []
+    assert fake.create_calls == []
+
+
+def test_multibyte_unicode_over_budget_never_egresses(monkeypatch):
+    fake = _patch_client(monkeypatch, _FakeMessages())
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_chars", 10_000_000)  # char gate wide open
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_tokens", 100)
+    # 200 emoji: 200 codepoints but 800 UTF-8 bytes > 100 cap. A codepoint-based
+    # estimate (chars/3.0 == 67) would pass and egress; the byte bound rejects.
+    with pytest.raises(llm_mod.LLMBudgetExceeded):
+        llm_mod.complete("🔒" * 200)
+    assert fake.count_calls == []
+    assert fake.create_calls == []
+
+
+def test_high_entropy_over_budget_never_egresses(monkeypatch):
+    fake = _patch_client(monkeypatch, _FakeMessages())
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_chars", 10_000_000)  # char gate wide open
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_tokens", 100)
+    # 270 non-word ASCII chars: 270 bytes > 100. chars/3.0 == 90 would PASS the
+    # heuristic and egress; the byte bound rejects.
+    with pytest.raises(llm_mod.LLMBudgetExceeded):
+        llm_mod.complete("@#$%^&*()" * 30)
+    assert fake.count_calls == []
+    assert fake.create_calls == []
 
 
 def test_char_cap_refuses_before_any_sdk_call(monkeypatch):
