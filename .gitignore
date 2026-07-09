@@ -4,6 +4,18 @@ __pycache__/
 .next/
 dist/
 .DS_Store
+# Local env files hold real credentials (DB, payer, session secret, Anthropic
+# key) — never track them. Template lives in .env.example. NOTE: the previously
+# tracked .env is still in git history; rotation + history scrub are tracked in
+# docs/debt-log.md (remediation runbook).
+.env
+.env.local
+
+# Application logs may contain PHI (see docs/phi-logging-policy.md) — never track them.
+*.log
 *.log.1
 *.log.2
 .venv/
+
+# Claude Code local (machine-specific) settings
+.claude/settings.local.json

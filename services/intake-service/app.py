@@ -6,8 +6,12 @@ We create the patient chart, attach insurance coverage (if supplied), record the
 signed consents, and verify payer eligibility before returning.
 
 Inherited shortcomings (left as-is from the handoff):
-  * D1 — the full request body (PHI: name/dob/ssn/notes) is written to a file
-    log at INFO. See logging_config.py.
+  * D1 — REMEDIATED 2026-07: intake no longer logs the request body at all.
+    It logs only an allowlisted, non-PHI metadata shape (schemas.log_metadata)
+    — never a raw request string. Redacting the body was not enough: pattern
+    redaction misses names/DOBs smuggled into free-text fields (Codex review).
+    See docs/phi-logging-policy.md. The historical logs/intake-service.log
+    still contains pre-fix PHI — open ops item.
   * D5 — no master patient index / match key: every /intake creates a brand new
     patients row, so one person forks into several charts (intake.yaml match_key:
     none).
@@ -15,6 +19,7 @@ Inherited shortcomings (left as-is from the handoff):
     timeout, so a slow payer makes registration "spin ~4-5s".
   * Consents are inserted one at a time (a commit per consent).
 """
+import json
 import os
 import time
 from typing import Any, Optional
@@ -29,7 +34,7 @@ from config import settings
 from db import get_db
 from logging_config import configure
 from models import Consent, InsuranceCoverage, Patient
-from schemas import Demographics, Insurance, IntakeRequest, IntakeResponse
+from schemas import Demographics, Insurance, IntakeRequest, IntakeResponse, log_metadata
 
 log = configure(settings.service_name)
 app = FastAPI(title="Riverbend intake-service", version="1.3.0")
@@ -60,9 +65,12 @@ def intake_config():
 def create_intake(req: IntakeRequest, db: Session = Depends(get_db)):
     started = time.time()
 
-    # D1 (flagged, not fixed): persist the entire request body — including PHI —
-    # to the file handler so the front desk has a record of every registration.
-    log.info('POST /intake body=%s', req.model_dump_json())
+    # D1 (remediated 2026-07): the front desk still gets a record of every
+    # registration, but we log only an allowlisted, non-PHI metadata shape —
+    # never the request body or any raw request string. Redacting the body was
+    # insufficient because pattern redaction misses names/DOBs smuggled into
+    # free-text fields (Codex review). See docs/phi-logging-policy.md.
+    log.info('POST /intake meta=%s', json.dumps(log_metadata(req)))
 
     # D5 (flagged, not fixed): no MPI / match-key lookup on (name, dob, ssn).
     # Every intake inserts a brand new chart, even for a returning patient.
@@ -150,5 +158,10 @@ def _verify_eligibility(ins: Optional[Insurance]) -> Optional[dict[str, Any]]:
         )  # no timeout= — synchronous, blocks /intake (RIV-088)
         return resp.json()
     except Exception as e:
-        log.error("intake: eligibility check failed: %s", e)
-        return {"active": False, "error": str(e)}
+        # PHI policy rule 3: never stringify an outbound exception here. The
+        # request URL carries insurance_id=<member_id> as a query param, and
+        # httpx embeds the failing URL in its exception message — so str(e)
+        # would leak a PHI-adjacent external identifier into the log AND the
+        # /intake response. Log the exception class only, return a generic error.
+        log.error("intake: eligibility check failed (%s)", type(e).__name__)
+        return {"active": False, "error": "eligibility check failed"}

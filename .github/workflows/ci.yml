@@ -31,6 +31,7 @@ jobs:
           - scheduling-service
           - interop-service
           - roi-service
+          - ai-assistant
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -57,12 +58,32 @@ jobs:
         # paths is thin — tracked in RIV-201.
         run: pytest -m "not integration" -q
 
-  # NOTE: no dependency vulnerability scan, no container image scan, and no
-  # secret-scanning step. Images are built and pushed straight from main.
-  docker-build:
+  # Secret scanning — recurrence guard for D9 (committed-secret exposure).
+  # Scans the checked-out tree (--no-git) so any secret in a TRACKED file fails
+  # the build: if a future change force-commits a gitignored secret file (e.g.
+  # .env), it lands on disk at checkout and is caught here. This does NOT scan
+  # full git history — the pre-existing .env/PHI-log blobs already in branch
+  # history are separate, human-run remediation (rotate + history scrub +
+  # force-push), owned in docs/debt-log.md. A dependency vuln scan and a
+  # container image scan are still absent (remainder of D9).
+  secret-scan:
     runs-on: ubuntu-latest
-    needs: [frontend, services, tests]
     steps:
       - uses: actions/checkout@v4
+      - name: gitleaks (tracked-tree scan, recurrence guard)
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/repo" \
+            zricethezav/gitleaks:v8.18.4 \
+            detect --source=/repo --no-git --redact --verbose --exit-code 1
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: [frontend, services, tests, secret-scan]
+    steps:
+      - uses: actions/checkout@v4
+      # .env is gitignored (untracked secret file). Compose validates env_file:
+      # .env at parse time, so seed a non-secret one from the committed example.
+      - name: Seed non-secret env from example
+        run: cp .env.example .env
       - name: Build images
         run: docker compose build
