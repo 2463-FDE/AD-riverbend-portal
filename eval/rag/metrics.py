@@ -64,7 +64,8 @@ def candidate_duplicate_rate(patients: Sequence, identities: Sequence) -> Candid
     """
     Rows beyond one-per-candidate-identity are candidate duplicates.
 
-    Conflict identities (same SSN, conflicting demographics) arrive here as
+    Conflict identities (same SSN, conflicting demographics) and ambiguous
+    identities (SSN group linked only through a bridge row) arrive here as
     their own single-row entries, so they never inflate this rate.
     """
     total = len(patients)

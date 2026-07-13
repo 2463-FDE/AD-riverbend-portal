@@ -94,9 +94,15 @@ Introduce a match key at intake, evaluated at chart-create time:
   implements this ADR's stance rather than contradicting it: SSN clusters
   count as *candidate* duplicate matches only when at least two of three
   demographic signals corroborate (similar name, DOB with transposition
-  tolerance, matching address). Rows sharing a valid SSN whose demographics
-  conflict are flagged **non-mergeable** and excluded from the candidate
-  duplicate rate — a shared, mistyped, or fraudulent SSN must never weld two
-  people into one record (decision 3). After the retroactive merge,
-  re-running the harness should report a 0% candidate duplicate rate, no
-  fragment-coverage gap, and no unresolved SSN conflicts.
+  tolerance, matching address) **between every pair of rows in the cluster**.
+  Corroboration is a similarity relation, not an equivalence — it does not
+  chain — so a group whose rows connect only through a bridge row (A matches
+  B, B matches C, but A and C conflict) is flagged **ambiguous** row-by-row
+  rather than clustered; picking which pair to merge would be an arbitrary
+  choice the harness must not make. Rows sharing a valid SSN whose
+  demographics conflict with all of their SSN-mates are flagged
+  **non-mergeable**. Both classes are excluded from the candidate duplicate
+  rate — a shared, mistyped, or fraudulent SSN must never weld two people
+  into one record (decision 3). After the retroactive merge, re-running the
+  harness should report a 0% candidate duplicate rate, no fragment-coverage
+  gap, and no unresolved SSN conflicts or ambiguous groups.

@@ -58,11 +58,17 @@ class Identity:
 
     status:
       "unmatched" — single row; no other row shares its match key.
-      "candidate" — rows share the match key AND corroborating demographics;
-                    queued for human review as a likely duplicate.
+      "candidate" — rows share the match key AND every pair of rows in the
+                    cluster has corroborating demographics; queued for human
+                    review as a likely duplicate.
       "conflict"  — row shares an SSN with other rows but its demographics
                     conflict with all of them; non-mergeable, needs
                     investigation (shared/mistyped/fraudulent SSN).
+      "ambiguous" — row belongs to an SSN group that chains together only
+                    through bridge rows (A corroborates B, B corroborates C,
+                    but A and C conflict). Corroboration does not chain, so
+                    no mechanical cluster is safe: each row is emitted alone,
+                    excluded from candidate counts, for human review.
     """
     key: str
     patient_ids: List[int] = field(default_factory=list)
@@ -132,6 +138,12 @@ def _dobs_compatible(a: str, b: str) -> bool:
 
 
 def _addresses_match(a: str, b: str) -> bool:
+    """
+    Exact match after punctuation/case normalization. Known limitation:
+    abbreviation drift ("12 Elm St" vs "12 Elm Street") does not match —
+    acceptable for a corroborating signal that is one of three, never
+    load-bearing alone.
+    """
     na, nb = normalize_name(a), normalize_name(b)
     return bool(na) and na == nb
 
@@ -151,13 +163,27 @@ def _demographics_corroborate(p: Patient, q: Patient) -> bool:
     return sum(signals) >= 2
 
 
+def _all_pairs_corroborate(rows: List[Patient]) -> bool:
+    """True when every pair of rows has corroborating demographics."""
+    return all(
+        _demographics_corroborate(a, b)
+        for i, a in enumerate(rows)
+        for b in rows[i + 1:]
+    )
+
+
 def _split_ssn_cluster(ssn: str, rows: List[Patient]) -> List[Identity]:
     """
     An SSN is a candidate signal, not an identity (ADR 0005): rows sharing
     an SSN merge into a candidate cluster only where demographics
-    corroborate. A row that corroborates with none of its SSN-mates is a
-    conflict — same SSN, incompatible person — and must never be merged
-    or counted as a duplicate.
+    corroborate — and corroboration must hold for EVERY pair in the
+    cluster, not just chain through a bridge row (similarity built from
+    edit-distance and transposition tolerance is not transitive). A
+    connected component that is not a clique is emitted one row at a time
+    as "ambiguous": picking which pair to merge would be an arbitrary,
+    order-dependent choice no report should make. A row that corroborates
+    with none of its SSN-mates is a conflict — same SSN, incompatible
+    person. Neither is ever merged or counted as a duplicate.
     """
     components: List[List[Patient]] = []
     for p in rows:
@@ -171,8 +197,13 @@ def _split_ssn_cluster(ssn: str, rows: List[Patient]) -> List[Identity]:
     identities = []
     for comp in components:
         ids = sorted(x.id for x in comp)
-        if len(comp) > 1:
+        if len(comp) > 1 and _all_pairs_corroborate(comp):
             identities.append(Identity(key=ssn, patient_ids=ids, status="candidate"))
+        elif len(comp) > 1:
+            identities.extend(
+                Identity(key=f"{ssn}:ambiguous:{i}", patient_ids=[i], status="ambiguous")
+                for i in ids
+            )
         elif len(rows) > 1:
             identities.append(
                 Identity(key=f"{ssn}:conflict:{ids[0]}", patient_ids=ids, status="conflict")
@@ -260,11 +291,13 @@ def resolve_identities(patients: List[Patient], match_key: str) -> List[Identity
                    every row is its own identity.
       "ssn"      — group by normalized SSN, then require corroborating
                    demographics (two of: similar name, compatible DOB,
-                   matching address) before rows cluster. Rows whose SSN is
-                   missing or invalid (blank, non-numeric, all-zero
-                   placeholders) stay unmatched; rows sharing a valid SSN
-                   whose demographics conflict are flagged "conflict" and
-                   never merged — a shared or mistyped SSN must not weld two
+                   matching address) between EVERY pair of rows before they
+                   cluster. Rows whose SSN is missing or invalid (blank,
+                   non-numeric, all-zero placeholders) stay unmatched; rows
+                   sharing a valid SSN whose demographics conflict are
+                   flagged "conflict"; groups that only chain through a
+                   bridge row are flagged "ambiguous" row-by-row. Neither is
+                   ever merged — a shared or mistyped SSN must not weld two
                    real people into one record.
       "name_dob" — group by (normalized name, dob). Included to show why it
                    fails: spelling drift and DOB typos defeat exact matching.

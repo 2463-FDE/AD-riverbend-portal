@@ -152,6 +152,89 @@ def test_shared_ssn_plus_address_alone_is_not_corroboration():
     assert all(i.status == "conflict" for i in identities)
 
 
+def test_bridge_rows_never_form_one_candidate_cluster():
+    # Codex round-3 finding: connected-component clustering lets a bridge row
+    # weld two pairwise-conflicting people into one candidate. A corroborates
+    # B (name + DOB), B corroborates C (DOB + address), but A and C conflict
+    # (DOB only — one signal). Corroboration is a similarity relation, not an
+    # equivalence: it does not chain. A cluster containing a conflicting pair
+    # must never ship as a candidate — it is ambiguous, for human review,
+    # and contributes nothing to the candidate duplicate rate.
+    rows = [
+        rag_data.Patient(id=1, name="Ana Ruiz", dob="1990-01-01",
+                         ssn="412-55-9981", address="1 A St", created_via="self_service"),
+        rag_data.Patient(id=2, name="Ana Ruis", dob="1990-01-01",
+                         ssn="412-55-9981", address="9 Q Blvd", created_via="self_service"),
+        rag_data.Patient(id=3, name="Zed Kane", dob="1990-01-01",
+                         ssn="412-55-9981", address="9 Q Blvd", created_via="self_service"),
+    ]
+    identities = rag_data.resolve_identities(rows, "ssn")
+    assert {tuple(i.patient_ids) for i in identities} == {(1,), (2,), (3,)}
+    assert all(i.status == "ambiguous" for i in identities)
+    dup = rag_metrics.candidate_duplicate_rate(rows, identities)
+    assert dup.candidate_duplicate_rows == 0
+    assert dup.rate == 0.0
+
+
+def test_every_candidate_cluster_is_pairwise_corroborated():
+    # The invariant the round-2 fix claimed but did not enforce: no emitted
+    # candidate cluster may contain ANY pair of rows whose demographics fail
+    # to corroborate. Checked over a topology zoo — a true clique, a bridge
+    # chain, a star (hub corroborates all spokes, spokes mutually conflict),
+    # and two disjoint corroborating pairs under one SSN — so the assertion
+    # covers the class of counterexamples, not one anecdote.
+    def p(pid, name, dob, addr, ssn):
+        return rag_data.Patient(id=pid, name=name, dob=dob, ssn=ssn,
+                                address=addr, created_via="self_service")
+
+    rows = [
+        # clique of three (the Maria shape) — must still cluster
+        p(1, "Maria Gonzalez", "1971-02-03", "12 Elm St", "412-55-9981"),
+        p(2, "Maria Gonzales", "1971-02-03", "12 Elm St", "412-55-9981"),
+        p(3, "M. Gonzalez", "1971-03-02", "12 Elm St", "412-55-9981"),
+        # bridge chain: 4~5 (name+DOB), 5~6 (DOB+address), 4/6 conflict
+        p(4, "Ana Ruiz", "1990-01-01", "1 A St", "587-33-1204"),
+        p(5, "Ana Ruis", "1990-01-01", "9 Q Blvd", "587-33-1204"),
+        p(6, "Zed Kane", "1990-01-01", "9 Q Blvd", "587-33-1204"),
+        # star: hub 7 corroborates 8 (name+DOB) and 9 (DOB+address);
+        # 8 and 9 conflict with each other (DOB only)
+        p(7, "Lee Park", "1985-06-07", "3 Oak Ave", "231-44-7788"),
+        p(8, "Lea Park", "1985-06-07", "88 Pine Rd", "231-44-7788"),
+        p(9, "Rob Diaz", "1985-06-07", "3 Oak Ave", "231-44-7788"),
+        # two disjoint corroborating pairs under one SSN
+        p(10, "Ivy Chen", "1979-11-12", "5 Fir Ln", "354-22-6611"),
+        p(11, "Ivy Chan", "1979-11-12", "5 Fir Ln", "354-22-6611"),
+        p(12, "Sam Hale", "1966-04-09", "7 Ash Ct", "354-22-6611"),
+        p(13, "Sam Hale", "1966-04-09", "7 Ash Ct", "354-22-6611"),
+    ]
+    by_id = {r.id: r for r in rows}
+    identities = rag_data.resolve_identities(rows, "ssn")
+
+    # The universal invariant: every pair inside every multi-row identity
+    # corroborates. No topology may smuggle a conflicting pair past it.
+    for identity in identities:
+        members = [by_id[pid] for pid in identity.patient_ids]
+        for i, a in enumerate(members):
+            for b in members[i + 1:]:
+                assert rag_data._demographics_corroborate(a, b), (
+                    f"identity {identity.patient_ids} contains "
+                    f"non-corroborating pair ({a.id}, {b.id})"
+                )
+        assert identity.status in {"unmatched", "candidate", "conflict", "ambiguous"}
+
+    clusters = {tuple(i.patient_ids): i.status for i in identities}
+    assert clusters[(1, 2, 3)] == "candidate"          # clique survives intact
+    assert clusters[(10, 11)] == "candidate"           # disjoint pairs both
+    assert clusters[(12, 13)] == "candidate"           #   cluster separately
+    for pid in (4, 5, 6, 7, 8, 9):                     # chain + star: per-row
+        assert clusters[(pid,)] == "ambiguous"
+
+    # Ambiguous rows must not inflate the headline rate: only the clique
+    # (2 extra rows) and the two pairs (1 extra row each) count.
+    dup = rag_metrics.candidate_duplicate_rate(rows, identities)
+    assert dup.candidate_duplicate_rows == 4
+
+
 def test_mistyped_ssn_keeps_same_person_split_known_limitation():
     # The mistype direction: the SAME person registered twice with one digit
     # of the SSN wrong stays two identities under exact-SSN grouping. The
@@ -402,3 +485,34 @@ def test_report_calls_clusters_candidates_not_resolved_facts():
     assert "never auto-merge" in md
     assert "distinct humans" not in md
     assert "non-mergeable" in md  # the conflict rule is stated even when empty
+    assert "ambiguous" in md  # ...and so is the bridge-row rule (round 3)
+
+
+def test_report_lists_ambiguous_rows_in_their_own_section():
+    # The report's ambiguous branch must actually render when bridged rows
+    # exist — the seed fixture has none, so without this test the whole
+    # section is dead code under green tests.
+    rows = [
+        rag_data.Patient(id=1, name="Ana Ruiz", dob="1990-01-01",
+                         ssn="412-55-9981", address="1 A St", created_via="self_service"),
+        rag_data.Patient(id=2, name="Ana Ruis", dob="1990-01-01",
+                         ssn="412-55-9981", address="9 Q Blvd", created_via="self_service"),
+        rag_data.Patient(id=3, name="Zed Kane", dob="1990-01-01",
+                         ssn="412-55-9981", address="9 Q Blvd", created_via="self_service"),
+    ]
+    identities_by_key = {
+        key: rag_data.resolve_identities(rows, key)
+        for key in ("none", "name_dob", "ssn")
+    }
+    dup = rag_metrics.candidate_duplicate_rate(rows, identities_by_key["ssn"])
+    scores = rag_metrics.retrieval_scores([], {})
+    md = rag_report.render_report(
+        rows, identities_by_key, dup, [], scores, "stub oracle", k=1
+    )
+    assert "bridge row" in md
+    assert "flagged **ambiguous**" in md
+    # every bridged row is listed in the ambiguous table
+    for name in ("Ana Ruiz", "Ana Ruis", "Zed Kane"):
+        assert name in md
+    # and none of them appears as a candidate duplicate cluster
+    assert "Candidate duplicate cluster" not in md

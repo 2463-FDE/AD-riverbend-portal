@@ -83,6 +83,10 @@ def main() -> None:
     if conflicts:
         rows = sorted(pid for i in conflicts for pid in i.patient_ids)
         print(f"⚠️  non-mergeable SSN conflicts (shared SSN, conflicting demographics): rows {rows}")
+    ambiguous = [i for i in identities_by_key["ssn"] if i.status == "ambiguous"]
+    if ambiguous:
+        rows = sorted(pid for i in ambiguous for pid in i.patient_ids)
+        print(f"⚠️  ambiguous SSN groups (corroborate only via a bridge row, not pairwise): rows {rows}")
     missed = sorted({a for g in gaps for a in g.missed_allergies})
     if missed:
         print(f"⚠️  allergies invisible on at least one chart: {', '.join(missed)}")
