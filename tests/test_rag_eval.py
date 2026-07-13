@@ -41,6 +41,24 @@ def test_normalize_ssn_strips_formatting():
     assert rag_data.normalize_ssn("") == ""
 
 
+def test_is_valid_ssn_rejects_missing_malformed_and_placeholders():
+    assert rag_data.is_valid_ssn("412-55-9981")
+    assert rag_data.is_valid_ssn("412559981")
+    # Missing / malformed
+    assert not rag_data.is_valid_ssn("")
+    assert not rag_data.is_valid_ssn(None)
+    assert not rag_data.is_valid_ssn("not-an-ssn")
+    assert not rag_data.is_valid_ssn("12345")  # too short
+    assert not rag_data.is_valid_ssn("4125599810")  # too long
+    # Structurally never-issued (SSA rules) — the classic shared placeholders
+    assert not rag_data.is_valid_ssn("000-00-0000")
+    assert not rag_data.is_valid_ssn("000-55-9981")  # area 000
+    assert not rag_data.is_valid_ssn("666-55-9981")  # area 666
+    assert not rag_data.is_valid_ssn("900-55-9981")  # area 9xx
+    assert not rag_data.is_valid_ssn("412-00-9981")  # group 00
+    assert not rag_data.is_valid_ssn("412-55-0000")  # serial 0000
+
+
 def test_none_known_is_not_an_allergy():
     # 1601's allergies cell reads "none known" — an assessed-empty sentinel,
     # not an allergen. It must not survive parsing as a phantom allergy.
@@ -68,6 +86,47 @@ def test_match_key_ssn_collapses_all_three_marias():
     assert len(identities) == 3
     clusters = {tuple(i.patient_ids) for i in identities}
     assert tuple(MARIA_IDS) in clusters
+
+
+def test_invalid_ssns_never_merge_patients():
+    # Adversarial input the harness will meet in real intake data (ADR 0005:
+    # self-service SSN is optional and mistyped): blank, non-numeric, and a
+    # shared placeholder. A common junk value must not become a shared match
+    # key — otherwise unrelated patients merge into one fake human and the
+    # duplicate rate the report headlines is fabricated.
+    rows = [
+        rag_data.Patient(id=1, name="Ana Ruiz", dob="1990-01-01",
+                         ssn="", address="1 A St", created_via="self_service"),
+        rag_data.Patient(id=2, name="Ben Cole", dob="1991-02-02",
+                         ssn="", address="2 B St", created_via="self_service"),
+        rag_data.Patient(id=3, name="Cy Dunn", dob="1992-03-03",
+                         ssn="not-an-ssn", address="3 C St", created_via="self_service"),
+        rag_data.Patient(id=4, name="Dee Eng", dob="1993-04-04",
+                         ssn="000-00-0000", address="4 D St", created_via="self_service"),
+        rag_data.Patient(id=5, name="Ed Fox", dob="1994-05-05",
+                         ssn="000-00-0000", address="5 E St", created_via="self_service"),
+    ]
+    identities = rag_data.resolve_identities(rows, "ssn")
+    assert len(identities) == 5  # every row its own identity — nothing merged
+    assert {tuple(i.patient_ids) for i in identities} == {(1,), (2,), (3,), (4,), (5,)}
+    dup = rag_metrics.duplicate_rate(rows, identities)
+    assert dup.duplicate_rows == 0
+    assert dup.rate == 0.0
+
+
+def test_valid_ssns_still_merge_alongside_invalid_rows():
+    # The guard must not break real matching: two rows sharing a valid SSN
+    # still collapse while the blank-SSN row stays unmatched.
+    rows = [
+        rag_data.Patient(id=1, name="Ana Ruiz", dob="1990-01-01",
+                         ssn="412-55-9981", address="1 A St", created_via="self_service"),
+        rag_data.Patient(id=2, name="Ana Ruis", dob="1990-01-01",
+                         ssn="412 55 9981", address="1 A St", created_via="self_service"),
+        rag_data.Patient(id=3, name="Ben Cole", dob="1991-02-02",
+                         ssn="", address="2 B St", created_via="self_service"),
+    ]
+    identities = rag_data.resolve_identities(rows, "ssn")
+    assert {tuple(i.patient_ids) for i in identities} == {(1, 2), (3,)}
 
 
 def test_match_key_name_dob_catches_zero_duplicates():

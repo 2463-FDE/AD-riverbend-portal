@@ -60,6 +60,17 @@ def normalize_ssn(ssn: str) -> str:
     return re.sub(r"\D", "", ssn or "")
 
 
+# SSA never issues area 000/666/900-999, group 00, or serial 0000, so
+# placeholders like 000-00-0000 fail this check along with blank or
+# non-numeric values.
+_SSN_VALID = re.compile(r"^(?!000|666|9)\d{3}(?!00)\d{2}(?!0000)\d{4}$")
+
+
+def is_valid_ssn(ssn: str) -> bool:
+    """True when the normalized value is a structurally issuable 9-digit SSN."""
+    return bool(_SSN_VALID.match(normalize_ssn(ssn)))
+
+
 def normalize_name(name: str) -> str:
     """Lowercase, drop punctuation, collapse whitespace."""
     cleaned = re.sub(r"[^\w\s]", "", (name or "").lower())
@@ -139,7 +150,10 @@ def resolve_identities(patients: List[Patient], match_key: str) -> List[Identity
     match_key:
       "none"     — intake's current behavior (intake.yaml match_key: none):
                    every row is its own human.
-      "ssn"      — group by normalized SSN.
+      "ssn"      — group by normalized SSN. Rows whose SSN is missing or
+                   invalid (blank, non-numeric, placeholders like
+                   000-00-0000) stay unmatched as their own identity — a
+                   shared junk value must never merge unrelated patients.
       "name_dob" — group by (normalized name, dob). Included to show why it
                    fails: spelling drift and DOB typos defeat exact matching.
     """
@@ -148,6 +162,8 @@ def resolve_identities(patients: List[Patient], match_key: str) -> List[Identity
 
     def key_for(p: Patient) -> str:
         if match_key == "ssn":
+            if not is_valid_ssn(p.ssn):
+                return f"unmatched:{p.id}"
             return normalize_ssn(p.ssn)
         if match_key == "name_dob":
             return f"{normalize_name(p.name)}|{p.dob}"
