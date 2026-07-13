@@ -36,21 +36,47 @@ def render_report(
     add("")
 
     # 1 — headline
-    add("## 1. Headline: one human, multiple charts")
+    add("## 1. Headline: one person, multiple charts (candidate matches)")
     add("")
-    add(f"Collapsing patient rows by normalized SSN finds **{dup.distinct_humans} "
-        f"distinct humans behind {dup.total_rows} patient rows** — "
-        f"**{dup.duplicate_rows} duplicate rows ({dup.rate:.0%} duplicate rate)**.")
+    add(f"Collapsing patient rows by normalized SSN **with corroborating "
+        f"demographics** finds **{dup.candidate_identities} candidate "
+        f"identities behind {dup.total_rows} patient rows** — "
+        f"**{dup.candidate_duplicate_rows} candidate duplicate rows "
+        f"({dup.rate:.0%} candidate duplicate rate)**. These are matches "
+        "queued for human review, not resolved identities: per ADR 0005, "
+        "flag, never auto-merge.")
     add("")
-    fragmented = [ids for ids in identities_by_key.get("ssn", []) if len(ids.patient_ids) > 1]
+    ssn_identities = identities_by_key.get("ssn", [])
+    fragmented = [i for i in ssn_identities if len(i.patient_ids) > 1]
     for identity in fragmented:
-        add(f"Duplicate cluster (SSN match `{identity.key[:3]}-…`):")
+        add(f"Candidate duplicate cluster (SSN match `{identity.key[:3]}-…`, "
+            "corroborated by name/DOB/address):")
         add("")
         add("| patient id | name | dob | created via |")
         add("|---|---|---|---|")
         for pid in identity.patient_ids:
             p = by_id[pid]
             add(f"| {p.id} | {p.name} | {p.dob} | {p.created_via} |")
+        add("")
+    conflicts = [i for i in ssn_identities if getattr(i, "status", "") == "conflict"]
+    if conflicts:
+        add("⚠️ Rows sharing an SSN whose demographics **conflict** are "
+            "flagged **non-mergeable** and excluded from the counts above — "
+            "a shared or mistyped SSN must not weld two people into one "
+            "record:")
+        add("")
+        add("| patient id | name | dob | created via |")
+        add("|---|---|---|---|")
+        for identity in conflicts:
+            for pid in identity.patient_ids:
+                p = by_id[pid]
+                add(f"| {p.id} | {p.name} | {p.dob} | {p.created_via} |")
+        add("")
+    else:
+        add("SSN alone is treated as a candidate signal, not an identity: "
+            "rows sharing an SSN with conflicting name/DOB/address would be "
+            "flagged non-mergeable and excluded from these counts (none in "
+            "this export).")
         add("")
     add("Root cause: `services/intake-service/intake.yaml` sets "
         "`self_service_intake: true` with `match_key: none` — every "
@@ -61,8 +87,8 @@ def render_report(
     # 2 — patient safety
     add("## 2. Patient-safety gap: what each chart hides")
     add("")
-    add("For every fragmented human, each individual chart vs. the union of "
-        "all their charts:")
+    add("For every candidate identity with multiple charts, each individual "
+        "chart vs. the union of all charts in the cluster:")
     add("")
     add("| chart | allergies on chart | allergies (union) | MISSED allergies | meds on chart | meds (union) | MISSED meds |")
     add("|---|---|---|---|---|---|---|")
@@ -88,18 +114,20 @@ def render_report(
     # 3 — match-key analysis
     add("## 3. Match-key analysis: what would have caught this")
     add("")
-    add("| match key | humans resolved | duplicate rows caught |")
+    add("| match key | candidate identities | candidate duplicate rows caught |")
     add("|---|---|---|")
     total = dup.total_rows
     for key, identities in identities_by_key.items():
         caught = total - len(identities)
         add(f"| `{key}` | {len(identities)} | {caught} |")
     add("")
-    add("`name_dob` exact matching catches **zero** of the duplicates here: "
-        "spelling drift (Gonzalez/Gonzales), an initialized first name "
-        "(M. Gonzalez), and a transposed DOB (1971-03-02 vs 1971-02-03) each "
-        "defeat it. Only the SSN survives all three data-entry variations — "
-        "which is why ADR 0005 anchors the proposed match key on SSN.")
+    add("`name_dob` exact matching catches **zero** of the candidate "
+        "duplicates here: spelling drift (Gonzalez/Gonzales), an initialized "
+        "first name (M. Gonzalez), and a transposed DOB (1971-03-02 vs "
+        "1971-02-03) each defeat it. Only the SSN survives all three "
+        "data-entry variations — which is why ADR 0005 anchors the proposed "
+        "match key on SSN, *corroborated by demographics* rather than "
+        "standing alone.")
     add("")
 
     # 4 — the foil

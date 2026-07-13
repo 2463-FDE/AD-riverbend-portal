@@ -3,24 +3,27 @@ Graded metrics for the RAG retrieval eval (RIV-160).
 
 Torch-free and import-light on purpose: these functions take plain data
 (objects with the attributes data.py's dataclasses expose) so they unit-test
-without any ML stack. The headline metrics — duplicate rate and fragment
-coverage gap — need no retrieval at all.
+without any ML stack. The headline metrics — candidate duplicate rate and
+fragment coverage gap — need no retrieval at all.
+
+Language is deliberate: clusters are *candidate* duplicate matches pending
+human review, never resolved identities (ADR 0005: flag, never auto-merge).
 """
 from dataclasses import dataclass
 from typing import Dict, List, Sequence, Tuple
 
 
 @dataclass(frozen=True)
-class DuplicateRate:
+class CandidateDuplicateRate:
     total_rows: int
-    distinct_humans: int
-    duplicate_rows: int
-    rate: float  # duplicate_rows / total_rows
+    candidate_identities: int
+    candidate_duplicate_rows: int
+    rate: float  # candidate_duplicate_rows / total_rows
 
 
 @dataclass(frozen=True)
 class FragmentGap:
-    """What one chart shows vs. everything known about the human it belongs to."""
+    """What one chart shows vs. everything known across its candidate identity."""
     chart_id: int
     identity_patient_ids: Tuple[int, ...]
     union_allergies: frozenset
@@ -57,15 +60,20 @@ class RetrievalScores:
     macro_precision: float
 
 
-def duplicate_rate(patients: Sequence, identities: Sequence) -> DuplicateRate:
-    """Rows beyond one-per-human are duplicates."""
+def candidate_duplicate_rate(patients: Sequence, identities: Sequence) -> CandidateDuplicateRate:
+    """
+    Rows beyond one-per-candidate-identity are candidate duplicates.
+
+    Conflict identities (same SSN, conflicting demographics) arrive here as
+    their own single-row entries, so they never inflate this rate.
+    """
     total = len(patients)
-    humans = len(identities)
-    dupes = total - humans
-    return DuplicateRate(
+    candidates = len(identities)
+    dupes = total - candidates
+    return CandidateDuplicateRate(
         total_rows=total,
-        distinct_humans=humans,
-        duplicate_rows=dupes,
+        candidate_identities=candidates,
+        candidate_duplicate_rows=dupes,
         rate=(dupes / total) if total else 0.0,
     )
 
@@ -84,9 +92,9 @@ def fragment_coverage_gap(
     identity_patient_ids: Sequence[int], encounters: Sequence, chart_id: int
 ) -> FragmentGap:
     """
-    Compare one chart against the union of all charts belonging to the same
-    resolved human. Anything in the union but not on the chart is invisible
-    to a clinician who opens that chart.
+    Compare one chart against the union of all charts in the same candidate
+    identity (the rows a human reviewer would merge). Anything in the union
+    but not on the chart is invisible to a clinician who opens that chart.
     """
     union_allergies, union_medications = set(), set()
     for pid in identity_patient_ids:

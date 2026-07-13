@@ -15,9 +15,10 @@ The consequence is measured, not hypothetical. The Week-2 retrieval eval
 (`eval/rag/`, report in `eval/rag/REPORT.md`) ran against the exported
 patients/encounters data and found:
 
-- **40% duplicate rate** — 5 patient rows resolve to 3 humans by SSN. One
-  person (Maria Gonzalez) holds three charts: 1042 *Maria Gonzalez*, 1330
-  *Maria Gonzales*, 1588 *M. Gonzalez* — identical SSN and address.
+- **40% candidate duplicate rate** — 5 patient rows resolve to 3 candidate
+  identities by SSN with corroborating demographics. One person (Maria
+  Gonzalez) holds three charts: 1042 *Maria Gonzalez*, 1330 *Maria Gonzales*,
+  1588 *M. Gonzalez* — identical SSN and address.
 - **A patient-safety gap**: her penicillin allergy is recorded only under
   chart 1330. Charts 1042 and 1588 show no allergies. A clinician opening
   either chart could prescribe penicillin. This is exactly Dr. Nguyen's
@@ -89,6 +90,13 @@ Introduce a match key at intake, evaluated at chart-create time:
   new plaintext SSN copies or logs.
 - A review queue is a new operational duty (front-desk/HIM) and needs an
   owner before implementation.
-- The eval harness (`eval/rag/`) doubles as the acceptance check: after the
-  retroactive merge, re-running it should report a 0% duplicate rate and no
-  fragment-coverage gap.
+- The eval harness (`eval/rag/`) doubles as the acceptance check, and it
+  implements this ADR's stance rather than contradicting it: SSN clusters
+  count as *candidate* duplicate matches only when at least two of three
+  demographic signals corroborate (similar name, DOB with transposition
+  tolerance, matching address). Rows sharing a valid SSN whose demographics
+  conflict are flagged **non-mergeable** and excluded from the candidate
+  duplicate rate — a shared, mistyped, or fraudulent SSN must never weld two
+  people into one record (decision 3). After the retroactive merge,
+  re-running the harness should report a 0% candidate duplicate rate, no
+  fragment-coverage gap, and no unresolved SSN conflicts.

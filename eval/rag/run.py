@@ -52,11 +52,11 @@ def main() -> None:
     identities_by_key = {
         key: data.resolve_identities(patients, key) for key in MATCH_KEYS
     }
-    dup = metrics.duplicate_rate(patients, identities_by_key["ssn"])
+    dup = metrics.candidate_duplicate_rate(patients, identities_by_key["ssn"])
 
     gaps = []
     for identity in identities_by_key["ssn"]:
-        if len(identity.patient_ids) > 1:
+        if identity.status == "candidate":
             for chart_id in identity.patient_ids:
                 gaps.append(
                     metrics.fragment_coverage_gap(
@@ -76,9 +76,13 @@ def main() -> None:
 
     print(f"wrote {args.out}")
     print(
-        f"duplicate rate: {dup.duplicate_rows}/{dup.total_rows} rows "
-        f"({dup.rate:.0%}) — {dup.distinct_humans} humans"
+        f"candidate duplicate rate: {dup.candidate_duplicate_rows}/{dup.total_rows} rows "
+        f"({dup.rate:.0%}) — {dup.candidate_identities} candidate identities"
     )
+    conflicts = [i for i in identities_by_key["ssn"] if i.status == "conflict"]
+    if conflicts:
+        rows = sorted(pid for i in conflicts for pid in i.patient_ids)
+        print(f"⚠️  non-mergeable SSN conflicts (shared SSN, conflicting demographics): rows {rows}")
     missed = sorted({a for g in gaps for a in g.missed_allergies})
     if missed:
         print(f"⚠️  allergies invisible on at least one chart: {', '.join(missed)}")

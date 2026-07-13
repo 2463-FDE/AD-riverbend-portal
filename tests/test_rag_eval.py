@@ -81,11 +81,14 @@ def test_match_key_none_mirrors_current_intake():
     assert len(identities) == 5  # every row its own "human" — intake today
 
 
-def test_match_key_ssn_collapses_all_three_marias():
+def test_match_key_ssn_collapses_all_three_marias_as_candidates():
+    # The three Maria rows share an SSN AND corroborating demographics
+    # (similar names, same/transposed DOB, identical address) — they cluster,
+    # but as a *candidate* match for human review, never a resolved identity.
     identities = rag_data.resolve_identities(PATIENTS, "ssn")
     assert len(identities) == 3
-    clusters = {tuple(i.patient_ids) for i in identities}
-    assert tuple(MARIA_IDS) in clusters
+    clusters = {tuple(i.patient_ids): i.status for i in identities}
+    assert clusters[tuple(MARIA_IDS)] == "candidate"
 
 
 def test_invalid_ssns_never_merge_patients():
@@ -109,9 +112,60 @@ def test_invalid_ssns_never_merge_patients():
     identities = rag_data.resolve_identities(rows, "ssn")
     assert len(identities) == 5  # every row its own identity — nothing merged
     assert {tuple(i.patient_ids) for i in identities} == {(1,), (2,), (3,), (4,), (5,)}
-    dup = rag_metrics.duplicate_rate(rows, identities)
-    assert dup.duplicate_rows == 0
+    dup = rag_metrics.candidate_duplicate_rate(rows, identities)
+    assert dup.candidate_duplicate_rows == 0
     assert dup.rate == 0.0
+
+
+def test_shared_valid_ssn_with_conflicting_demographics_never_merges():
+    # Codex round-2 finding: a structurally VALID SSN can still be shared,
+    # mistyped, or fraudulent (ADR 0005 says so itself). Two unrelated people
+    # who differ on name, DOB, and address must not become one "human" just
+    # because one SSN appears on both rows — that fabricates the headline
+    # rate and, downstream, a merge that cross-contaminates two real charts.
+    rows = [
+        rag_data.Patient(id=1, name="Ana Ruiz", dob="1990-01-01",
+                         ssn="412-55-9981", address="1 A St", created_via="self_service"),
+        rag_data.Patient(id=2, name="Ben Cole", dob="1962-09-30",
+                         ssn="412-55-9981", address="77 Z Blvd", created_via="self_service"),
+    ]
+    identities = rag_data.resolve_identities(rows, "ssn")
+    assert {tuple(i.patient_ids) for i in identities} == {(1,), (2,)}
+    assert all(i.status == "conflict" for i in identities)
+    dup = rag_metrics.candidate_duplicate_rate(rows, identities)
+    assert dup.candidate_duplicate_rows == 0
+    assert dup.rate == 0.0
+
+
+def test_shared_ssn_plus_address_alone_is_not_corroboration():
+    # Family members can share an address and (via fraud or data entry) an
+    # SSN while being two different people. One agreeing signal out of three
+    # (name, DOB, address) must not merge them.
+    rows = [
+        rag_data.Patient(id=1, name="Ana Ruiz", dob="1990-01-01",
+                         ssn="412-55-9981", address="1 A St", created_via="self_service"),
+        rag_data.Patient(id=2, name="Ben Cole", dob="1962-09-30",
+                         ssn="412-55-9981", address="1 A St", created_via="self_service"),
+    ]
+    identities = rag_data.resolve_identities(rows, "ssn")
+    assert {tuple(i.patient_ids) for i in identities} == {(1,), (2,)}
+    assert all(i.status == "conflict" for i in identities)
+
+
+def test_mistyped_ssn_keeps_same_person_split_known_limitation():
+    # The mistype direction: the SAME person registered twice with one digit
+    # of the SSN wrong stays two identities under exact-SSN grouping. The
+    # harness must not silently paper over this — it is the documented reason
+    # ADR 0005 tier 2 adds a fuzzy name+DOB fallback at intake.
+    rows = [
+        rag_data.Patient(id=1, name="Ana Ruiz", dob="1990-01-01",
+                         ssn="412-55-9981", address="1 A St", created_via="self_service"),
+        rag_data.Patient(id=2, name="Ana Ruiz", dob="1990-01-01",
+                         ssn="412-55-9982", address="1 A St", created_via="self_service"),
+    ]
+    identities = rag_data.resolve_identities(rows, "ssn")
+    assert {tuple(i.patient_ids) for i in identities} == {(1,), (2,)}
+    assert all(i.status == "unmatched" for i in identities)
 
 
 def test_valid_ssns_still_merge_alongside_invalid_rows():
@@ -139,12 +193,12 @@ def test_match_key_name_dob_catches_zero_duplicates():
 
 # ----------------------------------------------------------------- metrics
 
-def test_duplicate_rate_is_40_percent():
+def test_candidate_duplicate_rate_is_40_percent():
     identities = rag_data.resolve_identities(PATIENTS, "ssn")
-    dup = rag_metrics.duplicate_rate(PATIENTS, identities)
+    dup = rag_metrics.candidate_duplicate_rate(PATIENTS, identities)
     assert dup.total_rows == 5
-    assert dup.distinct_humans == 3
-    assert dup.duplicate_rows == 2
+    assert dup.candidate_identities == 3
+    assert dup.candidate_duplicate_rows == 2
     assert dup.rate == 0.4
 
 
@@ -309,7 +363,7 @@ def _render_full_report():
         key: rag_data.resolve_identities(PATIENTS, key)
         for key in ("none", "name_dob", "ssn")
     }
-    dup = rag_metrics.duplicate_rate(PATIENTS, identities_by_key["ssn"])
+    dup = rag_metrics.candidate_duplicate_rate(PATIENTS, identities_by_key["ssn"])
     gaps = [
         rag_metrics.fragment_coverage_gap(MARIA_IDS, ENCOUNTERS, chart_id)
         for chart_id in MARIA_IDS
@@ -330,10 +384,21 @@ def test_report_leads_with_fragmentation_not_retrieval():
 
 def test_report_names_the_harm_and_the_root_cause():
     md = _render_full_report()
-    dup = rag_metrics.duplicate_rate(
+    dup = rag_metrics.candidate_duplicate_rate(
         PATIENTS, rag_data.resolve_identities(PATIENTS, "ssn")
     )
-    assert f"{dup.rate:.0%} duplicate rate" in md  # computed, not hardcoded
+    assert f"{dup.rate:.0%} candidate duplicate rate" in md  # computed, not hardcoded
     assert "penicillin" in md
     assert "match_key: none" in md
     assert "0005" in md  # points at the ADR
+
+
+def test_report_calls_clusters_candidates_not_resolved_facts():
+    # Round-2 language finding: a reader must not mistake a guess for a fact.
+    # The report may only speak of candidate matches pending review — never
+    # of "distinct humans" resolved by the match key.
+    md = _render_full_report()
+    assert "candidate identities" in md
+    assert "never auto-merge" in md
+    assert "distinct humans" not in md
+    assert "non-mergeable" in md  # the conflict rule is stated even when empty
