@@ -1,0 +1,6 @@
+# Dependencies for the embedding retriever ONLY (eval/rag/retriever.py,
+# EmbeddingRetriever). Deliberately isolated: no service depends on this file,
+# and the graded eval core (data.py, metrics.py, report.py, StubRetriever)
+# runs on the standard library alone.
+sentence-transformers>=3.0
+numpy
