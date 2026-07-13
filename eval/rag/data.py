@@ -113,16 +113,32 @@ def _edit_distance_leq1(a: str, b: str) -> bool:
     return a[i:] == b[i + 1:]
 
 
-def _names_similar(a: str, b: str) -> bool:
+def _name_agreement(a: str, b: str) -> str:
     """
-    Same first initial and surnames within one edit — tolerates the drift
-    seen in real intake data (Gonzalez/Gonzales, M. vs Maria) without
-    accepting outright different names.
+    How strongly two names agree, once surnames are within one edit:
+
+      "strong" — both first names are full and themselves within one edit
+                 (Maria/Marie, Gonzalez/Gonzales); genuine same-name drift.
+      "weak"   — first names agree only through a bare initial, i.e. one side
+                 is a single letter matching the other's first letter
+                 (M. vs Maria). Consistent, but a weak signal on its own.
+      "none"   — surnames differ, or two *full* first names differ beyond one
+                 edit even when they share an initial (John vs Jane). A shared
+                 initial is NOT a match when both names are spelled out.
+
+    Two different people (John Smith / Jane Smith) must land in "none": a
+    shared first initial is drift only when the longer name could plausibly
+    be the same person written short, never when both are full and distinct.
     """
     ta, tb = normalize_name(a).split(), normalize_name(b).split()
     if not ta or not tb:
-        return False
-    return ta[0][0] == tb[0][0] and _edit_distance_leq1(ta[-1], tb[-1])
+        return "none"
+    if not _edit_distance_leq1(ta[-1], tb[-1]):
+        return "none"
+    fa, fb = ta[0], tb[0]
+    if len(fa) == 1 or len(fb) == 1:
+        return "weak" if fa[0] == fb[0] else "none"
+    return "strong" if _edit_distance_leq1(fa, fb) else "none"
 
 
 def _dobs_compatible(a: str, b: str) -> bool:
@@ -150,17 +166,21 @@ def _addresses_match(a: str, b: str) -> bool:
 
 def _demographics_corroborate(p: Patient, q: Patient) -> bool:
     """
-    At least two of three independent demographic signals must agree before
-    an SSN match is trusted. One signal is not enough: family members can
-    share an address (and, via fraud or error, an SSN) while being two
-    different people.
+    Two independent demographic signals must agree before an SSN match is
+    trusted, and a name only counts as one of them when it is a *strong*
+    match (full first names that agree). One signal is never enough: family
+    members share an address (and, via fraud or error, an SSN) while being
+    two different people.
+
+    A weak name match (initial-only) or no name match cannot pair with a
+    single other signal — it needs BOTH DOB and address. So "same initial +
+    same DOB, different address" (John/Jane Smith) does not corroborate: the
+    name evidence is too weak to trust a shared SSN over a differing address.
     """
-    signals = (
-        _names_similar(p.name, q.name),
-        _dobs_compatible(p.dob, q.dob),
-        _addresses_match(p.address, q.address),
-    )
-    return sum(signals) >= 2
+    strong_name = _name_agreement(p.name, q.name) == "strong"
+    dob = _dobs_compatible(p.dob, q.dob)
+    addr = _addresses_match(p.address, q.address)
+    return (strong_name and (dob or addr)) or (dob and addr)
 
 
 def _all_pairs_corroborate(rows: List[Patient]) -> bool:

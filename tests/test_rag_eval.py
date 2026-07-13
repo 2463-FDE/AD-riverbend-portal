@@ -152,6 +152,29 @@ def test_shared_ssn_plus_address_alone_is_not_corroboration():
     assert all(i.status == "conflict" for i in identities)
 
 
+def test_shared_initial_and_surname_but_different_first_names_conflict():
+    # Codex round-4 finding: a shared first *initial* plus a near-identical
+    # surname is not a name match when both first names are spelled out.
+    # "John Smith" and "Jane Smith" share an initial, a surname, a DOB, and a
+    # (mistyped/fraudulent) SSN but are two different people — differing
+    # addresses and distinct full first names. The old rule counted the
+    # initial as a name signal, so name+DOB reached the 2-of-3 bar and merged
+    # them into one candidate, unioning one person's allergies/meds onto the
+    # other. They must resolve as conflict, never candidate.
+    rows = [
+        rag_data.Patient(id=1, name="John Smith", dob="1980-05-06",
+                         ssn="412-55-9981", address="1 A St", created_via="self_service"),
+        rag_data.Patient(id=2, name="Jane Smith", dob="1980-05-06",
+                         ssn="412-55-9981", address="99 Z Blvd", created_via="self_service"),
+    ]
+    identities = rag_data.resolve_identities(rows, "ssn")
+    assert {tuple(i.patient_ids) for i in identities} == {(1,), (2,)}
+    assert all(i.status == "conflict" for i in identities)
+    dup = rag_metrics.candidate_duplicate_rate(rows, identities)
+    assert dup.candidate_duplicate_rows == 0
+    assert dup.rate == 0.0
+
+
 def test_bridge_rows_never_form_one_candidate_cluster():
     # Codex round-3 finding: connected-component clustering lets a bridge row
     # weld two pairwise-conflicting people into one candidate. A corroborates
