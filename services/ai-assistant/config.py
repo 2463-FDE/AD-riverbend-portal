@@ -22,10 +22,24 @@ class Settings:
     # on-demand — it returns ValidationException). The default is the US
     # cross-region inference profile; profile ids are REGION-SCOPED
     # (us./eu./global. ...), so override BEDROCK_MODEL_ID to match your account
-    # + region (see Bedrock console -> Cross-region inference). If you change
-    # the model, change PRICE_PER_MTOK_* in llm_client.py with it — the cost
-    # gate derives from those constants.
+    # + region (see Bedrock console -> Cross-region inference). Pricing for the
+    # cost gate FAILS CLOSED per model: a model with no entry in
+    # llm_client._MODEL_PRICING refuses calls unless BOTH price overrides
+    # below are set — it is never silently priced as Sonnet.
     bedrock_model_id = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+    # Explicit per-model pricing override (USD per million tokens) for models
+    # absent from llm_client._MODEL_PRICING. Set both or neither — a half-set
+    # pair is rejected as a config error rather than half-defaulted.
+    llm_price_per_mtok_input = (
+        float(os.environ["LLM_PRICE_PER_MTOK_INPUT"])
+        if "LLM_PRICE_PER_MTOK_INPUT" in os.environ
+        else None
+    )
+    llm_price_per_mtok_output = (
+        float(os.environ["LLM_PRICE_PER_MTOK_OUTPUT"])
+        if "LLM_PRICE_PER_MTOK_OUTPUT" in os.environ
+        else None
+    )
 
     # Outbound call discipline — deliberately the opposite of the D4 pattern
     # (eligibility-service's unbounded payer call). Every LLM call is bounded.

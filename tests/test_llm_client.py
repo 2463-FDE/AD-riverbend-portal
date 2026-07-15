@@ -212,6 +212,79 @@ def test_estimate_cost_math():
     assert llm_mod.estimate_cost(0, 0) == 0.0
 
 
+# --- fail-closed model pricing (Codex review, PR #5) -------------------------
+# The cost gate must price the RESOLVED model and refuse models it cannot
+# price. Pre-fix code priced every request with hard-coded Sonnet constants,
+# so pointing BEDROCK_MODEL_ID at a pricier model silently hollowed out
+# LLM_MAX_COST_PER_REQUEST_USD.
+
+
+def test_unpriced_model_refuses_before_any_egress(monkeypatch):
+    # Adversarial placement: a PHI prompt plus a model absent from the pricing
+    # table. The refusal must be local (no create, no count_tokens) and the
+    # error must name the model — never the prompt. Fails against pre-fix code,
+    # which priced the unknown model as Sonnet and called create().
+    fake = _patch_client(monkeypatch, _FakeMessages())
+    monkeypatch.setattr(llm_mod.settings, "bedrock_model_id", "us.acme.frontier-9000")
+    with pytest.raises(llm_mod.LLMConfigError) as excinfo:
+        llm_mod.complete(PHI_PROMPT)
+    assert fake.create_calls == []
+    assert fake.count_calls == []
+    assert "us.acme.frontier-9000" in str(excinfo.value)
+    assert "Jane Doe" not in str(excinfo.value)
+    assert "123-45-6789" not in str(excinfo.value)
+
+
+def test_unpriced_model_with_explicit_price_override_proceeds(monkeypatch):
+    fake = _patch_client(monkeypatch, _FakeMessages())
+    monkeypatch.setattr(llm_mod.settings, "bedrock_model_id", "us.acme.frontier-9000")
+    monkeypatch.setattr(llm_mod.settings, "llm_price_per_mtok_input", 1.00)
+    monkeypatch.setattr(llm_mod.settings, "llm_price_per_mtok_output", 5.00)
+    result = llm_mod.complete("short prompt")
+    assert len(fake.create_calls) == 1
+    # cost telemetry prices at the override (100 in / 50 out from _response)
+    assert result.estimated_cost_usd == pytest.approx((100 * 1.00 + 50 * 5.00) / 1_000_000)
+
+
+def test_price_override_enforces_budget_at_override_prices(monkeypatch):
+    # The override is a price source, not a bypass: expensive override prices
+    # must trip the cost cap locally, with no egress.
+    fake = _patch_client(monkeypatch, _FakeMessages())
+    monkeypatch.setattr(llm_mod.settings, "bedrock_model_id", "us.acme.frontier-9000")
+    monkeypatch.setattr(llm_mod.settings, "llm_price_per_mtok_input", 10_000.0)
+    monkeypatch.setattr(llm_mod.settings, "llm_price_per_mtok_output", 50_000.0)
+    with pytest.raises(llm_mod.LLMBudgetExceeded):
+        llm_mod.complete("hello")
+    assert fake.create_calls == []
+    assert fake.count_calls == []
+
+
+def test_half_set_price_override_refuses(monkeypatch):
+    # Both-or-neither: a half-set override pair must be a config error — not a
+    # silent fall-through to the table, not a default for the missing side.
+    fake = _patch_client(monkeypatch, _FakeMessages())
+    monkeypatch.setattr(llm_mod.settings, "llm_price_per_mtok_input", 3.00)
+    with pytest.raises(llm_mod.LLMConfigError):
+        llm_mod.complete("hello")
+    assert fake.create_calls == []
+    assert fake.count_calls == []
+
+
+def test_inference_profile_prefixes_resolve_to_priced_model(monkeypatch):
+    # Every region-scoped inference profile of a priced foundation model — and
+    # the bare foundation id — must resolve to the same pricing entry.
+    fake = _patch_client(monkeypatch, _FakeMessages())
+    for model_id in (
+        "anthropic.claude-sonnet-4-6",
+        "eu.anthropic.claude-sonnet-4-6",
+        "apac.anthropic.claude-sonnet-4-6",
+        "global.anthropic.claude-sonnet-4-6",
+    ):
+        monkeypatch.setattr(llm_mod.settings, "bedrock_model_id", model_id)
+        llm_mod.complete("short prompt")
+    assert len(fake.create_calls) == 4
+
+
 # --- happy paths ----------------------------------------------------------
 
 

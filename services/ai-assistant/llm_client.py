@@ -42,11 +42,18 @@ from logging_config import configure
 
 log = configure(settings.service_name)
 
-# claude-sonnet-4-6 pricing on Bedrock, USD per million tokens. Must match the
-# configured model — the worst-case-cost budget gate and the cost telemetry
-# both derive from these.
-PRICE_PER_MTOK_INPUT = 3.00
-PRICE_PER_MTOK_OUTPUT = 15.00
+# Bedrock pricing, USD per million tokens, keyed by FOUNDATION-MODEL id (a
+# region-scoped inference-profile prefix — us./eu./apac./global. — is stripped
+# before lookup, so every regional profile of a priced model resolves). The
+# worst-case-cost budget gate and the cost telemetry both derive from this
+# table, and it FAILS CLOSED: a BEDROCK_MODEL_ID with no entry here and no
+# explicit LLM_PRICE_PER_MTOK_INPUT/OUTPUT override refuses the call
+# (LLMConfigError) before anything egresses — an unpriced model must never
+# slip past the budget gate at whatever price we guessed (Codex review, PR #5).
+_MODEL_PRICING = {
+    "anthropic.claude-sonnet-4-6": (3.00, 15.00),
+}
+_INFERENCE_PROFILE_PREFIXES = ("us.", "eu.", "apac.", "global.")
 
 # Constant Bedrock requires in the request body for Anthropic models.
 _BEDROCK_ANTHROPIC_VERSION = "bedrock-2023-05-31"
@@ -195,10 +202,43 @@ _runtime = boto3.client(
 client = _BedrockClient(_runtime)
 
 
+def _resolve_pricing() -> tuple:
+    """(input, output) USD-per-MTok for the RESOLVED model — fail closed.
+
+    Resolution order: the explicit LLM_PRICE_PER_MTOK_INPUT/OUTPUT env pair
+    (both or neither — a half-set override is a config error, not a default),
+    then _MODEL_PRICING keyed by settings.bedrock_model_id with any
+    inference-profile region prefix stripped. No match raises LLMConfigError:
+    the cost gate must refuse a model it cannot price, not price it as Sonnet.
+    Runs per call (inside the preflight, before any egress) so a
+    misconfigured model refuses requests rather than failing import — CI's
+    keyless import smoke stays green."""
+    override_input = settings.llm_price_per_mtok_input
+    override_output = settings.llm_price_per_mtok_output
+    if (override_input is None) != (override_output is None):
+        raise LLMConfigError(
+            "LLM_PRICE_PER_MTOK_INPUT and LLM_PRICE_PER_MTOK_OUTPUT must be set together"
+        )
+    if override_input is not None:
+        return override_input, override_output
+    model_id = settings.bedrock_model_id
+    base = model_id
+    for prefix in _INFERENCE_PROFILE_PREFIXES:
+        if base.startswith(prefix):
+            base = base[len(prefix):]
+            break
+    pricing = _MODEL_PRICING.get(base)
+    if pricing is None:
+        raise LLMConfigError(
+            "no pricing entry for model %s — the cost gate cannot price it; "
+            "add it to _MODEL_PRICING or set LLM_PRICE_PER_MTOK_INPUT/OUTPUT" % model_id
+        )
+    return pricing
+
+
 def estimate_cost(input_tokens: int, output_tokens: int) -> float:
-    return (
-        input_tokens * PRICE_PER_MTOK_INPUT + output_tokens * PRICE_PER_MTOK_OUTPUT
-    ) / 1_000_000
+    price_input, price_output = _resolve_pricing()
+    return (input_tokens * price_input + output_tokens * price_output) / 1_000_000
 
 
 # Claude's tokenizer is byte-level BPE: all 256 single-byte tokens are in the

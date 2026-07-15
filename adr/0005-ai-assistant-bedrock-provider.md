@@ -76,10 +76,16 @@ container regardless.
     `LLMUnavailable` (throttling/5xx/connection after retries). Exception
     messages carry error-code/status metadata only.
   - **PHI-silent** — unchanged; still metadata-only logging.
-- **Pricing constants** track the configured model (sonnet-4-6: $3 / $15 per
-  MTok), because the worst-case-cost gate and cost telemetry derive from them.
-  Worst case at the default caps (20k input tokens + 2,048 max output) is
-  ≈ $0.09, still well under the $0.50 per-request gate.
+- **Pricing is fail-closed per model** (adversarial review, PR #5). The
+  worst-case-cost gate and cost telemetry price the *resolved*
+  `BEDROCK_MODEL_ID` from a lookup table (`_MODEL_PRICING`, keyed by
+  foundation-model id with the inference-profile region prefix stripped;
+  sonnet-4-6: $3 / $15 per MTok). A model with no entry — and no explicit
+  `LLM_PRICE_PER_MTOK_INPUT`/`OUTPUT` override pair — refuses the call with
+  `LLMConfigError` before any egress, instead of silently pricing a possibly
+  more expensive model as Sonnet and hollowing out the budget cap. Worst case
+  at the default caps (20k input tokens + 2,048 max output) is ≈ $0.09, still
+  well under the $0.50 per-request gate.
 - **Structured output** stays `extra_body={"output_config": {"format": ...}}`,
   folded into the Bedrock request body and validated with Pydantic. Live
   verification surfaced a latent bug (present since ADR 0004 — it predates the
