@@ -12,7 +12,13 @@ import sys
 from types import SimpleNamespace
 
 import pytest
-from botocore.exceptions import ClientError, EndpointConnectionError
+from botocore.exceptions import (
+    ClientError,
+    CredentialRetrievalError,
+    EndpointConnectionError,
+    NoCredentialsError,
+    PartialCredentialsError,
+)
 from pydantic import BaseModel, Field
 
 from conftest import load_module
@@ -403,12 +409,52 @@ def test_access_denied_maps_to_config_error(monkeypatch):
 
 
 def test_connection_error_maps_to_unavailable(monkeypatch):
+    # Genuine transport failure stays LLMUnavailable — the credential split
+    # below must not swallow it (EndpointConnectionError is also a
+    # BotoCoreError subclass, but not a credential error).
     exc = EndpointConnectionError(
         endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com"
     )
     _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
     with pytest.raises(llm_mod.LLMUnavailable):
         llm_mod.complete("hello")
+
+
+# --- credential failures are config errors, not outages (Codex, PR #5 r2) ----
+# botocore raises these locally, BEFORE any request reaches AWS: a missing or
+# partially-set AWS_BEARER_TOKEN_BEDROCK / fallback chain is a deployment
+# break that retrying can never fix. Pre-fix code let them fall through to the
+# generic BotoCoreError catch and reported them as a retryable Bedrock outage.
+
+
+def test_missing_credentials_map_to_config_error(monkeypatch):
+    _patch_client(monkeypatch, _FakeMessages(create_exc=NoCredentialsError()))
+    with pytest.raises(llm_mod.LLMConfigError):
+        llm_mod.complete("hello")
+
+
+def test_partial_credentials_map_to_config_error(monkeypatch):
+    exc = PartialCredentialsError(provider="env", cred_var="AWS_SECRET_ACCESS_KEY")
+    _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
+    with pytest.raises(llm_mod.LLMConfigError):
+        llm_mod.complete("hello")
+
+
+def test_credential_retrieval_failure_maps_to_config_error(monkeypatch):
+    exc = CredentialRetrievalError(provider="custom-process", error_msg="exit 1")
+    _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
+    with pytest.raises(llm_mod.LLMConfigError):
+        llm_mod.complete("hello")
+
+
+def test_credential_error_carries_no_prompt(monkeypatch):
+    # Adversarial: the new mapping is an exception-message path, so it needs
+    # the same PHI-silence proof as every other one (CLAUDE.md §5).
+    _patch_client(monkeypatch, _FakeMessages(create_exc=NoCredentialsError()))
+    with pytest.raises(llm_mod.LLMConfigError) as excinfo:
+        llm_mod.complete(PHI_PROMPT)
+    assert "Jane Doe" not in str(excinfo.value)
+    assert "123-45-6789" not in str(excinfo.value)
 
 
 def test_malformed_response_maps_to_unavailable(monkeypatch):

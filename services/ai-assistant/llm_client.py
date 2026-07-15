@@ -34,7 +34,13 @@ from typing import Any, Dict, List, Optional, Type
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import (
+    BotoCoreError,
+    ClientError,
+    CredentialRetrievalError,
+    NoCredentialsError,
+    PartialCredentialsError,
+)
 from pydantic import BaseModel, ValidationError
 
 from config import settings
@@ -389,6 +395,16 @@ def _call(
             ) from None
         raise LLMUnavailable(
             "upstream error (code=%s status=%s)" % (code, status)
+        ) from None
+    except (NoCredentialsError, PartialCredentialsError, CredentialRetrievalError) as exc:
+        # Local credential-chain failure — botocore raises these BEFORE any
+        # request reaches AWS (missing/partial AWS_BEARER_TOKEN_BEDROCK or a
+        # broken fallback provider). A deployment/config break, not an outage:
+        # retrying can never succeed, so it must NOT surface as LLMUnavailable
+        # (Codex review, PR #5 round 2). Must precede the BotoCoreError catch —
+        # all three subclass it. Message names the exception type only.
+        raise LLMConfigError(
+            "credential configuration error (%s)" % type(exc).__name__
         ) from None
     except BotoCoreError as exc:
         # Connect/read timeout or endpoint connection failure, after retries.
