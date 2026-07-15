@@ -1,18 +1,18 @@
 """
 Unit tests for the ai-assistant LLM client wrapper (llm_client.py).
 
-The Anthropic client is monkeypatched at module level (same pattern as
-test_eligibility_check.py monkeypatching check_mod.requests). No network,
-no API key. The PHI-safety tests are the load-bearing ones: prompt text must
-never reach a log record or an exception message.
+The Bedrock client seam (client.messages.create) is monkeypatched at module
+level (same pattern as test_eligibility_check.py monkeypatching
+check_mod.requests). No network, no key. The PHI-safety tests are the
+load-bearing ones: prompt text must never reach a log record or an exception
+message.
 """
 import logging
 import sys
 from types import SimpleNamespace
 
-import anthropic
-import httpx
 import pytest
+from botocore.exceptions import ClientError, EndpointConnectionError
 from pydantic import BaseModel, Field
 
 from conftest import load_module
@@ -44,14 +44,18 @@ def _response(text='{"title": "t", "summary": "s"}', in_tok=100, out_tok=50):
         content=[SimpleNamespace(type="text", text=text)],
         usage=SimpleNamespace(input_tokens=in_tok, output_tokens=out_tok),
         id="req_test_123",
-        model="claude-opus-4-8",
+        model="anthropic.claude-sonnet-4-6",
     )
 
 
-def _status_error(cls, status_code):
-    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
-    response = httpx.Response(status_code, request=request)
-    return cls("boom", response=response, body=None)
+def _client_error(code, status_code):
+    return ClientError(
+        {
+            "Error": {"Code": code, "Message": "boom"},
+            "ResponseMetadata": {"HTTPStatusCode": status_code},
+        },
+        "InvokeModel",
+    )
 
 
 class _FakeMessages:
@@ -203,8 +207,8 @@ def test_within_budget_proceeds_to_create_without_count_tokens(monkeypatch):
 
 
 def test_estimate_cost_math():
-    assert llm_mod.estimate_cost(1_000_000, 0) == pytest.approx(5.00)
-    assert llm_mod.estimate_cost(0, 1_000_000) == pytest.approx(25.00)
+    assert llm_mod.estimate_cost(1_000_000, 0) == pytest.approx(3.00)
+    assert llm_mod.estimate_cost(0, 1_000_000) == pytest.approx(15.00)
     assert llm_mod.estimate_cost(0, 0) == 0.0
 
 
@@ -219,7 +223,7 @@ def test_complete_happy_path(monkeypatch):
     assert result.output_tokens == 50
     assert result.estimated_cost_usd == pytest.approx(llm_mod.estimate_cost(100, 50))
     assert result.request_id == "req_test_123"
-    assert result.model == "claude-opus-4-8"
+    assert result.model == "anthropic.claude-sonnet-4-6"
     assert result.latency_seconds >= 0
 
 
@@ -231,6 +235,32 @@ def test_complete_structured_happy_path(monkeypatch):
     # structured request carried the json_schema output format
     extra = fake.create_calls[0]["extra_body"]
     assert extra["output_config"]["format"]["type"] == "json_schema"
+
+
+def test_structured_schema_pins_additional_properties_false(monkeypatch):
+    # Regression (found by live Bedrock verification of complete_structured):
+    # the structured-output API rejects any object node without an explicit
+    # additionalProperties: false ("For 'object' type, 'additionalProperties'
+    # must be explicitly set to false"), and Pydantic's model_json_schema()
+    # never emits it. Every object node in the schema that leaves the seam —
+    # top level AND nested $defs — must carry it. Fails against pre-fix code,
+    # which sent the raw Pydantic schema.
+    fake = _patch_client(monkeypatch, _FakeMessages())
+
+    class Inner(BaseModel):
+        note: str
+
+    class Outer(BaseModel):
+        title: str = "t"
+        summary: str = "s"
+        inner: Inner = Field(default_factory=lambda: Inner(note="n"))
+
+    llm_mod.complete_structured("summarize", Outer)
+    schema = fake.create_calls[0]["extra_body"]["output_config"]["format"]["schema"]
+    assert schema["additionalProperties"] is False
+    for name, defn in schema.get("$defs", {}).items():
+        if defn.get("type") == "object" or "properties" in defn:
+            assert defn["additionalProperties"] is False, name
 
 
 def test_complete_structured_invalid_json_raises(monkeypatch):
@@ -278,33 +308,53 @@ def test_structured_schema_counted_in_char_cap(monkeypatch):
 # --- SDK exception mapping -------------------------------------------------
 
 
-def test_rate_limit_maps_to_unavailable(monkeypatch):
-    exc = _status_error(anthropic.RateLimitError, 429)
+def test_throttling_maps_to_unavailable(monkeypatch):
+    exc = _client_error("ThrottlingException", 429)
     _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
     with pytest.raises(llm_mod.LLMUnavailable):
         llm_mod.complete("hello")
 
 
-def test_not_found_maps_to_config_error(monkeypatch):
-    exc = _status_error(anthropic.NotFoundError, 404)
+def test_resource_not_found_maps_to_config_error(monkeypatch):
+    exc = _client_error("ResourceNotFoundException", 404)
+    _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
+    with pytest.raises(llm_mod.LLMConfigError):
+        llm_mod.complete("hello")
+
+
+def test_access_denied_maps_to_config_error(monkeypatch):
+    exc = _client_error("AccessDeniedException", 403)
     _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
     with pytest.raises(llm_mod.LLMConfigError):
         llm_mod.complete("hello")
 
 
 def test_connection_error_maps_to_unavailable(monkeypatch):
-    exc = anthropic.APIConnectionError(
-        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    exc = EndpointConnectionError(
+        endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com"
     )
     _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
     with pytest.raises(llm_mod.LLMUnavailable):
         llm_mod.complete("hello")
 
 
+def test_malformed_response_maps_to_unavailable(monkeypatch):
+    # A garbled Bedrock 200 body surfaces as json.loads -> ValueError from the
+    # adapter. Unlike the anthropic SDK, boto3 does not absorb it, so _call must
+    # map it to a typed error (ADR 0004 Typed-failures guarantee), not let a raw
+    # JSONDecodeError escape. The message must not carry response bytes.
+    exc = ValueError("Expecting value: line 1 column 1 (char 0): Jane Doe 123-45-6789")
+    _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
+    with pytest.raises(llm_mod.LLMUnavailable) as excinfo:
+        llm_mod.complete("hello")
+    assert "Jane Doe" not in str(excinfo.value)
+    assert "123-45-6789" not in str(excinfo.value)
+
+
 # NOTE: the count_tokens SDK-exception-mapping tests were removed with the
 # count_tokens preflight itself (PR #2 review round 4). Budget is now enforced
 # against a local estimate before any SDK call, so count_tokens is no longer in
-# the request path — the only egress that can raise is create, covered above.
+# the request path — the only egress that can raise is invoke_model, covered above.
 
 
 # --- PHI safety ------------------------------------------------------------
@@ -336,7 +386,7 @@ def test_completion_text_never_reaches_logs(monkeypatch, caplog):
 
 
 def test_exception_messages_carry_no_prompt(monkeypatch):
-    exc = _status_error(anthropic.RateLimitError, 429)
+    exc = _client_error("ThrottlingException", 429)
     _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
     with pytest.raises(llm_mod.LLMUnavailable) as excinfo:
         llm_mod.complete(PHI_PROMPT)
@@ -348,21 +398,22 @@ def test_exception_messages_carry_no_prompt(monkeypatch):
 
 
 def test_real_client_configured_from_settings():
-    # The module-level client (before any monkeypatching in other tests) must
-    # carry the configured retry/timeout discipline. No network involved.
-    real = llm_mod.anthropic.Anthropic(
-        api_key="x",
-        timeout=httpx.Timeout(
-            llm_mod.settings.llm_read_timeout_seconds,
-            connect=llm_mod.settings.llm_connect_timeout_seconds,
-        ),
-        max_retries=llm_mod.settings.llm_max_retries,
-    )
-    assert real.max_retries == llm_mod.settings.llm_max_retries
-    assert real.timeout.connect == llm_mod.settings.llm_connect_timeout_seconds
-    assert real.timeout.read == llm_mod.settings.llm_read_timeout_seconds
+    # The module-level boto3 runtime (before any monkeypatching in other tests)
+    # must carry the configured region + bounded-call discipline. No network.
+    cfg = llm_mod._runtime.meta.config
+    assert llm_mod._runtime.meta.region_name == llm_mod.settings.aws_region
+    assert cfg.connect_timeout == llm_mod.settings.llm_connect_timeout_seconds
+    assert cfg.read_timeout == llm_mod.settings.llm_read_timeout_seconds
+    # botocore max_attempts counts the first try, so it is retries + 1. The
+    # resolved client config normalizes it to total_max_attempts on some
+    # versions, so accept either key.
+    retries = cfg.retries or {}
+    attempts = retries.get("total_max_attempts", retries.get("max_attempts"))
+    assert attempts == llm_mod.settings.llm_max_retries + 1
 
 
 def test_module_client_import_works_keyless():
-    # config falls back to "not-set" so CI's keyless import smoke passes.
+    # boto3 resolves the bearer key lazily, so the client constructs with no
+    # AWS_BEARER_TOKEN_BEDROCK set — CI's keyless import smoke passes.
     assert llm_mod.client is not None
+    assert hasattr(llm_mod.client, "messages")

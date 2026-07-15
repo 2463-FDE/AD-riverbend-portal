@@ -1,6 +1,6 @@
-"""Production LLM client wrapper for the Anthropic API.
+"""Production LLM client wrapper for Claude on AWS Bedrock.
 
-Contract (see ADR 0004):
+Contract (see ADR 0004, provider superseded by ADR 0005):
   * every call is bounded — connect/read timeouts and SDK-managed retries
     with exponential backoff (the opposite of the D4 no-timeout pattern);
   * a token/cost budget is enforced BEFORE any request is sent, using a
@@ -16,19 +16,25 @@ Contract (see ADR 0004):
   * prompt and completion bodies are NEVER logged or embedded in exception
     messages. Metadata only. See docs/phi-logging-policy.md.
 
-Note on SDK pin: anthropic==0.72.0 (newest release compatible with the local
-Python 3.8 toolchain) predates ``client.messages.parse``; structured output is
-requested via ``extra_body={"output_config": {"format": ...}}`` and validated
-manually. When the toolchain moves to 3.9+, upgrade the pin and switch to
-``messages.parse``.
+Provider: Claude on Amazon Bedrock via boto3 ``bedrock-runtime.invoke_model``.
+Auth is a Bedrock bearer API key, which botocore reads from the
+``AWS_BEARER_TOKEN_BEDROCK`` environment variable; no AWS credential ever
+passes through this module. The boto3 call is placed behind a thin adapter
+(``_BedrockClient``) that exposes the same ``client.messages.create(**kwargs)``
+seam the wrapper was built around, so the budget gate, PHI-silent logging, and
+structured-output path are unchanged. Structured output is still requested via
+``extra_body={"output_config": {"format": ...}}`` (folded into the Bedrock
+request body) and validated manually with Pydantic.
 """
 import json
 import time
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Type
 
-import anthropic
-import httpx
+import boto3
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 from pydantic import BaseModel, ValidationError
 
 from config import settings
@@ -36,9 +42,33 @@ from logging_config import configure
 
 log = configure(settings.service_name)
 
-# claude-opus-4-8 pricing, USD per million tokens.
-PRICE_PER_MTOK_INPUT = 5.00
-PRICE_PER_MTOK_OUTPUT = 25.00
+# claude-sonnet-4-6 pricing on Bedrock, USD per million tokens. Must match the
+# configured model — the worst-case-cost budget gate and the cost telemetry
+# both derive from these.
+PRICE_PER_MTOK_INPUT = 3.00
+PRICE_PER_MTOK_OUTPUT = 15.00
+
+# Constant Bedrock requires in the request body for Anthropic models.
+_BEDROCK_ANTHROPIC_VERSION = "bedrock-2023-05-31"
+
+# Bedrock/botocore error codes that mean "the request or credentials are wrong"
+# (not retryable) vs. "temporarily unavailable" (already retried by botocore).
+# Note: Bedrock also raises ValidationException for model-side "input too long".
+# Mapping that to LLMConfigError (not LLMBudgetExceeded) is deliberate: the
+# local char cap + byte-based token gate cannot under-count, so a payload that
+# trips the model-side limit means the local caps are misconfigured relative to
+# the model — a config problem, not a runtime budget breach.
+_CONFIG_ERROR_CODES = frozenset({
+    "AccessDeniedException",
+    "UnrecognizedClientException",
+    "ValidationException",
+    "ResourceNotFoundException",
+})
+_THROTTLE_CODES = frozenset({
+    "ThrottlingException",
+    "TooManyRequestsException",
+    "ServiceQuotaExceededException",
+})
 
 
 class LLMError(Exception):
@@ -70,21 +100,99 @@ class LLMResult:
     estimated_cost_usd: float = 0.0
     latency_seconds: float = 0.0
     request_id: Optional[str] = None
-    model: str = field(default_factory=lambda: settings.anthropic_model)
+    model: str = field(default_factory=lambda: settings.bedrock_model_id)
 
 
-# Module-level client so tests can monkeypatch it (same pattern as
-# tests/test_eligibility_check.py monkeypatching check_mod.requests).
-# The "not-set" fallback keeps `import llm_client` working in CI's keyless
-# import smoke test; real calls without a key fail as LLMConfigError.
-client = anthropic.Anthropic(
-    api_key=settings.anthropic_api_key or "not-set",
-    timeout=httpx.Timeout(
-        settings.llm_read_timeout_seconds,
-        connect=settings.llm_connect_timeout_seconds,
+def _adapt(payload: Dict[str, Any], request_id: Optional[str]) -> SimpleNamespace:
+    """Shape a Bedrock invoke_model JSON body like the anthropic Message object
+    the rest of this module expects: ``.content[].type/.text``, ``.usage``,
+    ``.id``, ``.model``. Keeps _result_from_response provider-agnostic.
+
+    A body missing ``usage`` defaults to 0 tokens rather than failing the call:
+    usage is post-approval telemetry (the budget gate already ran), so a $0.0000
+    cost log line on an otherwise-good response is the correct degradation —
+    Bedrock always returns usage in practice, and failing a served completion
+    over missing telemetry would be worse than under-reporting it."""
+    content = [
+        SimpleNamespace(type=block.get("type"), text=block.get("text"))
+        for block in payload.get("content", []) or []
+    ]
+    usage = payload.get("usage") or {}
+    return SimpleNamespace(
+        content=content,
+        usage=SimpleNamespace(
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+        ),
+        id=payload.get("id") or request_id,
+        model=payload.get("model", settings.bedrock_model_id),
+    )
+
+
+class _BedrockMessages:
+    """Exposes ``create(**kwargs)`` over Bedrock ``invoke_model`` so the wrapper
+    keeps a single provider seam. Botocore exceptions propagate to ``_call``,
+    which maps them to this module's typed errors."""
+
+    def __init__(self, runtime: Any) -> None:
+        self._runtime = runtime
+
+    def create(
+        self,
+        *,
+        model: str,
+        max_tokens: int,
+        messages: List[Dict[str, Any]],
+        system: Optional[str] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
+    ) -> SimpleNamespace:
+        body: Dict[str, Any] = {
+            "anthropic_version": _BEDROCK_ANTHROPIC_VERSION,
+            "max_tokens": max_tokens,
+            "messages": messages,
+        }
+        if system is not None:
+            body["system"] = system
+        if extra_body:
+            # Structured-output config (output_config) rides at the top level of
+            # the Bedrock body, same as it would on the first-party API.
+            body.update(extra_body)
+        response = self._runtime.invoke_model(
+            modelId=model,
+            body=json.dumps(body),
+            contentType="application/json",
+            accept="application/json",
+        )
+        payload = json.loads(response["body"].read())
+        request_id = response.get("ResponseMetadata", {}).get("RequestId")
+        return _adapt(payload, request_id)
+
+
+class _BedrockClient:
+    """anthropic-SDK-shaped facade: ``client.messages.create(...)``."""
+
+    def __init__(self, runtime: Any) -> None:
+        self.messages = _BedrockMessages(runtime)
+
+
+# Module-level boto3 runtime + client so tests can monkeypatch `client` (same
+# pattern as tests/test_eligibility_check.py monkeypatching check_mod.requests).
+# boto3 resolves credentials (the AWS_BEARER_TOKEN_BEDROCK bearer key) lazily on
+# the first call, so construction needs no key — CI's keyless import smoke still
+# passes; a real call without a key fails as LLMConfigError. Retries/timeouts
+# are the botocore equivalent of ADR 0004's bounded-call discipline. botocore's
+# retries.max_attempts is the retry count (resolved total_max_attempts =
+# max_attempts + 1), so it maps directly onto llm_max_retries.
+_runtime = boto3.client(
+    "bedrock-runtime",
+    region_name=settings.aws_region,
+    config=Config(
+        connect_timeout=settings.llm_connect_timeout_seconds,
+        read_timeout=settings.llm_read_timeout_seconds,
+        retries={"max_attempts": settings.llm_max_retries, "mode": "standard"},
     ),
-    max_retries=settings.llm_max_retries,
 )
+client = _BedrockClient(_runtime)
 
 
 def estimate_cost(input_tokens: int, output_tokens: int) -> float:
@@ -194,7 +302,7 @@ def _call(
     system: Optional[str],
     max_tokens: int,
     extra_body: Optional[Dict[str, Any]] = None,
-) -> "anthropic.types.Message":
+) -> SimpleNamespace:
     """Fully-local pre-flight budget check, then one bounded, retried API call.
 
     The ENTIRE budget gate runs before the ``try`` and before any SDK call:
@@ -205,16 +313,16 @@ def _call(
     across the trust boundary. The completion ``create`` call is the sole
     egress; its ``usage`` is post-approval telemetry consumed downstream.
 
-    The ``try`` maps SDK exceptions from that one call to this module's typed
-    errors, most specific first. Exception messages carry status/request
-    metadata only.
+    The ``try`` maps botocore exceptions from that one call to this module's
+    typed errors, most specific first. Exception messages carry Bedrock error
+    code / HTTP status metadata only — never prompt or response text.
     """
     _enforce_char_cap(messages, system, extra_body)
     input_tokens = max_input_tokens(messages, system=system, extra_body=extra_body)
     _enforce_budget(input_tokens, max_tokens)
 
     kwargs: Dict[str, Any] = {
-        "model": settings.anthropic_model,
+        "model": settings.bedrock_model_id,
         "max_tokens": max_tokens,
         "messages": messages,
     }
@@ -225,20 +333,36 @@ def _call(
 
     try:
         return client.messages.create(**kwargs)
-    except (anthropic.NotFoundError, anthropic.AuthenticationError) as exc:
-        raise LLMConfigError(
-            "model/auth error (status=%s)" % getattr(exc, "status_code", "?")
-        ) from None
-    except anthropic.RateLimitError as exc:
+    except ClientError as exc:
+        error = exc.response.get("Error", {})
+        code = error.get("Code", "?")
+        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        # Bad model, bad request shape, or auth/permission → config error;
+        # throttling / capacity / 5xx (after botocore retries) → unavailable.
+        if code in _CONFIG_ERROR_CODES or status in (401, 403, 404):
+            raise LLMConfigError(
+                "model/auth error (code=%s status=%s)" % (code, status)
+            ) from None
+        if code in _THROTTLE_CODES or status == 429:
+            raise LLMUnavailable(
+                "throttled after retries (code=%s)" % code
+            ) from None
         raise LLMUnavailable(
-            "rate limited after retries (status=%s)" % getattr(exc, "status_code", "?")
+            "upstream error (code=%s status=%s)" % (code, status)
         ) from None
-    except anthropic.APIStatusError as exc:
+    except BotoCoreError as exc:
+        # Connect/read timeout or endpoint connection failure, after retries.
         raise LLMUnavailable(
-            "upstream error (status=%s)" % getattr(exc, "status_code", "?")
+            "connection error after retries (%s)" % type(exc).__name__
         ) from None
-    except anthropic.APIConnectionError:
-        raise LLMUnavailable("connection error after retries") from None
+    except (ValueError, KeyError) as exc:
+        # A malformed/empty Bedrock 200 body (json.loads → ValueError, or a
+        # missing "body" key). The anthropic SDK absorbed this internally; boto3
+        # does not, so map it here to keep ADR 0004's Typed-failures guarantee.
+        # Message names the exception type only — never the response bytes.
+        raise LLMUnavailable(
+            "malformed upstream response (%s)" % type(exc).__name__
+        ) from None
 
 
 def _result_from_response(response: Any, started: float) -> LLMResult:
@@ -255,7 +379,7 @@ def _result_from_response(response: Any, started: float) -> LLMResult:
         estimated_cost_usd=estimate_cost(usage.input_tokens, usage.output_tokens),
         latency_seconds=time.monotonic() - started,
         request_id=getattr(response, "id", None),
-        model=getattr(response, "model", settings.anthropic_model),
+        model=getattr(response, "model", settings.bedrock_model_id),
     )
     # Metadata only — never the prompt or the completion.
     log.info(
@@ -283,6 +407,32 @@ def complete(
     return _result_from_response(response, started)
 
 
+def _strict_schema(output_model: Type[BaseModel]) -> Dict[str, Any]:
+    """Pydantic's ``model_json_schema()`` omits ``additionalProperties``, but the
+    structured-output API requires every object node to set it to ``false``
+    explicitly — the request is otherwise rejected with ValidationException
+    ("For 'object' type, 'additionalProperties' must be explicitly set to
+    false"; found by live Bedrock verification, but the first-party API has the
+    same rule). Walk the whole schema (nested ``$defs``, ``anyOf``, ``items``,
+    ...) and pin it on each object node. ``setdefault`` so a model that
+    explicitly set something else still surfaces as a typed upstream rejection
+    instead of being silently rewritten."""
+    schema = output_model.model_json_schema()
+
+    def pin(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "object" or "properties" in node:
+                node.setdefault("additionalProperties", False)
+            for value in node.values():
+                pin(value)
+        elif isinstance(node, list):
+            for item in node:
+                pin(item)
+
+    pin(schema)
+    return schema
+
+
 def complete_structured(
     prompt: str,
     output_model: Type[BaseModel],
@@ -297,7 +447,7 @@ def complete_structured(
         "output_config": {
             "format": {
                 "type": "json_schema",
-                "schema": output_model.model_json_schema(),
+                "schema": _strict_schema(output_model),
             }
         }
     }

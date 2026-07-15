@@ -8,10 +8,24 @@ class Settings:
     environment = os.getenv("ENVIRONMENT", "development")
     log_level = os.getenv("LOG_LEVEL", "INFO")
 
-    # Anthropic API. Key comes from .env (never committed with a real value);
-    # empty default keeps imports working in CI's keyless smoke test.
-    anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8")
+    # AWS Bedrock (see ADR 0005 — supersedes ADR 0004's "Anthropic direct").
+    # Auth is a Bedrock bearer API key, which boto3/botocore reads directly from
+    # the AWS_BEARER_TOKEN_BEDROCK environment variable — it is deliberately NOT
+    # read here, so it can never land in a config object, a log line, or an
+    # exception message. Region has a default so the boto3 client can be
+    # constructed in CI's keyless import smoke without a real key.
+    aws_region = os.getenv("AWS_REGION", "us-east-1")
+    # claude-sonnet-4-6 is the model the engagement's eval recommended for the
+    # intake assistant (docs/research/llm-eval-sonnet-4-6-vs-gpt-oss-120b.md;
+    # ADR 0005). On Bedrock it is INFERENCE_PROFILE-only (the bare
+    # anthropic.claude-sonnet-4-6 foundation-model id is not invokable
+    # on-demand — it returns ValidationException). The default is the US
+    # cross-region inference profile; profile ids are REGION-SCOPED
+    # (us./eu./global. ...), so override BEDROCK_MODEL_ID to match your account
+    # + region (see Bedrock console -> Cross-region inference). If you change
+    # the model, change PRICE_PER_MTOK_* in llm_client.py with it — the cost
+    # gate derives from those constants.
+    bedrock_model_id = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
 
     # Outbound call discipline — deliberately the opposite of the D4 pattern
     # (eligibility-service's unbounded payer call). Every LLM call is bounded.
