@@ -3,3 +3,7 @@ uvicorn[standard]==0.34.0
 pydantic==2.10.4
 httpx==0.28.1
 boto3==1.40.0
+# Observability tracing (ADR 0006). Imported lazily and only when
+# LANGSMITH_TRACING=true, so this adds no import-time or keyless-smoke
+# dependency; requires Python >= 3.10 (container is python:3.12).
+langsmith==0.10.5

@@ -524,6 +524,32 @@ def _result_from_response(response: Any, started: float) -> LLMResult:
     return result
 
 
+def _trace_metadata(response: Any, _kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Scalar-only run metadata for a LangSmith trace of one Bedrock call.
+
+    Reads ONLY non-PHI scalar fields off the adapted response — never the
+    completion text, never the request kwargs (``_kwargs`` is accepted for the
+    tracing callback signature and deliberately ignored, since ``messages`` /
+    ``system`` carry PHI). These are exactly the fields ``_result_from_response``
+    already logs. Token usage is included only when present as integers, so a
+    malformed response never fabricates a $0 cost in the trace. Called only
+    from tracing.wrap_create, whose caller swallows any exception — pricing
+    here (estimate_cost) has already resolved in the preflight, so it will not
+    raise on the served path, but a failure would be non-fatal regardless."""
+    usage = getattr(response, "usage", None)
+    input_tokens = getattr(usage, "input_tokens", None)
+    output_tokens = getattr(usage, "output_tokens", None)
+    metadata: Dict[str, Any] = {
+        "model": getattr(response, "model", settings.bedrock_model_id),
+        "request_id": getattr(response, "id", None),
+    }
+    if isinstance(input_tokens, int) and isinstance(output_tokens, int):
+        metadata["input_tokens"] = input_tokens
+        metadata["output_tokens"] = output_tokens
+        metadata["estimated_cost_usd"] = round(estimate_cost(input_tokens, output_tokens), 6)
+    return metadata
+
+
 def complete(
     prompt: str,
     system: Optional[str] = None,
@@ -595,3 +621,20 @@ def complete_structured(
             % (output_model.__name__, result.request_id)
         ) from None
     return result
+
+
+# --- observability (ADR 0006) --------------------------------------------
+# Wrap the single Bedrock provider seam with LangSmith tracing. This is a NO-OP
+# passthrough unless LANGSMITH_TRACING=true (see tracing.wrap_create): metadata
+# only, PHI-silent (payloads blanked in two independent layers), and best-effort
+# (a tracing failure never blocks or slows a completion). Applied at import end
+# so it decorates the constructed `client`; _call resolves client.messages.create
+# at call time, so the wrapped callable is what actually runs in production.
+# Guarded because tracing must never break client construction or the import
+# smoke — any failure leaves the plain Bedrock seam in place.
+try:
+    import tracing
+
+    client.messages.create = tracing.wrap_create(client.messages.create, _trace_metadata)
+except Exception:  # pragma: no cover - defensive: tracing is strictly additive
+    log.debug("langsmith tracing wrap skipped")
