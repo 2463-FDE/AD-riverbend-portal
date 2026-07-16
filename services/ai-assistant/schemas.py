@@ -53,6 +53,13 @@ class InstructionsRequest(BaseModel):
 class InstructionsChecklist(BaseModel):
     """Structured output contract for the LLM (via complete_structured).
 
+    ``items`` carries template IDS from templates.CATALOG, never checklist
+    prose — the closed-vocabulary response mirror of InstructionsRequest. The
+    wire type stays ``list[str]`` (not an enum) so an off-catalog model reply
+    surfaces as an app-level fallback decision (app._select_items) instead of
+    depending on enum support in Bedrock's structured-output schema subset;
+    membership is enforced server-side against the catalog.
+
     The item count is enforced with a validator, NOT ``Field(min_length=...)``:
     the Field constraints emit ``minItems``/``maxItems`` into the JSON schema,
     and Bedrock's structured-output schema subset rejects ``minItems`` values
