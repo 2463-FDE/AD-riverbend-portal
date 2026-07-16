@@ -1,8 +1,14 @@
 # ADR 0004 — ai-assistant service and production LLM client wrapper
 
-**Status:** Accepted
+**Status:** Accepted (vendor decision superseded by ADR 0005, 2026-07-15)
 **Date:** 2026-07-05
 **Author:** Riverbend engagement team
+
+> **Note (2026-07-15):** the "Vendor: Anthropic API direct (not Bedrock)"
+> decision below is superseded by **ADR 0005** — the assistant now calls Claude
+> on AWS Bedrock (bearer key via boto3), which closes debt item D13 once an AWS
+> BAA is in place. All four guarantees (Bounded/Budgeted/Typed/PHI-silent) are
+> preserved. This ADR is kept as the historical record.
 
 ## Context
 

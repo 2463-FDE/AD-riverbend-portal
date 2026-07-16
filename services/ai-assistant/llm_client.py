@@ -1,6 +1,6 @@
-"""Production LLM client wrapper for the Anthropic API.
+"""Production LLM client wrapper for Claude on AWS Bedrock.
 
-Contract (see ADR 0004):
+Contract (see ADR 0004, provider superseded by ADR 0005):
   * every call is bounded — connect/read timeouts and SDK-managed retries
     with exponential backoff (the opposite of the D4 no-timeout pattern);
   * a token/cost budget is enforced BEFORE any request is sent, using a
@@ -16,19 +16,36 @@ Contract (see ADR 0004):
   * prompt and completion bodies are NEVER logged or embedded in exception
     messages. Metadata only. See docs/phi-logging-policy.md.
 
-Note on SDK pin: anthropic==0.72.0 (newest release compatible with the local
-Python 3.8 toolchain) predates ``client.messages.parse``; structured output is
-requested via ``extra_body={"output_config": {"format": ...}}`` and validated
-manually. When the toolchain moves to 3.9+, upgrade the pin and switch to
-``messages.parse``.
+Provider: Claude on Amazon Bedrock via boto3 ``bedrock-runtime.invoke_model``.
+Auth is a Bedrock bearer API key, which botocore reads from the
+``AWS_BEARER_TOKEN_BEDROCK`` environment variable; no AWS credential ever
+passes through this module. The wrapper FAILS CLOSED when that variable is
+absent (``_require_bearer_token``, checked before the sole egress) — it never
+falls back to boto3's ambient credential chain (instance role, ECS task role,
+stray ``AWS_*`` env vars), which would sign PHI-bearing calls under an AWS
+identity whose BAA posture this service knows nothing about. The boto3 call is placed behind a thin adapter
+(``_BedrockClient``) that exposes the same ``client.messages.create(**kwargs)``
+seam the wrapper was built around, so the budget gate, PHI-silent logging, and
+structured-output path are unchanged. Structured output is still requested via
+``extra_body={"output_config": {"format": ...}}`` (folded into the Bedrock
+request body) and validated manually with Pydantic.
 """
 import json
+import os
 import time
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Type
 
-import anthropic
-import httpx
+import boto3
+from botocore.config import Config
+from botocore.exceptions import (
+    BotoCoreError,
+    ClientError,
+    CredentialRetrievalError,
+    NoCredentialsError,
+    PartialCredentialsError,
+)
 from pydantic import BaseModel, ValidationError
 
 from config import settings
@@ -36,9 +53,40 @@ from logging_config import configure
 
 log = configure(settings.service_name)
 
-# claude-opus-4-8 pricing, USD per million tokens.
-PRICE_PER_MTOK_INPUT = 5.00
-PRICE_PER_MTOK_OUTPUT = 25.00
+# Bedrock pricing, USD per million tokens, keyed by FOUNDATION-MODEL id (a
+# region-scoped inference-profile prefix — us./eu./apac./global. — is stripped
+# before lookup, so every regional profile of a priced model resolves). The
+# worst-case-cost budget gate and the cost telemetry both derive from this
+# table, and it FAILS CLOSED: a BEDROCK_MODEL_ID with no entry here and no
+# explicit LLM_PRICE_PER_MTOK_INPUT/OUTPUT override refuses the call
+# (LLMConfigError) before anything egresses — an unpriced model must never
+# slip past the budget gate at whatever price we guessed (Codex review, PR #5).
+_MODEL_PRICING = {
+    "anthropic.claude-sonnet-4-6": (3.00, 15.00),
+}
+_INFERENCE_PROFILE_PREFIXES = ("us.", "eu.", "apac.", "global.")
+
+# Constant Bedrock requires in the request body for Anthropic models.
+_BEDROCK_ANTHROPIC_VERSION = "bedrock-2023-05-31"
+
+# Bedrock/botocore error codes that mean "the request or credentials are wrong"
+# (not retryable) vs. "temporarily unavailable" (already retried by botocore).
+# Note: Bedrock also raises ValidationException for model-side "input too long".
+# Mapping that to LLMConfigError (not LLMBudgetExceeded) is deliberate: the
+# local char cap + byte-based token gate cannot under-count, so a payload that
+# trips the model-side limit means the local caps are misconfigured relative to
+# the model — a config problem, not a runtime budget breach.
+_CONFIG_ERROR_CODES = frozenset({
+    "AccessDeniedException",
+    "UnrecognizedClientException",
+    "ValidationException",
+    "ResourceNotFoundException",
+})
+_THROTTLE_CODES = frozenset({
+    "ThrottlingException",
+    "TooManyRequestsException",
+    "ServiceQuotaExceededException",
+})
 
 
 class LLMError(Exception):
@@ -70,27 +118,141 @@ class LLMResult:
     estimated_cost_usd: float = 0.0
     latency_seconds: float = 0.0
     request_id: Optional[str] = None
-    model: str = field(default_factory=lambda: settings.anthropic_model)
+    model: str = field(default_factory=lambda: settings.bedrock_model_id)
 
 
-# Module-level client so tests can monkeypatch it (same pattern as
-# tests/test_eligibility_check.py monkeypatching check_mod.requests).
-# The "not-set" fallback keeps `import llm_client` working in CI's keyless
-# import smoke test; real calls without a key fail as LLMConfigError.
-client = anthropic.Anthropic(
-    api_key=settings.anthropic_api_key or "not-set",
-    timeout=httpx.Timeout(
-        settings.llm_read_timeout_seconds,
-        connect=settings.llm_connect_timeout_seconds,
+def _adapt(payload: Dict[str, Any], request_id: Optional[str]) -> SimpleNamespace:
+    """Shape a Bedrock invoke_model JSON body like the anthropic Message object
+    the rest of this module expects: ``.content[].type/.text``, ``.usage``,
+    ``.id``, ``.model``. Keeps _result_from_response provider-agnostic.
+
+    Structural absence is PRESERVED, not masked: a missing ``content`` becomes an
+    empty block list and a missing ``usage`` becomes ``None`` token counts, so
+    _result_from_response can fail the call closed (LLMResponseError) on a
+    malformed / schema-drifted 200 instead of emitting a blank completion with
+    $0 telemetry that reads as a clean success (Codex review, PR #5 round 4).
+    Bedrock always returns both in practice; their absence is a defect signal,
+    not a case to degrade past."""
+    content = [
+        SimpleNamespace(type=block.get("type"), text=block.get("text"))
+        for block in payload.get("content", []) or []
+    ]
+    usage = payload.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+    return SimpleNamespace(
+        content=content,
+        usage=SimpleNamespace(
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
+        ),
+        id=payload.get("id") or request_id,
+        model=payload.get("model", settings.bedrock_model_id),
+    )
+
+
+class _BedrockMessages:
+    """Exposes ``create(**kwargs)`` over Bedrock ``invoke_model`` so the wrapper
+    keeps a single provider seam. Botocore exceptions propagate to ``_call``,
+    which maps them to this module's typed errors."""
+
+    def __init__(self, runtime: Any) -> None:
+        self._runtime = runtime
+
+    def create(
+        self,
+        *,
+        model: str,
+        max_tokens: int,
+        messages: List[Dict[str, Any]],
+        system: Optional[str] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
+    ) -> SimpleNamespace:
+        body: Dict[str, Any] = {
+            "anthropic_version": _BEDROCK_ANTHROPIC_VERSION,
+            "max_tokens": max_tokens,
+            "messages": messages,
+        }
+        if system is not None:
+            body["system"] = system
+        if extra_body:
+            # Structured-output config (output_config) rides at the top level of
+            # the Bedrock body, same as it would on the first-party API.
+            body.update(extra_body)
+        response = self._runtime.invoke_model(
+            modelId=model,
+            body=json.dumps(body),
+            contentType="application/json",
+            accept="application/json",
+        )
+        payload = json.loads(response["body"].read())
+        request_id = response.get("ResponseMetadata", {}).get("RequestId")
+        return _adapt(payload, request_id)
+
+
+class _BedrockClient:
+    """anthropic-SDK-shaped facade: ``client.messages.create(...)``."""
+
+    def __init__(self, runtime: Any) -> None:
+        self.messages = _BedrockMessages(runtime)
+
+
+# Module-level boto3 runtime + client so tests can monkeypatch `client` (same
+# pattern as tests/test_eligibility_check.py monkeypatching check_mod.requests).
+# boto3 resolves credentials (the AWS_BEARER_TOKEN_BEDROCK bearer key) lazily on
+# the first call, so construction needs no key — CI's keyless import smoke still
+# passes; a real call without a key fails as LLMConfigError. Retries/timeouts
+# are the botocore equivalent of ADR 0004's bounded-call discipline. botocore's
+# retries.max_attempts is the retry count (resolved total_max_attempts =
+# max_attempts + 1), so it maps directly onto llm_max_retries.
+_runtime = boto3.client(
+    "bedrock-runtime",
+    region_name=settings.aws_region,
+    config=Config(
+        connect_timeout=settings.llm_connect_timeout_seconds,
+        read_timeout=settings.llm_read_timeout_seconds,
+        retries={"max_attempts": settings.llm_max_retries, "mode": "standard"},
     ),
-    max_retries=settings.llm_max_retries,
 )
+client = _BedrockClient(_runtime)
+
+
+def _resolve_pricing() -> tuple:
+    """(input, output) USD-per-MTok for the RESOLVED model — fail closed.
+
+    Resolution order: the explicit LLM_PRICE_PER_MTOK_INPUT/OUTPUT env pair
+    (both or neither — a half-set override is a config error, not a default),
+    then _MODEL_PRICING keyed by settings.bedrock_model_id with any
+    inference-profile region prefix stripped. No match raises LLMConfigError:
+    the cost gate must refuse a model it cannot price, not price it as Sonnet.
+    Runs per call (inside the preflight, before any egress) so a
+    misconfigured model refuses requests rather than failing import — CI's
+    keyless import smoke stays green."""
+    override_input = settings.llm_price_per_mtok_input
+    override_output = settings.llm_price_per_mtok_output
+    if (override_input is None) != (override_output is None):
+        raise LLMConfigError(
+            "LLM_PRICE_PER_MTOK_INPUT and LLM_PRICE_PER_MTOK_OUTPUT must be set together"
+        )
+    if override_input is not None:
+        return override_input, override_output
+    model_id = settings.bedrock_model_id
+    base = model_id
+    for prefix in _INFERENCE_PROFILE_PREFIXES:
+        if base.startswith(prefix):
+            base = base[len(prefix):]
+            break
+    pricing = _MODEL_PRICING.get(base)
+    if pricing is None:
+        raise LLMConfigError(
+            "no pricing entry for model %s — the cost gate cannot price it; "
+            "add it to _MODEL_PRICING or set LLM_PRICE_PER_MTOK_INPUT/OUTPUT" % model_id
+        )
+    return pricing
 
 
 def estimate_cost(input_tokens: int, output_tokens: int) -> float:
-    return (
-        input_tokens * PRICE_PER_MTOK_INPUT + output_tokens * PRICE_PER_MTOK_OUTPUT
-    ) / 1_000_000
+    price_input, price_output = _resolve_pricing()
+    return (input_tokens * price_input + output_tokens * price_output) / 1_000_000
 
 
 # Claude's tokenizer is byte-level BPE: all 256 single-byte tokens are in the
@@ -176,6 +338,52 @@ def _enforce_char_cap(
         )
 
 
+# Non-empty placeholder values that templates ship and CI seeds via
+# `cp .env.example .env`. A bare presence check would accept them and let a
+# deploy that never set a real key egress PHI before AWS rejects the auth
+# (Codex review, PR #5 round 5), so they are treated exactly like absence.
+# Matched case-insensitively after stripping surrounding whitespace.
+_PLACEHOLDER_BEARER_TOKENS = frozenset({
+    "changeme",
+    "change-me",
+    "change_me",
+    "placeholder",
+    "your-bedrock-bearer-token",
+    "your-token-here",
+    "todo",
+    "xxx",
+})
+
+
+def _require_bearer_token() -> None:
+    """Refuse egress unless the Bedrock bearer key is explicitly configured.
+
+    boto3's default credential chain would otherwise sign the call with any
+    ambient AWS identity available (instance role, ECS task role, stray AWS_*
+    env vars) and the request would SUCCEED under an account whose BAA posture
+    this service knows nothing about (Codex review, PR #5 round 3). When the
+    variable IS set to a real value, botocore's documented precedence uses
+    bearer auth for bedrock-runtime ahead of any sigv4 credentials, so ambient
+    identities cannot sign this service's calls (live-verified: call succeeds
+    via bearer with garbage AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY planted in
+    the environment).
+
+    Absence, an empty/whitespace-only value, AND known placeholder sentinels
+    (the ``changeme`` that .env.example ships and CI copies into .env) are all
+    treated as "not configured" — a non-empty placeholder must NOT satisfy the
+    guard, or a deploy that forgot to swap the placeholder would egress PHI
+    before AWS ever rejected the auth (Codex review, PR #5 round 5). The value
+    is only compared, never read into app state, logged, or embedded in the
+    error. Checked per call, not at import — CI's keyless import smoke must keep
+    passing (same rationale as the pricing gate)."""
+    token = (os.environ.get("AWS_BEARER_TOKEN_BEDROCK") or "").strip()
+    if not token or token.lower() in _PLACEHOLDER_BEARER_TOKENS:
+        raise LLMConfigError(
+            "AWS_BEARER_TOKEN_BEDROCK is not set to a real value — refusing to "
+            "fall back to ambient AWS credentials"
+        )
+
+
 def _enforce_budget(input_tokens: int, max_tokens: int) -> None:
     if input_tokens > settings.llm_max_input_tokens:
         raise LLMBudgetExceeded(
@@ -194,7 +402,7 @@ def _call(
     system: Optional[str],
     max_tokens: int,
     extra_body: Optional[Dict[str, Any]] = None,
-) -> "anthropic.types.Message":
+) -> SimpleNamespace:
     """Fully-local pre-flight budget check, then one bounded, retried API call.
 
     The ENTIRE budget gate runs before the ``try`` and before any SDK call:
@@ -202,19 +410,22 @@ def _call(
     cost caps) both check a deterministic LOCAL estimate. No vendor request —
     not even ``count_tokens`` — participates in the gate, because such a request
     would egress the full (possibly PHI-bearing, possibly over-budget) payload
-    across the trust boundary. The completion ``create`` call is the sole
-    egress; its ``usage`` is post-approval telemetry consumed downstream.
+    across the trust boundary. ``_require_bearer_token`` then refuses egress
+    entirely when the Bedrock bearer key is absent, so the call can never be
+    signed by ambient AWS credentials. The completion ``create`` call is the
+    sole egress; its ``usage`` is post-approval telemetry consumed downstream.
 
-    The ``try`` maps SDK exceptions from that one call to this module's typed
-    errors, most specific first. Exception messages carry status/request
-    metadata only.
+    The ``try`` maps botocore exceptions from that one call to this module's
+    typed errors, most specific first. Exception messages carry Bedrock error
+    code / HTTP status metadata only — never prompt or response text.
     """
     _enforce_char_cap(messages, system, extra_body)
     input_tokens = max_input_tokens(messages, system=system, extra_body=extra_body)
     _enforce_budget(input_tokens, max_tokens)
+    _require_bearer_token()
 
     kwargs: Dict[str, Any] = {
-        "model": settings.anthropic_model,
+        "model": settings.bedrock_model_id,
         "max_tokens": max_tokens,
         "messages": messages,
     }
@@ -225,20 +436,46 @@ def _call(
 
     try:
         return client.messages.create(**kwargs)
-    except (anthropic.NotFoundError, anthropic.AuthenticationError) as exc:
+    except ClientError as exc:
+        error = exc.response.get("Error", {})
+        code = error.get("Code", "?")
+        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        # Bad model, bad request shape, or auth/permission → config error;
+        # throttling / capacity / 5xx (after botocore retries) → unavailable.
+        if code in _CONFIG_ERROR_CODES or status in (401, 403, 404):
+            raise LLMConfigError(
+                "model/auth error (code=%s status=%s)" % (code, status)
+            ) from None
+        if code in _THROTTLE_CODES or status == 429:
+            raise LLMUnavailable(
+                "throttled after retries (code=%s)" % code
+            ) from None
+        raise LLMUnavailable(
+            "upstream error (code=%s status=%s)" % (code, status)
+        ) from None
+    except (NoCredentialsError, PartialCredentialsError, CredentialRetrievalError) as exc:
+        # Local credential-chain failure — botocore raises these BEFORE any
+        # request reaches AWS (missing/partial AWS_BEARER_TOKEN_BEDROCK or a
+        # broken fallback provider). A deployment/config break, not an outage:
+        # retrying can never succeed, so it must NOT surface as LLMUnavailable
+        # (Codex review, PR #5 round 2). Must precede the BotoCoreError catch —
+        # all three subclass it. Message names the exception type only.
         raise LLMConfigError(
-            "model/auth error (status=%s)" % getattr(exc, "status_code", "?")
+            "credential configuration error (%s)" % type(exc).__name__
         ) from None
-    except anthropic.RateLimitError as exc:
+    except BotoCoreError as exc:
+        # Connect/read timeout or endpoint connection failure, after retries.
         raise LLMUnavailable(
-            "rate limited after retries (status=%s)" % getattr(exc, "status_code", "?")
+            "connection error after retries (%s)" % type(exc).__name__
         ) from None
-    except anthropic.APIStatusError as exc:
+    except (ValueError, KeyError) as exc:
+        # A malformed/empty Bedrock 200 body (json.loads → ValueError, or a
+        # missing "body" key). The anthropic SDK absorbed this internally; boto3
+        # does not, so map it here to keep ADR 0004's Typed-failures guarantee.
+        # Message names the exception type only — never the response bytes.
         raise LLMUnavailable(
-            "upstream error (status=%s)" % getattr(exc, "status_code", "?")
+            "malformed upstream response (%s)" % type(exc).__name__
         ) from None
-    except anthropic.APIConnectionError:
-        raise LLMUnavailable("connection error after retries") from None
 
 
 def _result_from_response(response: Any, started: float) -> LLMResult:
@@ -247,15 +484,32 @@ def _result_from_response(response: Any, started: float) -> LLMResult:
         if getattr(block, "type", None) == "text":
             text = block.text
             break
-    usage = response.usage
+    request_id = getattr(response, "id", None)
+    # Fail closed on a malformed / schema-drifted 200. A response with no usable
+    # text block would otherwise become a blank but "successful" completion —
+    # e.g. empty patient intake instructions returned to a clinician while the
+    # caller sees no error (Codex review, PR #5 round 4). Both complete() and
+    # complete_structured() flow through here, so the guard lives here once.
+    # Messages carry the request id only — never the prompt or response bytes.
+    if not text:
+        raise LLMResponseError("no text block in response (request_id=%s)" % request_id)
+    usage = getattr(response, "usage", None)
+    input_tokens = getattr(usage, "input_tokens", None)
+    output_tokens = getattr(usage, "output_tokens", None)
+    # Usage is post-approval telemetry, but its ABSENCE signals a malformed /
+    # drifted response (Bedrock always returns it): defaulting to 0 would log a
+    # clean $0 call for a real PHI vendor egress, under-reporting what crossed
+    # the boundary. Require explicit integer counts; fail closed otherwise.
+    if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
+        raise LLMResponseError("response missing token usage (request_id=%s)" % request_id)
     result = LLMResult(
         text=text,
-        input_tokens=usage.input_tokens,
-        output_tokens=usage.output_tokens,
-        estimated_cost_usd=estimate_cost(usage.input_tokens, usage.output_tokens),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        estimated_cost_usd=estimate_cost(input_tokens, output_tokens),
         latency_seconds=time.monotonic() - started,
-        request_id=getattr(response, "id", None),
-        model=getattr(response, "model", settings.anthropic_model),
+        request_id=request_id,
+        model=getattr(response, "model", settings.bedrock_model_id),
     )
     # Metadata only — never the prompt or the completion.
     log.info(
@@ -283,6 +537,32 @@ def complete(
     return _result_from_response(response, started)
 
 
+def _strict_schema(output_model: Type[BaseModel]) -> Dict[str, Any]:
+    """Pydantic's ``model_json_schema()`` omits ``additionalProperties``, but the
+    structured-output API requires every object node to set it to ``false``
+    explicitly — the request is otherwise rejected with ValidationException
+    ("For 'object' type, 'additionalProperties' must be explicitly set to
+    false"; found by live Bedrock verification, but the first-party API has the
+    same rule). Walk the whole schema (nested ``$defs``, ``anyOf``, ``items``,
+    ...) and pin it on each object node. ``setdefault`` so a model that
+    explicitly set something else still surfaces as a typed upstream rejection
+    instead of being silently rewritten."""
+    schema = output_model.model_json_schema()
+
+    def pin(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "object" or "properties" in node:
+                node.setdefault("additionalProperties", False)
+            for value in node.values():
+                pin(value)
+        elif isinstance(node, list):
+            for item in node:
+                pin(item)
+
+    pin(schema)
+    return schema
+
+
 def complete_structured(
     prompt: str,
     output_model: Type[BaseModel],
@@ -297,16 +577,15 @@ def complete_structured(
         "output_config": {
             "format": {
                 "type": "json_schema",
-                "schema": output_model.model_json_schema(),
+                "schema": _strict_schema(output_model),
             }
         }
     }
     response = _call(messages, system, max_tokens, extra_body=extra_body)
+    # _result_from_response has already failed closed on an absent text block or
+    # usage; here result.text is guaranteed present and only its JSON shape is
+    # still unverified.
     result = _result_from_response(response, started)
-    if result.text is None:
-        raise LLMResponseError(
-            "no text block in response (request_id=%s)" % result.request_id
-        )
     try:
         result.parsed = output_model.model_validate_json(result.text)
     except (ValidationError, json.JSONDecodeError):
