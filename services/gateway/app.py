@@ -35,6 +35,7 @@ SERVICES = {
     "scheduling": settings.scheduling_url,
     "interop": settings.interop_url,
     "roi": settings.roi_url,
+    "ai": settings.ai_assistant_url,
 }
 
 
@@ -191,6 +192,22 @@ def proxy_roi_fulfill(request_id: int, session: dict = Depends(require_session))
 
 
 # --------------------------------------------------------------------------- #
+# ai assistant
+# --------------------------------------------------------------------------- #
+@app.post("/ai/intake-instructions")
+def proxy_intake_instructions(payload: dict, session: dict = Depends(require_session)):
+    # Deliberately NOT _post: that helper swallows failures into a 200-OK
+    # {"error": str(e)} body, and str(e) on an httpx error can embed the
+    # request URL (the member_id leak class). New routes use _post_checked.
+    return _post_checked(
+        "ai",
+        "/intake-instructions",
+        payload,
+        timeout=settings.ai_read_timeout_seconds,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # interop
 # --------------------------------------------------------------------------- #
 @app.post("/hl7/ingest")
@@ -221,3 +238,37 @@ def _get(service: str, path: str, params: Optional[dict] = None):
     except Exception as e:
         log.error("proxy GET %s%s failed: %s", service, path, e)
         return {"error": str(e)}
+
+
+def _post_checked(service: str, path: str, payload: dict, timeout: float):
+    """POST to a downstream service, surfacing failure as failure.
+
+    Unlike the inherited _post/_get helpers this does NOT collapse errors into
+    a 200-OK ``{"error": str(e)}`` body, and it never puts ``str(e)`` in a log
+    or response — httpx exception text can embed the request URL and its query
+    params (how the eligibility member_id leak happened). Downstream status
+    codes and JSON bodies are relayed as-is; transport failures map to typed
+    gateway errors with only the exception CLASS logged.
+    """
+    try:
+        r = httpx.post(f"{SERVICES[service]}{path}", json=payload, timeout=timeout)
+    except httpx.TimeoutException:
+        log.error("proxy POST %s%s timed out after %.0fs", service, path, timeout)
+        raise HTTPException(status_code=504, detail=f"{service} service timed out")
+    except httpx.HTTPError as e:
+        log.error("proxy POST %s%s transport error: %s", service, path, type(e).__name__)
+        raise HTTPException(status_code=502, detail=f"{service} service unreachable")
+    try:
+        body = r.json()
+    except ValueError:
+        log.error("proxy POST %s%s returned non-JSON status=%s", service, path, r.status_code)
+        raise HTTPException(status_code=502, detail=f"{service} service returned a bad response")
+    if r.status_code >= 400:
+        # Relay the downstream error status; detail comes from the downstream
+        # body only if it is the standard FastAPI shape (a plain "detail"
+        # string), otherwise stays generic.
+        detail = body.get("detail") if isinstance(body, dict) else None
+        if not isinstance(detail, str):
+            detail = f"{service} service error"
+        raise HTTPException(status_code=r.status_code, detail=detail)
+    return body

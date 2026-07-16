@@ -60,6 +60,13 @@ export default function IntakePage() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
 
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [instructions, setInstructions] = useState<{
+    items: string[];
+    disclaimer: string;
+  } | null>(null);
+
   const consentsOk = consents.treatment && consents.privacy;
   const demoOk = demo.first_name && demo.last_name && demo.dob;
 
@@ -105,6 +112,37 @@ export default function IntakePage() {
     }
   }
 
+  // Ask the AI assistant for a visit-prep checklist. The payload is
+  // deliberately administrative facts only (booleans + the plan-type select) —
+  // no name, DOB, SSN, or any typed-in text is ever sent to this endpoint.
+  async function fetchInstructions() {
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      const res = await apiFetch("/api/ai/intake-instructions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          has_insurance: Boolean(ins.carrier || ins.member_id),
+          plan_type: ins.plan_type || null,
+          policy_holder_is_self: !ins.policy_holder,
+          communications_opt_in: consents.communications,
+          financial_ack: consents.financial,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !Array.isArray(data?.items)) {
+        setAiError("Could not prepare your checklist right now. Please try again later.");
+      } else {
+        setInstructions({ items: data.items, disclaimer: data.disclaimer ?? "" });
+      }
+    } catch {
+      setAiError("Could not reach the portal. Please try again later.");
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
   if (result?.ok) {
     return (
       <div className="rb-stack">
@@ -121,6 +159,46 @@ export default function IntakePage() {
           <Link className="rb-btn rb-btn--primary" href="/">
             Back to dashboard
           </Link>
+        </Card>
+        <Card title="Prepare for your first visit">
+          {!instructions && (
+            <>
+              <p className="rb-muted">
+                Get a short, personalized checklist of what to bring and how to prepare.
+              </p>
+              {aiError && (
+                <div className="rb-alert rb-alert--err" role="alert" style={{ marginBottom: 12 }}>
+                  {aiError}
+                </div>
+              )}
+              <button
+                className="rb-btn rb-btn--primary"
+                type="button"
+                onClick={fetchInstructions}
+                disabled={aiBusy}
+              >
+                {aiBusy ? (
+                  <><span className="rb-spinner" aria-hidden="true" /> Preparing your checklist…</>
+                ) : (
+                  "Get visit prep instructions"
+                )}
+              </button>
+            </>
+          )}
+          {instructions && (
+            <>
+              <ul>
+                {instructions.items.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+              {instructions.disclaimer && (
+                <p className="rb-muted" style={{ marginTop: 12 }}>
+                  {instructions.disclaimer}
+                </p>
+              )}
+            </>
+          )}
         </Card>
       </div>
     );

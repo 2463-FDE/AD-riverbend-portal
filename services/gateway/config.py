@@ -22,6 +22,12 @@ class Settings:
     scheduling_url = os.getenv("SCHEDULING_URL", "http://scheduling-service:8074")
     interop_url = os.getenv("INTEROP_URL", "http://interop-service:8075")
     roi_url = os.getenv("ROI_URL", "http://roi-service:8076")
+    ai_assistant_url = os.getenv("AI_ASSISTANT_URL", "http://ai-assistant:8077")
+
+    # LLM calls are seconds-slow by nature; this bounds the /ai fan-out
+    # explicitly (never unbounded — that is the D4/RIV-088 pattern) while
+    # allowing more headroom than the 30s default used for the CRUD services.
+    ai_read_timeout_seconds = float(os.getenv("AI_READ_TIMEOUT_SECONDS", "60"))
 
     @property
     def db_url(self) -> str:
