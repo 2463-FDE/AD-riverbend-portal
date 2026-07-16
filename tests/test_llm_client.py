@@ -40,6 +40,15 @@ for _name, _module in _saved.items():
         sys.modules.pop(_name, None)
 
 
+@pytest.fixture(autouse=True)
+def _bearer_token_env(monkeypatch):
+    # The wrapper fails closed without the Bedrock bearer key (PR #5 round 3),
+    # so every test runs with a fake one in the environment. It never egresses
+    # — the client seam is patched everywhere. Tests proving the fail-closed
+    # behavior delete it explicitly.
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "test-bearer-token")
+
+
 class SampleOutput(BaseModel):
     title: str
     summary: str
@@ -418,6 +427,57 @@ def test_connection_error_maps_to_unavailable(monkeypatch):
     _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
     with pytest.raises(llm_mod.LLMUnavailable):
         llm_mod.complete("hello")
+
+
+# --- bearer key is mandatory: no ambient-credential fallback (Codex, r3) -----
+# boto3's default chain would sign the call with any ambient AWS identity
+# (instance role, AWS_* env vars) when the bearer key is absent — a
+# successful-looking call under an account with unknown BAA posture. The
+# wrapper must refuse egress instead. These tests go through the REAL
+# _BedrockClient/_BedrockMessages adapter down to the invoke_model seam, so
+# they prove no invoke_model call is ever attempted.
+
+
+def _stub_runtime_client(monkeypatch):
+    calls = []
+    stub = SimpleNamespace(invoke_model=lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(llm_mod, "client", llm_mod._BedrockClient(stub))
+    return calls
+
+
+def test_missing_bearer_token_refuses_before_any_egress(monkeypatch):
+    # Adversarial: PHI prompt + no bearer key. Refusal must be local (no
+    # invoke_model) and the error must carry neither the prompt nor any token.
+    calls = _stub_runtime_client(monkeypatch)
+    monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
+    with pytest.raises(llm_mod.LLMConfigError) as excinfo:
+        llm_mod.complete(PHI_PROMPT)
+    assert calls == []
+    assert "AWS_BEARER_TOKEN_BEDROCK" in str(excinfo.value)
+    assert "Jane Doe" not in str(excinfo.value)
+    assert "123-45-6789" not in str(excinfo.value)
+
+
+def test_empty_bearer_token_refuses_before_any_egress(monkeypatch):
+    # Empty string is as absent as unset — must not reach the credential chain.
+    calls = _stub_runtime_client(monkeypatch)
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "")
+    with pytest.raises(llm_mod.LLMConfigError):
+        llm_mod.complete("hello")
+    assert calls == []
+
+
+def test_ambient_aws_creds_do_not_substitute_for_bearer_token(monkeypatch):
+    # The reviewer's exact scenario: sigv4-style AWS_* credentials present,
+    # bearer key absent. boto3 WOULD sign with these; the wrapper must refuse
+    # with zero invoke_model attempts instead.
+    calls = _stub_runtime_client(monkeypatch)
+    monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAFAKEFAKEFAKEFAKE")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fake-secret-fake-secret")
+    with pytest.raises(llm_mod.LLMConfigError):
+        llm_mod.complete("hello")
+    assert calls == []
 
 
 # --- credential failures are config errors, not outages (Codex, PR #5 r2) ----

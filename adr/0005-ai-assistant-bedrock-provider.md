@@ -76,6 +76,17 @@ container regardless.
     `LLMUnavailable` (throttling/5xx/connection after retries). Exception
     messages carry error-code/status metadata only.
   - **PHI-silent** — unchanged; still metadata-only logging.
+- **Bearer-only auth is enforced fail-closed** (adversarial review, PR #5).
+  boto3's default credential chain would happily sign the call with any
+  ambient AWS identity (instance role, ECS task role, stray `AWS_*` env vars)
+  when `AWS_BEARER_TOKEN_BEDROCK` is absent — a *successful-looking* call
+  under an account whose BAA posture the service knows nothing about.
+  `_require_bearer_token` refuses egress (`LLMConfigError`) unless the bearer
+  key is present; presence only is checked, the value never enters app state.
+  With the key set, botocore's documented precedence uses bearer auth for
+  `bedrock-runtime` ahead of sigv4, so ambient credentials cannot sign this
+  service's calls in either case. Checked per call rather than at import so
+  CI's keyless import smoke keeps passing.
 - **Pricing is fail-closed per model** (adversarial review, PR #5). The
   worst-case-cost gate and cost telemetry price the *resolved*
   `BEDROCK_MODEL_ID` from a lookup table (`_MODEL_PRICING`, keyed by

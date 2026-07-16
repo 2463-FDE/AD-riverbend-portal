@@ -19,7 +19,11 @@ Contract (see ADR 0004, provider superseded by ADR 0005):
 Provider: Claude on Amazon Bedrock via boto3 ``bedrock-runtime.invoke_model``.
 Auth is a Bedrock bearer API key, which botocore reads from the
 ``AWS_BEARER_TOKEN_BEDROCK`` environment variable; no AWS credential ever
-passes through this module. The boto3 call is placed behind a thin adapter
+passes through this module. The wrapper FAILS CLOSED when that variable is
+absent (``_require_bearer_token``, checked before the sole egress) — it never
+falls back to boto3's ambient credential chain (instance role, ECS task role,
+stray ``AWS_*`` env vars), which would sign PHI-bearing calls under an AWS
+identity whose BAA posture this service knows nothing about. The boto3 call is placed behind a thin adapter
 (``_BedrockClient``) that exposes the same ``client.messages.create(**kwargs)``
 seam the wrapper was built around, so the budget gate, PHI-silent logging, and
 structured-output path are unchanged. Structured output is still requested via
@@ -27,6 +31,7 @@ structured-output path are unchanged. Structured output is still requested via
 request body) and validated manually with Pydantic.
 """
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -330,6 +335,28 @@ def _enforce_char_cap(
         )
 
 
+def _require_bearer_token() -> None:
+    """Refuse egress unless the Bedrock bearer key is explicitly configured.
+
+    boto3's default credential chain would otherwise sign the call with any
+    ambient AWS identity available (instance role, ECS task role, stray AWS_*
+    env vars) and the request would SUCCEED under an account whose BAA posture
+    this service knows nothing about (Codex review, PR #5 round 3). Presence
+    only is checked; the value is never read into app state, logged, or
+    embedded in the error. When the variable IS set, botocore's documented
+    precedence uses bearer auth for bedrock-runtime ahead of any sigv4
+    credentials, so ambient identities cannot sign this service's calls
+    (live-verified: call succeeds via bearer with garbage AWS_ACCESS_KEY_ID/
+    AWS_SECRET_ACCESS_KEY planted in the environment). Checked per call, not
+    at import — CI's keyless import smoke must keep passing (same rationale
+    as the pricing gate)."""
+    if not os.environ.get("AWS_BEARER_TOKEN_BEDROCK"):
+        raise LLMConfigError(
+            "AWS_BEARER_TOKEN_BEDROCK is not set — refusing to fall back to "
+            "ambient AWS credentials"
+        )
+
+
 def _enforce_budget(input_tokens: int, max_tokens: int) -> None:
     if input_tokens > settings.llm_max_input_tokens:
         raise LLMBudgetExceeded(
@@ -356,8 +383,10 @@ def _call(
     cost caps) both check a deterministic LOCAL estimate. No vendor request —
     not even ``count_tokens`` — participates in the gate, because such a request
     would egress the full (possibly PHI-bearing, possibly over-budget) payload
-    across the trust boundary. The completion ``create`` call is the sole
-    egress; its ``usage`` is post-approval telemetry consumed downstream.
+    across the trust boundary. ``_require_bearer_token`` then refuses egress
+    entirely when the Bedrock bearer key is absent, so the call can never be
+    signed by ambient AWS credentials. The completion ``create`` call is the
+    sole egress; its ``usage`` is post-approval telemetry consumed downstream.
 
     The ``try`` maps botocore exceptions from that one call to this module's
     typed errors, most specific first. Exception messages carry Bedrock error
@@ -366,6 +395,7 @@ def _call(
     _enforce_char_cap(messages, system, extra_body)
     input_tokens = max_input_tokens(messages, system=system, extra_body=extra_body)
     _enforce_budget(input_tokens, max_tokens)
+    _require_bearer_token()
 
     kwargs: Dict[str, Any] = {
         "model": settings.bedrock_model_id,
