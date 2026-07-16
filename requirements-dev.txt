@@ -9,3 +9,5 @@ psycopg2-binary==2.9.10
 fastapi==0.115.6
 PyYAML==6.0.2
 boto3==1.40.0
+# ai-assistant observability (ADR 0006); requires Python >= 3.10.
+langsmith==0.10.5
