@@ -338,25 +338,49 @@ def _enforce_char_cap(
         )
 
 
+# Non-empty placeholder values that templates ship and CI seeds via
+# `cp .env.example .env`. A bare presence check would accept them and let a
+# deploy that never set a real key egress PHI before AWS rejects the auth
+# (Codex review, PR #5 round 5), so they are treated exactly like absence.
+# Matched case-insensitively after stripping surrounding whitespace.
+_PLACEHOLDER_BEARER_TOKENS = frozenset({
+    "changeme",
+    "change-me",
+    "change_me",
+    "placeholder",
+    "your-bedrock-bearer-token",
+    "your-token-here",
+    "todo",
+    "xxx",
+})
+
+
 def _require_bearer_token() -> None:
     """Refuse egress unless the Bedrock bearer key is explicitly configured.
 
     boto3's default credential chain would otherwise sign the call with any
     ambient AWS identity available (instance role, ECS task role, stray AWS_*
     env vars) and the request would SUCCEED under an account whose BAA posture
-    this service knows nothing about (Codex review, PR #5 round 3). Presence
-    only is checked; the value is never read into app state, logged, or
-    embedded in the error. When the variable IS set, botocore's documented
-    precedence uses bearer auth for bedrock-runtime ahead of any sigv4
-    credentials, so ambient identities cannot sign this service's calls
-    (live-verified: call succeeds via bearer with garbage AWS_ACCESS_KEY_ID/
-    AWS_SECRET_ACCESS_KEY planted in the environment). Checked per call, not
-    at import — CI's keyless import smoke must keep passing (same rationale
-    as the pricing gate)."""
-    if not os.environ.get("AWS_BEARER_TOKEN_BEDROCK"):
+    this service knows nothing about (Codex review, PR #5 round 3). When the
+    variable IS set to a real value, botocore's documented precedence uses
+    bearer auth for bedrock-runtime ahead of any sigv4 credentials, so ambient
+    identities cannot sign this service's calls (live-verified: call succeeds
+    via bearer with garbage AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY planted in
+    the environment).
+
+    Absence, an empty/whitespace-only value, AND known placeholder sentinels
+    (the ``changeme`` that .env.example ships and CI copies into .env) are all
+    treated as "not configured" — a non-empty placeholder must NOT satisfy the
+    guard, or a deploy that forgot to swap the placeholder would egress PHI
+    before AWS ever rejected the auth (Codex review, PR #5 round 5). The value
+    is only compared, never read into app state, logged, or embedded in the
+    error. Checked per call, not at import — CI's keyless import smoke must keep
+    passing (same rationale as the pricing gate)."""
+    token = (os.environ.get("AWS_BEARER_TOKEN_BEDROCK") or "").strip()
+    if not token or token.lower() in _PLACEHOLDER_BEARER_TOKENS:
         raise LLMConfigError(
-            "AWS_BEARER_TOKEN_BEDROCK is not set — refusing to fall back to "
-            "ambient AWS credentials"
+            "AWS_BEARER_TOKEN_BEDROCK is not set to a real value — refusing to "
+            "fall back to ambient AWS credentials"
         )
 
 

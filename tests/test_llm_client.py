@@ -484,6 +484,45 @@ def test_ambient_aws_creds_do_not_substitute_for_bearer_token(monkeypatch):
     assert calls == []
 
 
+def test_placeholder_bearer_token_refuses_before_any_egress(monkeypatch):
+    # .env.example ships AWS_BEARER_TOKEN_BEDROCK=changeme (historically) and CI
+    # copies it to .env via `cp .env.example .env`; a bare non-empty presence
+    # check would accept that placeholder and egress a PHI prompt before AWS
+    # rejects the auth. The guard must treat the shipped sentinel as absence
+    # (Codex review, PR #5 round 5). Stub returns a well-formed body so that
+    # against pre-fix code the call would succeed and reach invoke_model — this
+    # asserts it never does.
+    calls = _stub_runtime_returning(
+        monkeypatch,
+        {
+            "content": [{"type": "text", "text": "hi"}],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        },
+    )
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "changeme")
+    with pytest.raises(llm_mod.LLMConfigError):
+        llm_mod.complete(PHI_PROMPT)
+    assert calls == []
+
+
+def test_placeholder_bearer_variants_all_refuse(monkeypatch):
+    # Lock the class, not the "changeme" instance: whitespace-only, padded, and
+    # differently-cased placeholders must all be treated as unset, with no
+    # invoke_model attempt.
+    for value in ("   ", " changeme ", "CHANGEME", "placeholder", "your-token-here"):
+        calls = _stub_runtime_returning(
+            monkeypatch,
+            {
+                "content": [{"type": "text", "text": "hi"}],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        )
+        monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", value)
+        with pytest.raises(llm_mod.LLMConfigError):
+            llm_mod.complete("hello")
+        assert calls == [], value
+
+
 # --- credential failures are config errors, not outages (Codex, PR #5 r2) ----
 # botocore raises these locally, BEFORE any request reaches AWS: a missing or
 # partially-set AWS_BEARER_TOKEN_BEDROCK / fallback chain is a deployment
@@ -550,10 +589,17 @@ def test_malformed_response_maps_to_unavailable(monkeypatch):
 
 
 def _stub_runtime_returning(monkeypatch, payload):
+    calls = []
     body = SimpleNamespace(read=lambda: json.dumps(payload).encode("utf-8"))
     response = {"body": body, "ResponseMetadata": {"RequestId": "req_stub_ok"}}
-    stub = SimpleNamespace(invoke_model=lambda **kwargs: response)
+
+    def _invoke(**kwargs):
+        calls.append(kwargs)
+        return response
+
+    stub = SimpleNamespace(invoke_model=_invoke)
     monkeypatch.setattr(llm_mod, "client", llm_mod._BedrockClient(stub))
+    return calls
 
 
 def test_missing_content_block_raises_through_adapter(monkeypatch):
