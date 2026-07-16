@@ -7,6 +7,7 @@ check_mod.requests). No network, no key. The PHI-safety tests are the
 load-bearing ones: prompt text must never reach a log record or an exception
 message.
 """
+import json
 import logging
 import sys
 from types import SimpleNamespace
@@ -473,7 +474,10 @@ def test_ambient_aws_creds_do_not_substitute_for_bearer_token(monkeypatch):
     # with zero invoke_model attempts instead.
     calls = _stub_runtime_client(monkeypatch)
     monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAFAKEFAKEFAKEFAKE")
+    # Deliberately NOT an AKIA-shaped value: invoke_model is stubbed so the
+    # credential shape is irrelevant to the test, and a real-looking access-key
+    # id trips the CI gitleaks secret scanner (aws-access-token) on this fixture.
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "fake-access-key-id-not-real")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fake-secret-fake-secret")
     with pytest.raises(llm_mod.LLMConfigError):
         llm_mod.complete("hello")
@@ -534,6 +538,86 @@ def test_malformed_response_maps_to_unavailable(monkeypatch):
 # count_tokens preflight itself (PR #2 review round 4). Budget is now enforced
 # against a local estimate before any SDK call, so count_tokens is no longer in
 # the request path — the only egress that can raise is invoke_model, covered above.
+
+
+# --- malformed responses fail closed (Codex review, PR #5 round 4) ----------
+# A malformed or schema-drifted Bedrock 200 must never become a blank but
+# "successful" completion. These drive a raw invoke_model body through the REAL
+# _BedrockClient/_BedrockMessages/_adapt path (not the monkeypatched facade), so
+# they exercise the adapter that defaults missing content/usage — the code the
+# finding is about — and assert complete() raises instead of returning text=None
+# with $0 telemetry.
+
+
+def _stub_runtime_returning(monkeypatch, payload):
+    body = SimpleNamespace(read=lambda: json.dumps(payload).encode("utf-8"))
+    response = {"body": body, "ResponseMetadata": {"RequestId": "req_stub_ok"}}
+    stub = SimpleNamespace(invoke_model=lambda **kwargs: response)
+    monkeypatch.setattr(llm_mod, "client", llm_mod._BedrockClient(stub))
+
+
+def test_missing_content_block_raises_through_adapter(monkeypatch):
+    # No content at all: _adapt yields an empty block list, so text is None.
+    # complete() must reject, not return a blank success.
+    _stub_runtime_returning(
+        monkeypatch, {"usage": {"input_tokens": 10, "output_tokens": 5}}
+    )
+    with pytest.raises(llm_mod.LLMResponseError):
+        llm_mod.complete("hello")
+
+
+def test_non_text_content_block_raises_through_adapter(monkeypatch):
+    # A single non-text block (e.g. tool_use) yields no usable text — reject.
+    _stub_runtime_returning(
+        monkeypatch,
+        {
+            "content": [{"type": "tool_use", "id": "x"}],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        },
+    )
+    with pytest.raises(llm_mod.LLMResponseError):
+        llm_mod.complete("hello")
+
+
+def test_missing_usage_raises_through_adapter(monkeypatch):
+    # Valid text but no usage block: a clean-looking $0 call is a false telemetry
+    # signal for a PHI vendor egress. Fail closed rather than under-report.
+    _stub_runtime_returning(
+        monkeypatch, {"content": [{"type": "text", "text": "hi"}]}
+    )
+    with pytest.raises(llm_mod.LLMResponseError):
+        llm_mod.complete("hello")
+
+
+def test_malformed_response_error_carries_no_prompt(monkeypatch):
+    # Adversarial (CLAUDE.md §5): the new raise path is an exception-message
+    # path, so it must carry neither the prompt nor any PHI.
+    _stub_runtime_returning(
+        monkeypatch, {"usage": {"input_tokens": 10, "output_tokens": 5}}
+    )
+    with pytest.raises(llm_mod.LLMResponseError) as excinfo:
+        llm_mod.complete(PHI_PROMPT)
+    assert "Jane Doe" not in str(excinfo.value)
+    assert "123-45-6789" not in str(excinfo.value)
+
+
+def test_wellformed_response_succeeds_through_adapter(monkeypatch):
+    # Control: a well-formed body through the same real adapter path still
+    # returns a populated result — the guard rejects only malformed responses.
+    _stub_runtime_returning(
+        monkeypatch,
+        {
+            "content": [{"type": "text", "text": "hello world"}],
+            "usage": {"input_tokens": 12, "output_tokens": 7},
+            "id": "req_real",
+            "model": "anthropic.claude-sonnet-4-6",
+        },
+    )
+    result = llm_mod.complete("say hello")
+    assert result.text == "hello world"
+    assert result.input_tokens == 12
+    assert result.output_tokens == 7
+    assert result.request_id == "req_real"
 
 
 # --- PHI safety ------------------------------------------------------------

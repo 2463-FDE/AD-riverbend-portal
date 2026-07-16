@@ -126,21 +126,24 @@ def _adapt(payload: Dict[str, Any], request_id: Optional[str]) -> SimpleNamespac
     the rest of this module expects: ``.content[].type/.text``, ``.usage``,
     ``.id``, ``.model``. Keeps _result_from_response provider-agnostic.
 
-    A body missing ``usage`` defaults to 0 tokens rather than failing the call:
-    usage is post-approval telemetry (the budget gate already ran), so a $0.0000
-    cost log line on an otherwise-good response is the correct degradation —
-    Bedrock always returns usage in practice, and failing a served completion
-    over missing telemetry would be worse than under-reporting it."""
+    Structural absence is PRESERVED, not masked: a missing ``content`` becomes an
+    empty block list and a missing ``usage`` becomes ``None`` token counts, so
+    _result_from_response can fail the call closed (LLMResponseError) on a
+    malformed / schema-drifted 200 instead of emitting a blank completion with
+    $0 telemetry that reads as a clean success (Codex review, PR #5 round 4).
+    Bedrock always returns both in practice; their absence is a defect signal,
+    not a case to degrade past."""
     content = [
         SimpleNamespace(type=block.get("type"), text=block.get("text"))
         for block in payload.get("content", []) or []
     ]
-    usage = payload.get("usage") or {}
+    usage = payload.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
     return SimpleNamespace(
         content=content,
         usage=SimpleNamespace(
-            input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0),
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
         ),
         id=payload.get("id") or request_id,
         model=payload.get("model", settings.bedrock_model_id),
@@ -457,14 +460,31 @@ def _result_from_response(response: Any, started: float) -> LLMResult:
         if getattr(block, "type", None) == "text":
             text = block.text
             break
-    usage = response.usage
+    request_id = getattr(response, "id", None)
+    # Fail closed on a malformed / schema-drifted 200. A response with no usable
+    # text block would otherwise become a blank but "successful" completion —
+    # e.g. empty patient intake instructions returned to a clinician while the
+    # caller sees no error (Codex review, PR #5 round 4). Both complete() and
+    # complete_structured() flow through here, so the guard lives here once.
+    # Messages carry the request id only — never the prompt or response bytes.
+    if not text:
+        raise LLMResponseError("no text block in response (request_id=%s)" % request_id)
+    usage = getattr(response, "usage", None)
+    input_tokens = getattr(usage, "input_tokens", None)
+    output_tokens = getattr(usage, "output_tokens", None)
+    # Usage is post-approval telemetry, but its ABSENCE signals a malformed /
+    # drifted response (Bedrock always returns it): defaulting to 0 would log a
+    # clean $0 call for a real PHI vendor egress, under-reporting what crossed
+    # the boundary. Require explicit integer counts; fail closed otherwise.
+    if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
+        raise LLMResponseError("response missing token usage (request_id=%s)" % request_id)
     result = LLMResult(
         text=text,
-        input_tokens=usage.input_tokens,
-        output_tokens=usage.output_tokens,
-        estimated_cost_usd=estimate_cost(usage.input_tokens, usage.output_tokens),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        estimated_cost_usd=estimate_cost(input_tokens, output_tokens),
         latency_seconds=time.monotonic() - started,
-        request_id=getattr(response, "id", None),
+        request_id=request_id,
         model=getattr(response, "model", settings.bedrock_model_id),
     )
     # Metadata only — never the prompt or the completion.
@@ -538,11 +558,10 @@ def complete_structured(
         }
     }
     response = _call(messages, system, max_tokens, extra_body=extra_body)
+    # _result_from_response has already failed closed on an absent text block or
+    # usage; here result.text is guaranteed present and only its JSON shape is
+    # still unverified.
     result = _result_from_response(response, started)
-    if result.text is None:
-        raise LLMResponseError(
-            "no text block in response (request_id=%s)" % result.request_id
-        )
     try:
         result.parsed = output_model.model_validate_json(result.text)
     except (ValidationError, json.JSONDecodeError):
