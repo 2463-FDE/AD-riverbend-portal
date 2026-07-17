@@ -173,3 +173,51 @@ def ai_cache_set(key: str, value, ttl_seconds: int) -> None:
         _redis().set(key, json.dumps(value), ex=ttl_seconds)
     except Exception:
         pass
+
+
+# --------------------------------------------------------------------------- #
+# single-flight lock for concurrent identical cache misses (Codex PR #7 round 7)
+# --------------------------------------------------------------------------- #
+def _flight_key(cache_key: str) -> str:
+    """Derive the in-flight lock key from a cache key.
+
+    Identical bodies share one cache key, so they share one lock — that is what
+    collapses concurrent duplicate misses. A distinct prefix keeps the lock out
+    of the response-cache keyspace (and, like the cache key, it is a hash, never
+    raw request values)."""
+    return "aiflight:" + cache_key
+
+
+def ai_singleflight_acquire(cache_key: str, lock_ttl_seconds: int) -> bool:
+    """Elect a single winner to make the paid fan-out for a cache-miss key.
+
+    Atomic ``SET NX EX``: returns True to exactly one concurrent caller (the
+    winner, which must fan out and then release the slot), and False to any
+    other caller that finds the slot already held — a duplicate concurrent miss
+    (double-click, browser retry, or many staff submitting the same
+    closed-vocabulary facts at once). The TTL bounds how long a crashed winner
+    can hold the slot, so the key can never wedge permanently.
+
+    Best-effort like the cache: a Redis fault returns True (fail OPEN to a paid
+    call). The authoritative spend guard is the aggregate budget ceiling
+    (``consume_ai_global_budget``, which itself fails CLOSED), so failing the
+    lock closed here would only turn a Redis blip into an outage for no
+    spend-safety gain — the coalescing is a spend/latency optimization, not the
+    ceiling.
+    """
+    try:
+        got = _redis().set(_flight_key(cache_key), "1", nx=True, ex=max(1, lock_ttl_seconds))
+        return bool(got)
+    except Exception:
+        return True
+
+
+def ai_singleflight_release(cache_key: str) -> None:
+    """Release a single-flight slot after the winner's fan-out (best-effort).
+
+    A failure is harmless — the lock's TTL clears it either way — so a Redis
+    fault here must not fail the request whose response we already have."""
+    try:
+        _redis().delete(_flight_key(cache_key))
+    except Exception:
+        pass

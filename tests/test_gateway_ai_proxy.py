@@ -51,6 +51,11 @@ def _no_abuse_controls(monkeypatch):
     monkeypatch.setattr(gw, "consume_ai_global_budget", lambda *a, **k: 0)
     monkeypatch.setattr(gw, "ai_cache_get", lambda *a, **k: None)
     monkeypatch.setattr(gw, "ai_cache_set", lambda *a, **k: None)
+    # Single-flight lock (round 7) also stays off Redis: every request wins its
+    # own slot so the transport contract is exercised, not the coalescing (that
+    # lives in test_gateway_ai_rate_limit.py).
+    monkeypatch.setattr(gw, "ai_singleflight_acquire", lambda *a, **k: True)
+    monkeypatch.setattr(gw, "ai_singleflight_release", lambda *a, **k: None)
 
 
 # The poison string an httpx exception can carry: the full downstream URL.

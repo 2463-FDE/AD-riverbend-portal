@@ -58,13 +58,18 @@ applied in this order on `POST /ai/intake-instructions`:
    - Defaults: **10/min, 200/day** (`AI_RATE_LIMIT_PER_MINUTE/_PER_DAY`).
 
 2. **Aggregate daily spend ceiling** (`security.consume_ai_global_budget`,
-   reserved in the handler on a cache miss, before fan-out).
+   reserved by the single-flight **winner** on a cache miss, *after* request
+   validation and immediately before fan-out — see controls 4 and 5).
    - A single global day-window counter, incremented **once per paid fan-out**.
    - Bounds **total** Bedrock spend across all users — per-user caps alone are
      unbounded in user count (N × per-user).
    - Over ceiling → **429 + `Retry-After`**. `<=0` disables it.
    - Default: **2000/day** (`AI_RATE_LIMIT_GLOBAL_PER_DAY`), ≈ expected active
      staff × per-user cap.
+   - **Only genuine paid fan-outs are charged.** The counter is reserved *after*
+     the gateway has validated the request (control 4) and won the single-flight
+     slot (control 5), so a body that ai-assistant would 422, and a duplicate
+     concurrent miss, never charge the ceiling (Codex PR #7 round 7).
 
 3. **Response cache** (`security.ai_cache_*`, in the handler).
    - Key = `aicache:` + SHA-256 of the canonicalized request body. The body is
@@ -78,6 +83,45 @@ applied in this order on `POST /ai/intake-instructions`:
      call, never a request failure. Only successful responses are cached.
    - TTL bounds staleness against catalog/template deploys. Default **300s**
      (`AI_CACHE_TTL_SECONDS`); `<=0` disables.
+
+4. **Gateway request validation** (`_validate_ai_request`, before the cache key
+   and the spend ceiling — Codex PR #7 round 7).
+   - The gateway parses the body with a **mirror of ai-assistant's
+     `InstructionsRequest`** (`extra="forbid"` + the insurance-consistency rule)
+     and returns a **no-echo 422** on failure, *before* deriving the cache key or
+     reserving the budget.
+   - Closes the round-7 **high**: without it, a logged-in caller could send many
+     distinct invalid bodies (unknown fields, contradictory insurance facts),
+     each a cache miss that charged `ratelimit:ai:global` and was only rejected
+     downstream — a cheap tenant-wide denial of the paid assistant.
+   - ai-assistant remains the **authoritative** validator; this is a budget
+     pre-filter. If the mirror ever drifts looser, the only cost is that the
+     gap bodies reach the fan-out and 422 there (today's behavior, narrower) —
+     never a wrong checklist. Kept in sync like `PlanType` ↔ the portal select.
+   - No-echo mirrors ai-assistant's `validation_error_no_echo`: a rejected value
+     is exactly where PHI could be smuggled, so neither the value nor the parse
+     error is logged or echoed.
+
+5. **Single-flight coalescing of concurrent misses** (`security.ai_singleflight_*`,
+   in the handler on a cache miss — Codex PR #7 round 7, closes gap #4 below).
+   - The cache collapses *sequential* retries; this collapses *simultaneous*
+     ones. A Redis `SET NX EX` lock keyed off the cache key elects **one winner**
+     to reserve budget and fan out; concurrent duplicate misses (a double-click,
+     a browser retry, many staff submitting the same closed-vocabulary facts at
+     once) **wait briefly** (`AI_SINGLEFLIGHT_WAIT_SECONDS`, polling every
+     `AI_SINGLEFLIGHT_POLL_SECONDS`) for the winner's cached result, then return
+     a **controlled 429** rather than a second paid call.
+   - Closes the round-7 **medium**: previously every request that observed the
+     initial miss reserved budget and made its own paid call before the first
+     response cached.
+   - The winner **releases** the slot in a `finally` (even if the fan-out
+     raised), and the lock **TTL** (`AI_SINGLEFLIGHT_LOCK_TTL_SECONDS`, default
+     just above the AI read timeout) bounds a crashed winner, so the key can
+     never wedge.
+   - **Best-effort / fail-OPEN:** a Redis fault on the lock returns "winner"
+     (degrades to an uncoalesced paid call, today's behavior), because the
+     authoritative spend guard is the fail-CLOSED budget ceiling (control 2), not
+     the lock — failing the lock closed would turn a Redis blip into an outage.
 
 **Fail-closed everywhere on the paid path.** If the rate-limit or global-budget
 counter cannot be read (Redis fault), the request does not proceed (**503**) —
@@ -134,23 +178,30 @@ because the spend ceiling — not the cache — is the authoritative spend guard
    so a per-user 429 could affect a whole desk. The correct fix is **per-staff
    logins / role segregation** — already tracked debt **D8** (§9, W4/W9), not
    this PR's scope. The aggregate ceiling is the backstop meanwhile.
-4. **Concurrent single-flight / idempotency key (deferred).** The cache collapses
-   *sequential* retries; two *simultaneous* in-flight identical submits can both
-   miss and both fan out. Bounded by the rate limit and rare for a form submit.
-   A single-flight lock (or an ai-assistant concurrency limiter) is a separate
-   robustness knob to add if double-fire is observed in practice.
+4. **Concurrent single-flight (RESOLVED in Codex PR #7 round 7 — see control 5).**
+   Originally deferred: the cache collapsed only *sequential* retries, so two
+   *simultaneous* identical submits could both miss and both fan out. Now closed
+   by the `SET NX` single-flight lock (control 5) — one winner fans out, losers
+   coalesce onto its result or get a controlled 429. Idempotency keys remain
+   unneeded: the closed-vocabulary body hashes to a stable key, so the lock keys
+   itself off the request identity directly.
 
 ## Consequences
 
 - New gateway config: `AI_RATE_LIMIT_PER_MINUTE` (10), `AI_RATE_LIMIT_PER_DAY`
-  (200), `AI_RATE_LIMIT_GLOBAL_PER_DAY` (2000), `AI_CACHE_TTL_SECONDS` (300).
-  All non-secret, documented in `.env.example`.
-- `services/gateway/security.py` gains rate-limit, global-budget, and cache
-  helpers (Redis-backed; the module now covers auth **and** Redis-backed abuse
-  controls). ai-assistant is unchanged.
+  (200), `AI_RATE_LIMIT_GLOBAL_PER_DAY` (2000), `AI_CACHE_TTL_SECONDS` (300), and
+  (round 7) `AI_SINGLEFLIGHT_WAIT_SECONDS` (2.0), `AI_SINGLEFLIGHT_POLL_SECONDS`
+  (0.1), `AI_SINGLEFLIGHT_LOCK_TTL_SECONDS` (≈ read timeout + 15). All
+  non-secret, documented in `.env.example`.
+- `services/gateway/security.py` gains rate-limit, global-budget, cache, and
+  (round 7) single-flight lock helpers (Redis-backed; the module now covers auth
+  **and** Redis-backed abuse controls). `services/gateway/app.py` gains the
+  gateway-side request-validation pre-filter. ai-assistant is unchanged.
 - Tests: `tests/test_gateway_ai_rate_limit.py` proves per-user rejection before
   fan-out, per-user isolation, the aggregate ceiling, cache collapse, that cache
-  hits bypass the spend ceiling, PHI-safe (hashed) cache keys, and fail-closed on
-  both counters. Regression-proven against pre-fix code.
+  hits bypass the spend ceiling, PHI-safe (hashed) cache keys, fail-closed on
+  both counters, and (round 7) that invalid bodies are rejected before the spend
+  ceiling is charged and that concurrent identical misses coalesce to one paid
+  call. Regression-proven against pre-fix code.
 - The controls mitigate the *effect* of non-expiring sessions on this endpoint
   but do **not** change auth behavior (ADR 0003 / §6 remains untouched).

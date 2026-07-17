@@ -45,7 +45,8 @@ client = TestClient(gw.app, raise_server_exceptions=False)
 
 
 class _FakeRedis:
-    """Minimal INCR/EXPIRE + GET/SET — enough for the limiter and the cache."""
+    """Minimal INCR/EXPIRE + GET/SET/DEL — enough for the limiter, the cache,
+    and the single-flight lock (SET NX)."""
 
     def __init__(self):
         self.counts = {}
@@ -61,9 +62,17 @@ class _FakeRedis:
     def get(self, key):
         return self.store.get(key)
 
-    def set(self, key, value, ex=None):
+    def set(self, key, value, nx=False, ex=None):
+        # SET NX: only set if absent; return None when the key already exists so
+        # the caller (single-flight acquire) sees it lost the race.
+        if nx and key in self.store:
+            return None
         self.store[key] = value
         return True
+
+    def delete(self, key):
+        self.store.pop(key, None)
+        return 1
 
 
 @pytest.fixture(autouse=True)
@@ -249,6 +258,105 @@ def test_cache_key_is_hashed_not_raw_payload(monkeypatch, fan_out_calls):
     assert keys, "expected a cache entry to be written"
     assert all(k.startswith("aicache:") for k in keys)
     assert all("has_insurance" not in k and "True" not in k for k in keys)
+
+
+def _global_budget_keys():
+    return [k for k in security._redis_client.counts if k.startswith("ratelimit:ai:global")]
+
+
+def test_invalid_unknown_field_rejected_before_global_budget(monkeypatch, fan_out_calls):
+    # Codex PR #7 round 7 (high): a logged-in caller sending junk bodies (here an
+    # unknown field) must be rejected at the gateway BEFORE the shared spend
+    # ceiling is touched — otherwise many distinct invalid bodies each miss the
+    # cache, increment ratelimit:ai:global, and are only 422'd downstream, a
+    # cheap tenant-wide denial of the paid assistant.
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_per_minute", 1000)
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 5)
+
+    r = client.post(
+        "/ai/intake-instructions",
+        json={"has_insurance": True, "evil_field": "SSN 123-45-6789 smuggled here"},
+    )
+
+    assert r.status_code == 422
+    assert len(fan_out_calls) == 0  # never reached the paid path
+    assert _global_budget_keys() == []  # the aggregate ceiling was NOT charged
+    # No-echo: the rejected value (a place PHI could be smuggled) is not echoed.
+    assert "123-45-6789" not in r.text
+
+
+def test_contradictory_insurance_rejected_before_global_budget(monkeypatch, fan_out_calls):
+    # The other invalid class the review named: a body whose insurance facts
+    # contradict each other (insured + Self-pay). Same invariant — no paid call,
+    # no aggregate-budget charge.
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_per_minute", 1000)
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 5)
+
+    r = client.post(
+        "/ai/intake-instructions",
+        json={"has_insurance": True, "plan_type": "Self-pay"},
+    )
+
+    assert r.status_code == 422
+    assert len(fan_out_calls) == 0
+    assert _global_budget_keys() == []
+
+
+def test_concurrent_identical_miss_loser_returns_winner_result_no_second_paid_call(
+    monkeypatch, fan_out_calls
+):
+    # Codex PR #7 round 7 (medium): two simultaneous identical submits must not
+    # both fan out. Simulate the loser — the single-flight lock is already held
+    # by an in-flight winner for this body's key — and the winner publishes its
+    # result partway through the loser's wait. The loser returns that result with
+    # NO second paid call and NO second budget charge.
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_per_minute", 1000)
+    monkeypatch.setattr(gw.settings, "ai_singleflight_wait_seconds", 0.5)
+    monkeypatch.setattr(gw.settings, "ai_singleflight_poll_seconds", 0.1)
+    monkeypatch.setattr(gw.time, "sleep", lambda s: None)
+
+    body = {"has_insurance": True}
+    key = security.ai_cache_key(body)
+    # A winner already holds the slot for this key.
+    security._redis_client.set(security._flight_key(key), "1", nx=True, ex=90)
+
+    winner_result = {"items": ["Bring a photo ID."], "disclaimer": "d"}
+    seen = {"n": 0}
+
+    def _staged_get(k):
+        # Initial handler check misses; the winner's result appears mid-wait.
+        seen["n"] += 1
+        return winner_result if seen["n"] >= 2 else None
+
+    monkeypatch.setattr(gw, "ai_cache_get", _staged_get)
+
+    r = client.post("/ai/intake-instructions", json=body)
+
+    assert r.status_code == 200
+    assert r.json()["items"] == ["Bring a photo ID."]
+    assert len(fan_out_calls) == 0  # the loser made no paid call
+    assert _global_budget_keys() == []  # and did not consume the spend ceiling
+
+
+def test_concurrent_identical_miss_loser_times_out_controlled_retry(monkeypatch, fan_out_calls):
+    # If the winner does not publish within the wait budget, the loser returns a
+    # controlled 429 retry rather than making its own paid call.
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_per_minute", 1000)
+    monkeypatch.setattr(gw.settings, "ai_singleflight_wait_seconds", 0.3)
+    monkeypatch.setattr(gw.settings, "ai_singleflight_poll_seconds", 0.1)
+    monkeypatch.setattr(gw.time, "sleep", lambda s: None)
+    monkeypatch.setattr(gw, "ai_cache_get", lambda k: None)  # winner never publishes in time
+
+    body = {"has_insurance": True}
+    key = security.ai_cache_key(body)
+    security._redis_client.set(security._flight_key(key), "1", nx=True, ex=90)
+
+    r = client.post("/ai/intake-instructions", json=body)
+
+    assert r.status_code == 429
+    assert int(r.headers["Retry-After"]) >= 0  # a controlled retry hint
+    assert len(fan_out_calls) == 0
+    assert _global_budget_keys() == []
 
 
 def test_anonymous_rejected_before_rate_limit(monkeypatch, fan_out_calls):

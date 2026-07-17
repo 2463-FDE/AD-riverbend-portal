@@ -63,6 +63,23 @@ class Settings:
     # to a normal paid call, never an outage.
     ai_cache_ttl_seconds = int(os.getenv("AI_CACHE_TTL_SECONDS", "300"))
 
+    # Single-flight coalescing of CONCURRENT identical cache misses (ADR 0007,
+    # closes deferred gap #4). The cache collapses *sequential* retries, but two
+    # simultaneous identical submits (a double-click, a browser retry, many staff
+    # submitting the same closed-vocabulary facts at once) can both miss and both
+    # fan out before the first result is cached. A Redis SET NX lock elects one
+    # winner to make the paid call; concurrent losers wait up to
+    # AI_SINGLEFLIGHT_WAIT_SECONDS (polling every AI_SINGLEFLIGHT_POLL_SECONDS)
+    # for the winner's cached result, then return a controlled 429 retry rather
+    # than a second paid call. The lock TTL must outlive the slowest fan-out so a
+    # crashed winner's lock self-clears (never wedges the key) — it defaults just
+    # above the AI read timeout.
+    ai_singleflight_wait_seconds = float(os.getenv("AI_SINGLEFLIGHT_WAIT_SECONDS", "2.0"))
+    ai_singleflight_poll_seconds = float(os.getenv("AI_SINGLEFLIGHT_POLL_SECONDS", "0.1"))
+    ai_singleflight_lock_ttl_seconds = int(
+        os.getenv("AI_SINGLEFLIGHT_LOCK_TTL_SECONDS", str(int(ai_read_timeout_seconds) + 15))
+    )
+
     @property
     def db_url(self) -> str:
         return (

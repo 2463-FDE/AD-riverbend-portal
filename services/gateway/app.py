@@ -10,11 +10,13 @@ Inherited shortcomings (left as-is from the handoff):
   * Sessions never expire (see security.create_session / auth.yaml).
   * One role for everyone; no per-action authorization beyond "is logged in".
 """
+import time
+from enum import Enum
 from typing import Optional
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
@@ -27,6 +29,8 @@ from security import (
     ai_cache_get,
     ai_cache_key,
     ai_cache_set,
+    ai_singleflight_acquire,
+    ai_singleflight_release,
     check_ai_rate_limit,
     consume_ai_global_budget,
     create_session,
@@ -243,10 +247,11 @@ def _ai_rate_limited(session: dict = Depends(require_session)) -> dict:
 def _reserve_ai_budget() -> None:
     """Consume one slot of the aggregate daily spend ceiling, or reject (ADR 0007).
 
-    Called on the paid path only (after a cache miss), so the global counter
-    tracks actual Bedrock fan-outs, not cache hits or per-user-rejected
-    requests. Fails closed: a Redis fault here means we cannot verify the spend
-    ceiling, so we do not spend.
+    Called on the paid path only (single-flight winner, after a cache miss and
+    after request validation), so the global counter tracks actual Bedrock
+    fan-outs — not cache hits, not per-user-rejected requests, and not bodies
+    that would 422 downstream. Fails closed: a Redis fault here means we cannot
+    verify the spend ceiling, so we do not spend.
     """
     try:
         retry_after = consume_ai_global_budget(settings.ai_rate_limit_global_per_day)
@@ -262,8 +267,98 @@ def _reserve_ai_budget() -> None:
         )
 
 
+class _AiPlanType(str, Enum):
+    hmo = "HMO"
+    ppo = "PPO"
+    epo = "EPO"
+    pos = "POS"
+    medicare = "Medicare"
+    medicaid = "Medicaid"
+    self_pay = "Self-pay"
+
+
+class _AiIntakeInstructionsRequest(BaseModel):
+    """Gateway-side mirror of ai-assistant ``schemas.InstructionsRequest``, used
+    ONLY as a paid-budget pre-filter (Codex PR #7 round 7).
+
+    ai-assistant remains the authoritative validator; this copy exists solely so
+    the gateway can reject the bodies ai-assistant would 422 BEFORE they consume
+    the shared spend ceiling. Keep it in sync with that schema (the same
+    cross-boundary mirror pattern as ``PlanType`` <-> the portal intake select).
+    Being a strict copy is what closes the hole; if it ever drifts LOOSER than
+    the source, the only cost is that the drift-gap bodies reach the fan-out and
+    422 there — exactly today's behavior, just narrower — never a wrong
+    checklist.
+    """
+
+    model_config = ConfigDict(extra="forbid", use_enum_values=True)
+
+    has_insurance: bool = False
+    plan_type: _AiPlanType | None = None
+    policy_holder_is_self: bool = True
+    communications_opt_in: bool = False
+    financial_ack: bool = False
+
+    @model_validator(mode="after")
+    def _insurance_facts_consistent(self):
+        if self.plan_type is None:
+            return self
+        is_self_pay = self.plan_type == _AiPlanType.self_pay.value
+        if self.has_insurance and is_self_pay:
+            raise ValueError("plan_type Self-pay contradicts has_insurance=true")
+        if not self.has_insurance and not is_self_pay:
+            raise ValueError("an insured plan_type contradicts has_insurance=false")
+        return self
+
+
+def _validate_ai_request(payload: dict) -> None:
+    """Reject bodies ai-assistant would 422, BEFORE they can consume the shared
+    paid-spend ceiling (Codex PR #7 round 7).
+
+    A budget pre-filter, not the authority: ai-assistant's
+    ``schemas.InstructionsRequest`` is the authoritative validator, but rejecting
+    the obviously-invalid bodies here — unknown/forbidden fields, an insurance
+    flag that contradicts the plan type — keeps them out of the cache key, the
+    aggregate spend counter, and the paid fan-out. Mirrors ai-assistant's no-echo
+    422 (``validation_error_no_echo``): a rejected value is exactly where PHI
+    could be smuggled (an unknown field), so neither the value nor the parse
+    error is logged or echoed — only that the request was invalid.
+    """
+    try:
+        _AiIntakeInstructionsRequest.model_validate(payload)
+    except ValidationError:
+        raise HTTPException(status_code=422, detail="invalid intake-instructions request")
+
+
+def _await_coalesced_result(cache_key: str):
+    """Wait briefly for the single-flight winner to publish its cached result.
+
+    Polls the response cache on a short interval up to a bounded budget so a
+    duplicate concurrent miss (double-click / retry storm) returns the winner's
+    result instead of making its own paid call. Bounded on purpose: a loser
+    blocks its worker only for the wait budget, after which the caller gets a
+    controlled retry. Returns the cached value, or None if it did not appear in
+    time.
+    """
+    waited = 0.0
+    while waited < settings.ai_singleflight_wait_seconds:
+        time.sleep(settings.ai_singleflight_poll_seconds)
+        waited += settings.ai_singleflight_poll_seconds
+        cached = ai_cache_get(cache_key)
+        if cached is not None:
+            return cached
+    return None
+
+
 @app.post("/ai/intake-instructions")
 def proxy_intake_instructions(payload: dict, session: dict = Depends(_ai_rate_limited)):
+    # Reject bodies ai-assistant would 422 BEFORE reserving the shared paid-spend
+    # ceiling (Codex PR #7 round 7). Without this a logged-in caller could send
+    # many distinct invalid bodies (unknown fields, contradictory insurance
+    # facts) — each a cache miss that increments the aggregate budget and is only
+    # rejected downstream — a cheap tenant-wide denial of the paid assistant.
+    _validate_ai_request(payload)
+
     # Closed-vocabulary body → identical facts yield the same checklist, so a
     # response cache collapses retries/double-clicks and repeat identical
     # intakes into one paid call. Cache read is best-effort (a fault degrades to
@@ -273,26 +368,50 @@ def proxy_intake_instructions(payload: dict, session: dict = Depends(_ai_rate_li
     cached = ai_cache_get(cache_key)
     if cached is not None:
         return cached
-    # Cache miss → this will be a paid fan-out; reserve aggregate budget first.
-    _reserve_ai_budget()
-    # Deliberately NOT _post: that helper swallows failures into a 200-OK
-    # {"error": str(e)} body, and str(e) on an httpx error can embed the
-    # request URL (the member_id leak class). New routes use _post_checked.
-    result = _post_checked(
-        "ai",
-        "/intake-instructions",
-        payload,
-        timeout=settings.ai_read_timeout_seconds,
-        # Service-to-service auth: ai-assistant refuses calls without this
-        # header, so a direct (gateway-bypassing) caller cannot reach the paid
-        # LLM path even if the service port were ever exposed. Value is a
-        # secret — _post_checked never logs headers.
-        headers={"X-Internal-Auth": settings.ai_proxy_shared_secret},
-    )
-    # Only successful responses reach here (_post_checked raises on failure), so
-    # only good checklists are cached. Best-effort write.
-    ai_cache_set(cache_key, result, settings.ai_cache_ttl_seconds)
-    return result
+
+    # Cache miss. Coalesce CONCURRENT identical misses (a double-click, a browser
+    # retry, or many staff submitting the same closed-vocabulary facts at once):
+    # elect one winner to make the paid fan-out; other in-flight duplicates wait
+    # briefly for the winner's cached result rather than each making their own
+    # paid call (Codex PR #7 round 7 — closes ADR 0007 deferred gap #4).
+    if not ai_singleflight_acquire(cache_key, settings.ai_singleflight_lock_ttl_seconds):
+        coalesced = _await_coalesced_result(cache_key)
+        if coalesced is not None:
+            return coalesced
+        # The winner has not published a result within the wait budget. Return a
+        # controlled retry rather than making a second paid call for the same
+        # body — the client retries and picks up the cached result.
+        raise HTTPException(
+            status_code=429,
+            detail="assistant is processing a matching request; please retry shortly",
+            headers={"Retry-After": "1"},
+        )
+    try:
+        # Winner: this is the paid fan-out. Reserve the aggregate budget now,
+        # immediately before the LLM call — only genuine paid fan-outs count.
+        _reserve_ai_budget()
+        # Deliberately NOT _post: that helper swallows failures into a 200-OK
+        # {"error": str(e)} body, and str(e) on an httpx error can embed the
+        # request URL (the member_id leak class). New routes use _post_checked.
+        result = _post_checked(
+            "ai",
+            "/intake-instructions",
+            payload,
+            timeout=settings.ai_read_timeout_seconds,
+            # Service-to-service auth: ai-assistant refuses calls without this
+            # header, so a direct (gateway-bypassing) caller cannot reach the paid
+            # LLM path even if the service port were ever exposed. Value is a
+            # secret — _post_checked never logs headers.
+            headers={"X-Internal-Auth": settings.ai_proxy_shared_secret},
+        )
+        # Only successful responses reach here (_post_checked raises on failure),
+        # so only good checklists are cached. Best-effort write.
+        ai_cache_set(cache_key, result, settings.ai_cache_ttl_seconds)
+        return result
+    finally:
+        # Release the single-flight slot so a later identical miss (e.g. after
+        # the cache TTL expires) is never wedged, even if the fan-out raised.
+        ai_singleflight_release(cache_key)
 
 
 # --------------------------------------------------------------------------- #
