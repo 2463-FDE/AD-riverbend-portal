@@ -24,6 +24,13 @@ class Settings:
     roi_url = os.getenv("ROI_URL", "http://roi-service:8076")
     ai_assistant_url = os.getenv("AI_ASSISTANT_URL", "http://ai-assistant:8077")
 
+    # Service-to-service auth: attached as X-Internal-Auth on every /ai proxy
+    # call; ai-assistant refuses requests without it (fail-closed on both
+    # sides — an empty value here just means the downstream rejects the call).
+    # Never logged. Ships EMPTY in .env.example; generate with
+    # `openssl rand -hex 32` and set the same value for both services.
+    ai_proxy_shared_secret = os.getenv("AI_PROXY_SHARED_SECRET", "")
+
     # LLM calls are seconds-slow by nature; this bounds the /ai fan-out
     # explicitly (never unbounded — that is the D4/RIV-088 pattern) while
     # allowing more headroom than the 30s default used for the CRUD services.

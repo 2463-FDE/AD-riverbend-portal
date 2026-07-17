@@ -14,6 +14,15 @@ class Settings:
     # read here, so it can never land in a config object, a log line, or an
     # exception message. Region has a default so the boto3 client can be
     # constructed in CI's keyless import smoke without a real key.
+    # Service-to-service auth: the gateway attaches this as X-Internal-Auth on
+    # every proxied call; /intake-instructions refuses requests without it.
+    # Defense in depth behind the compose topology (the service is not
+    # host-published) — and FAIL-CLOSED: empty/placeholder means every call is
+    # refused, never "auth off" (the PR #5 round-5 lesson: guards must hold in
+    # the default fresh-deploy state). Ships EMPTY in .env.example; generate
+    # with `openssl rand -hex 32`.
+    ai_proxy_shared_secret = os.getenv("AI_PROXY_SHARED_SECRET", "")
+
     aws_region = os.getenv("AWS_REGION", "us-east-1")
     # claude-sonnet-4-6 is the model the engagement's eval recommended for the
     # intake assistant (docs/research/llm-eval-sonnet-4-6-vs-gpt-oss-120b.md;

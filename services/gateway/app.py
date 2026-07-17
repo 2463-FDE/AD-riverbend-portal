@@ -204,6 +204,11 @@ def proxy_intake_instructions(payload: dict, session: dict = Depends(require_ses
         "/intake-instructions",
         payload,
         timeout=settings.ai_read_timeout_seconds,
+        # Service-to-service auth: ai-assistant refuses calls without this
+        # header, so a direct (gateway-bypassing) caller cannot reach the paid
+        # LLM path even if the service port were ever exposed. Value is a
+        # secret — _post_checked never logs headers.
+        headers={"X-Internal-Auth": settings.ai_proxy_shared_secret},
     )
 
 
@@ -240,7 +245,9 @@ def _get(service: str, path: str, params: Optional[dict] = None):
         return {"error": str(e)}
 
 
-def _post_checked(service: str, path: str, payload: dict, timeout: float):
+def _post_checked(
+    service: str, path: str, payload: dict, timeout: float, headers: Optional[dict] = None
+):
     """POST to a downstream service, surfacing failure as failure.
 
     Unlike the inherited _post/_get helpers this does NOT collapse errors into
@@ -248,10 +255,13 @@ def _post_checked(service: str, path: str, payload: dict, timeout: float):
     or response — httpx exception text can embed the request URL and its query
     params (how the eligibility member_id leak happened). Downstream status
     codes and JSON bodies are relayed as-is; transport failures map to typed
-    gateway errors with only the exception CLASS logged.
+    gateway errors with only the exception CLASS logged. ``headers`` may carry
+    a service-to-service secret — it must never appear in a log record.
     """
     try:
-        r = httpx.post(f"{SERVICES[service]}{path}", json=payload, timeout=timeout)
+        r = httpx.post(
+            f"{SERVICES[service]}{path}", json=payload, timeout=timeout, headers=headers
+        )
     except httpx.TimeoutException:
         log.error("proxy POST %s%s timed out after %.0fs", service, path, timeout)
         raise HTTPException(status_code=504, detail=f"{service} service timed out")

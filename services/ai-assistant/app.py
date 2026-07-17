@@ -12,8 +12,9 @@ schemas.py — no free text, so no PHI and no prompt-injection surface can reach
 the LLM). It is reached only through the gateway, like every other service.
 """
 import json
+import secrets
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -140,6 +141,39 @@ def _select_items(req: InstructionsRequest, selection: list[str]) -> list[str]:
     return items
 
 
+# Same sentinel class as llm_client._PLACEHOLDER_BEARER_TOKENS: a template
+# value that survives `cp .env.example .env` must count as ABSENT, or the
+# default deploy state walks past the guard (PR #5 round-5 lesson).
+_PLACEHOLDER_SECRETS = frozenset(
+    {"changeme", "change-me", "placeholder", "your-secret-here", "secret", "todo", "xxx"}
+)
+
+
+def _require_internal_auth(request: Request) -> None:
+    """Service-to-service auth on the feature endpoint (Codex PR #7 round 3).
+
+    Defense in depth behind the compose topology: ai-assistant is not
+    host-published, but if that ever regresses, a direct caller still cannot
+    reach the paid LLM path — only the gateway holds the shared secret it
+    attaches as X-Internal-Auth. Fail-closed on configuration: an unset,
+    blank, or placeholder secret refuses every call (503) rather than
+    disabling the check. The provided header value is untrusted input and is
+    never logged or echoed; comparison is constant-time.
+    """
+    secret = settings.ai_proxy_shared_secret.strip()
+    if not secret or secret.lower() in _PLACEHOLDER_SECRETS:
+        log.error(
+            "intake-instructions refused: AI_PROXY_SHARED_SECRET is not configured"
+        )
+        raise HTTPException(status_code=503, detail="assistant is not configured")
+    provided = request.headers.get("x-internal-auth", "")
+    if not secrets.compare_digest(provided.encode(), secret.encode()):
+        log.warning(
+            "intake-instructions refused: internal auth header missing or invalid"
+        )
+        raise HTTPException(status_code=401, detail="not authorized")
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_error_no_echo(request: Request, exc: RequestValidationError):
     """422 without echoing the rejected input back.
@@ -163,7 +197,11 @@ def healthz():
     return {"status": "ok", "service": settings.service_name}
 
 
-@app.post("/intake-instructions", response_model=InstructionsResponse)
+@app.post(
+    "/intake-instructions",
+    response_model=InstructionsResponse,
+    dependencies=[Depends(_require_internal_auth)],
+)
 def intake_instructions(req: InstructionsRequest):
     # Allowlisted, non-PHI projection only — never the request body (D1 lesson,
     # docs/phi-logging-policy.md). Values here are closed-vocabulary by schema.

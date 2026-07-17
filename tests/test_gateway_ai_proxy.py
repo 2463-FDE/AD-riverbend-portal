@@ -58,8 +58,8 @@ class _FakeResponse:
 def _patch_post(monkeypatch, response=None, exc=None):
     calls = []
 
-    def _fake_post(url, json=None, timeout=None):
-        calls.append({"url": url, "json": json, "timeout": timeout})
+    def _fake_post(url, json=None, timeout=None, headers=None):
+        calls.append({"url": url, "json": json, "timeout": timeout, "headers": headers})
         if exc is not None:
             raise exc
         return response
@@ -80,6 +80,23 @@ def test_success_relays_downstream_body(monkeypatch):
     assert calls[0]["url"].endswith("/intake-instructions")
     # The LLM fan-out is explicitly bounded (never the D4 no-timeout pattern).
     assert calls[0]["timeout"] == gw.settings.ai_read_timeout_seconds
+
+
+def test_internal_auth_header_attached_and_never_logged(monkeypatch, caplog):
+    # Service-to-service auth (Codex PR #7 round 3): the gateway is the only
+    # holder of the shared secret and must attach it on the ai fan-out; the
+    # value is a secret and must never reach a log record or the response.
+    secret = "s2s-secret-value-do-not-log"
+    monkeypatch.setattr(gw.settings, "ai_proxy_shared_secret", secret)
+    calls = _patch_post(
+        monkeypatch, response=_FakeResponse(200, {"items": ["x"], "disclaimer": "d"})
+    )
+    with caplog.at_level("DEBUG"):
+        r = client.post("/ai/intake-instructions", json={"has_insurance": True})
+    assert r.status_code == 200
+    assert calls[0]["headers"]["X-Internal-Auth"] == secret
+    assert secret not in caplog.text
+    assert secret not in r.text
 
 
 def test_downstream_error_status_is_relayed_not_200(monkeypatch):

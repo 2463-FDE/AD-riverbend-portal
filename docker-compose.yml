@@ -144,8 +144,13 @@ services:
   ai-assistant:
     build: ./services/ai-assistant
     env_file: .env
-    ports:
-      - "8077:8077"
+    # Deliberately NOT published to the host (expose = compose-network only):
+    # the endpoint has no auth of its own — the gateway session check is the
+    # auth boundary, and every request spends paid Bedrock capacity. Other
+    # services publish host ports as pre-existing dev topology; do not copy
+    # that pattern here. Guarded by tests/test_compose_topology.py.
+    expose:
+      - "8077"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8077/healthz')\""]
       interval: 10s

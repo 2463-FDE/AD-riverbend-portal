@@ -56,7 +56,17 @@ for _name, _module in _saved.items():
     else:
         sys.modules.pop(_name, None)
 
-client = TestClient(app_mod.app, raise_server_exceptions=False)
+# Service-to-service auth (Codex PR #7 round 3): the endpoint refuses calls
+# without the gateway's X-Internal-Auth header. The shared client carries a
+# valid header so every other test exercises its own concern; the auth tests
+# below use a bare client.
+TEST_INTERNAL_SECRET = "test-internal-secret"
+app_mod.settings.ai_proxy_shared_secret = TEST_INTERNAL_SECRET
+client = TestClient(
+    app_mod.app,
+    raise_server_exceptions=False,
+    headers={"X-Internal-Auth": TEST_INTERNAL_SECRET},
+)
 
 PHI_STRINGS = ("Jane Doe", "123-45-6789", "1985-03-12", "jane@example.com")
 
@@ -119,6 +129,61 @@ def _default_items(**req_kwargs):
     """Rendered deterministic fallback for a request shape."""
     req = schemas.InstructionsRequest(**req_kwargs)
     return templates.render(templates.default_selection(req))
+
+
+# --- service-to-service auth: direct callers cannot reach the paid LLM path ---
+# Defense in depth behind the compose topology (tests/test_compose_topology.py
+# guards the unpublished port): even a caller who can reach the service cannot
+# trigger a Bedrock call without the gateway's shared secret.
+
+
+def test_missing_internal_auth_header_rejected_before_llm(fake_llm):
+    bare = TestClient(app_mod.app, raise_server_exceptions=False)
+    r = bare.post("/intake-instructions", json={"has_insurance": True})
+    assert r.status_code == 401
+    # The paid LLM seam is never reached by an unauthenticated call.
+    assert fake_llm == []
+
+
+def test_wrong_internal_auth_header_rejected_and_never_echoed(fake_llm, caplog):
+    # Adversarial: the guessed header value must not appear in the response or
+    # any log record (untrusted input on an auth path).
+    bare = TestClient(app_mod.app, raise_server_exceptions=False)
+    guess = "guessed-secret-JaneDoe-123-45-6789"
+    with caplog.at_level("DEBUG"):
+        r = bare.post(
+            "/intake-instructions",
+            json={"has_insurance": True},
+            headers={"X-Internal-Auth": guess},
+        )
+    assert r.status_code == 401
+    assert fake_llm == []
+    assert guess not in r.text
+    assert guess not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "bad_secret", ["", "   ", "changeme", "CHANGEME", "your-secret-here"]
+)
+def test_unconfigured_or_placeholder_secret_fails_closed(monkeypatch, fake_llm, bad_secret):
+    # The default fresh-deploy state (.env.example ships the secret EMPTY, CI
+    # copies it) must refuse every call — including from a caller presenting
+    # the placeholder itself. Guard the class of sentinels, not one instance
+    # (PR #5 round-5 lesson).
+    monkeypatch.setattr(app_mod.settings, "ai_proxy_shared_secret", bad_secret)
+    r = client.post(
+        "/intake-instructions",
+        json={"has_insurance": True},
+        headers={"X-Internal-Auth": bad_secret},
+    )
+    assert r.status_code == 503
+    assert fake_llm == []
+
+
+def test_healthz_needs_no_auth():
+    # Compose healthchecks hit /healthz without the secret.
+    bare = TestClient(app_mod.app, raise_server_exceptions=False)
+    assert bare.get("/healthz").status_code == 200
 
 
 # --- boundary: closed vocabulary rejects PHI at the edge ---------------------
