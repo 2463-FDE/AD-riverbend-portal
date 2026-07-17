@@ -23,7 +23,17 @@ from config import settings
 from db import get_db
 from logging_config import configure
 from models import User
-from security import create_session, destroy_session, get_session, verify_password
+from security import (
+    ai_cache_get,
+    ai_cache_key,
+    ai_cache_set,
+    check_ai_rate_limit,
+    consume_ai_global_budget,
+    create_session,
+    destroy_session,
+    get_session,
+    verify_password,
+)
 
 log = configure(settings.service_name)
 app = FastAPI(title="Riverbend gateway", version="1.4.0")
@@ -194,12 +204,81 @@ def proxy_roi_fulfill(request_id: int, session: dict = Depends(require_session))
 # --------------------------------------------------------------------------- #
 # ai assistant
 # --------------------------------------------------------------------------- #
+def _ai_rate_limited(session: dict = Depends(require_session)) -> dict:
+    """Per-user REQUEST quota for the AI endpoint (Codex PR #7 round 6; ADR 0007).
+
+    require_session only proves a caller is logged in, and sessions never
+    expire — so without a quota one leaked/stale token, or a bored logged-in
+    user, could loop /ai/intake-instructions with tiny closed-vocabulary bodies
+    and drive unbounded Bedrock spend and ai-assistant worker starvation. This
+    consumes a Redis fixed-window counter keyed by the authenticated user
+    BEFORE any work, so rejected requests never reach the cache or the paid
+    path. It bounds one user's REQUEST rate; the aggregate SPEND ceiling
+    (consume_ai_global_budget) and the response cache are applied in the
+    handler on the paid path only. Fails closed: if the counter cannot be read
+    the request does not proceed. (Depends on require_session, so anonymous
+    callers are still rejected first.)
+    """
+    username = session.get("username") or "unknown"
+    try:
+        retry_after = check_ai_rate_limit(
+            username,
+            settings.ai_rate_limit_per_minute,
+            settings.ai_rate_limit_per_day,
+        )
+    except Exception as e:  # Redis fault: do not let the request proceed.
+        log.error("ai rate-limit check unavailable: %s", type(e).__name__)
+        raise HTTPException(status_code=503, detail="assistant is temporarily unavailable")
+    if retry_after:
+        # username is an internal identifier, not PHI — safe to log.
+        log.warning("ai rate limit reached user=%s", username)
+        raise HTTPException(
+            status_code=429,
+            detail="assistant request limit reached; please try again later",
+            headers={"Retry-After": str(retry_after)},
+        )
+    return session
+
+
+def _reserve_ai_budget() -> None:
+    """Consume one slot of the aggregate daily spend ceiling, or reject (ADR 0007).
+
+    Called on the paid path only (after a cache miss), so the global counter
+    tracks actual Bedrock fan-outs, not cache hits or per-user-rejected
+    requests. Fails closed: a Redis fault here means we cannot verify the spend
+    ceiling, so we do not spend.
+    """
+    try:
+        retry_after = consume_ai_global_budget(settings.ai_rate_limit_global_per_day)
+    except Exception as e:
+        log.error("ai global budget check unavailable: %s", type(e).__name__)
+        raise HTTPException(status_code=503, detail="assistant is temporarily unavailable")
+    if retry_after:
+        log.warning("ai aggregate daily spend ceiling reached")
+        raise HTTPException(
+            status_code=429,
+            detail="assistant is at capacity for today; please try again later",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
 @app.post("/ai/intake-instructions")
-def proxy_intake_instructions(payload: dict, session: dict = Depends(require_session)):
+def proxy_intake_instructions(payload: dict, session: dict = Depends(_ai_rate_limited)):
+    # Closed-vocabulary body → identical facts yield the same checklist, so a
+    # response cache collapses retries/double-clicks and repeat identical
+    # intakes into one paid call. Cache read is best-effort (a fault degrades to
+    # a paid call, never an error) and does NOT consume the spend ceiling — a
+    # hit costs nothing, so it must not count against the aggregate budget.
+    cache_key = ai_cache_key(payload)
+    cached = ai_cache_get(cache_key)
+    if cached is not None:
+        return cached
+    # Cache miss → this will be a paid fan-out; reserve aggregate budget first.
+    _reserve_ai_budget()
     # Deliberately NOT _post: that helper swallows failures into a 200-OK
     # {"error": str(e)} body, and str(e) on an httpx error can embed the
     # request URL (the member_id leak class). New routes use _post_checked.
-    return _post_checked(
+    result = _post_checked(
         "ai",
         "/intake-instructions",
         payload,
@@ -210,6 +289,10 @@ def proxy_intake_instructions(payload: dict, session: dict = Depends(require_ses
         # secret — _post_checked never logs headers.
         headers={"X-Internal-Auth": settings.ai_proxy_shared_secret},
     )
+    # Only successful responses reach here (_post_checked raises on failure), so
+    # only good checklists are cached. Best-effort write.
+    ai_cache_set(cache_key, result, settings.ai_cache_ttl_seconds)
+    return result
 
 
 # --------------------------------------------------------------------------- #

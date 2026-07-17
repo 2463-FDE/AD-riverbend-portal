@@ -36,6 +36,33 @@ class Settings:
     # allowing more headroom than the 30s default used for the CRUD services.
     ai_read_timeout_seconds = float(os.getenv("AI_READ_TIMEOUT_SECONDS", "60"))
 
+    # Abuse control for the paid LLM fan-out (Codex PR #7 round 6). The /ai
+    # route only proves a caller is logged in, and sessions never expire, so
+    # without a quota one leaked/stale token or a bored user could loop the
+    # endpoint and drive unbounded Bedrock spend + worker starvation. The
+    # gateway consumes a per-user fixed-window Redis counter before fan-out:
+    # a short minute window absorbs double-clicks/retries, a per-user daily cap
+    # bounds one user's volume. Non-secret; tune per environment.
+    ai_rate_limit_per_minute = int(os.getenv("AI_RATE_LIMIT_PER_MINUTE", "10"))
+    ai_rate_limit_per_day = int(os.getenv("AI_RATE_LIMIT_PER_DAY", "200"))
+
+    # Aggregate spend ceiling (ADR 0007). Per-user caps alone do not bound total
+    # spend — N users * per-user cap is still unbounded in N. This is a single
+    # global daily counter over *paid* fan-outs (incremented only on a cache
+    # miss, so a leaked token cannot exhaust it with rejected requests). <=0
+    # disables the aggregate ceiling. Sized ~= expected_active_staff * per-user.
+    ai_rate_limit_global_per_day = int(os.getenv("AI_RATE_LIMIT_GLOBAL_PER_DAY", "2000"))
+
+    # Response cache for the closed-vocabulary intake-instructions endpoint
+    # (ADR 0007). Identical intake-fact bodies map to the same visit-prep
+    # checklist, so caching cuts both Bedrock spend and latency and collapses
+    # retry/double-click storms into one paid call. Keyed by a hash of the
+    # request body (never PHI — the schema is enum/bool only); the cached value
+    # is template text, not PHI. TTL bounds staleness against catalog/template
+    # deploys. <=0 disables caching. Best-effort: a cache backend error degrades
+    # to a normal paid call, never an outage.
+    ai_cache_ttl_seconds = int(os.getenv("AI_CACHE_TTL_SECONDS", "300"))
+
     @property
     def db_url(self) -> str:
         return (

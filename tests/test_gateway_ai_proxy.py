@@ -39,6 +39,20 @@ gw.app.dependency_overrides[gw.require_session] = lambda: {
 }
 client = TestClient(gw.app, raise_server_exceptions=False)
 
+
+@pytest.fixture(autouse=True)
+def _no_abuse_controls(monkeypatch):
+    # These tests pin the _post_checked transport contract, not the abuse
+    # controls (rate limit / spend ceiling / cache — exercised in
+    # test_gateway_ai_rate_limit.py). Neutralize them so they stay off Redis
+    # and never intercept: quota open, budget open, cache always misses and
+    # never writes.
+    monkeypatch.setattr(gw, "check_ai_rate_limit", lambda *a, **k: 0)
+    monkeypatch.setattr(gw, "consume_ai_global_budget", lambda *a, **k: 0)
+    monkeypatch.setattr(gw, "ai_cache_get", lambda *a, **k: None)
+    monkeypatch.setattr(gw, "ai_cache_set", lambda *a, **k: None)
+
+
 # The poison string an httpx exception can carry: the full downstream URL.
 POISON_URL = "http://ai-assistant:8077/intake-instructions?member_id=AET123"
 
