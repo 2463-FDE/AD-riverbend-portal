@@ -59,6 +59,13 @@ CATALOG: dict[str, str] = {
 }
 
 
+# Neutral extras: justified for ANY request shape, so they are the only ids
+# the model may add beyond the required selection. Everything else in the
+# catalog is fact-conditional and belongs to exactly one request shape via
+# default_selection.
+OPTIONAL_IDS = ("billing_questions", "save_clinic_number")
+
+
 def render(ids: Iterable[str]) -> list[str]:
     """Fixed strings for a selection — deduplicated, in canonical order.
 
@@ -72,9 +79,12 @@ def render(ids: Iterable[str]) -> list[str]:
 def default_selection(req: InstructionsRequest) -> list[str]:
     """Deterministic selection from the closed request facts.
 
-    Serves as the fallback when the model's selection is invalid (unknown ids
-    or out-of-contract count). Tests prove every reachable variant renders a
-    3-8 item checklist.
+    This is BOTH the fallback when the model's selection is invalid AND the
+    required core of any valid selection (see allowed_selection): every id
+    here is justified by a request fact, so a model response that omits one —
+    or adds a fact-conditional id that is not here — is factually wrong for
+    this patient and gets discarded. Tests prove every reachable variant
+    renders a 3-8 item checklist.
     """
     ids = ["photo_id"]
     if req.has_insurance:
@@ -88,3 +98,15 @@ def default_selection(req: InstructionsRequest) -> list[str]:
     ids.append("reminder_watch" if req.communications_opt_in else "note_appointment_time")
     ids.append("arrive_early")
     return ids
+
+
+def allowed_selection(req: InstructionsRequest) -> set[str]:
+    """Every id justified by these request facts.
+
+    A valid model selection must satisfy
+    ``set(default_selection(req)) <= selection <= allowed_selection(req)`` —
+    catalog membership alone is not enough, because a catalog id can be
+    factually wrong for THIS patient (e.g. self_pay_options for an insured
+    one). The model's only real freedom is the neutral OPTIONAL_IDS.
+    """
+    return set(default_selection(req)) | set(OPTIONAL_IDS)

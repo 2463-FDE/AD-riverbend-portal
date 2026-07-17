@@ -36,18 +36,21 @@ app = FastAPI(title="Riverbend ai-assistant", version="0.2.0")
 # only (schemas.py), and the response is template ids only (templates.py) —
 # the model selects which fixed, pre-reviewed strings apply to the patient's
 # administrative facts, and the server renders them. A prompt instruction is
-# not an enforcement layer; this contract is: model free text can never reach
-# a patient, because an unknown or out-of-contract selection falls back to the
-# deterministic selection derived from the same facts (_select_items). The
-# disclaimer is fixed text appended server-side, never model-generated.
+# not an enforcement layer; this contract is (_select_items): model free text
+# can never reach a patient (an off-catalog id cannot render), and a factually
+# wrong selection cannot either — the server derives the required/allowed id
+# sets from the request facts itself, so the model's only real freedom is
+# whether the neutral optional templates are included. Any violation falls
+# back to the deterministic selection for the same facts. The disclaimer is
+# fixed text appended server-side, never model-generated.
 _SYSTEM_PROMPT = (
     "You select visit-preparation checklist items for new patients of a "
     "community health clinic. You are given administrative facts about a "
-    "completed intake and a catalog of checklist templates, each with an id. "
-    "Respond with the ids of the 3 to 8 templates most relevant to the facts. "
-    "Rules: use only ids that appear in the catalog; do not write checklist "
-    "text yourself; every selection must be justified by an administrative "
-    "fact provided."
+    "completed intake, the required checklist templates for those facts, and "
+    "optional extra templates, each with an id. Respond with the chosen "
+    "template ids. Rules: include every required id; add an optional id only "
+    "when it makes the checklist more helpful; use only ids you were given; "
+    "do not write checklist text yourself."
 )
 
 _DISCLAIMER = (
@@ -74,12 +77,18 @@ def _build_prompt(req: InstructionsRequest) -> str:
         f"- opted into appointment reminders: {'yes' if req.communications_opt_in else 'no'}",
         f"- acknowledged financial responsibility: {'yes' if req.financial_ack else 'no'}",
     ]
-    catalog = [f"- {key}: {text}" for key, text in templates.CATALOG.items()]
+    required = templates.default_selection(req)
+    required_lines = [f"- {key}: {templates.CATALOG[key]}" for key in required]
+    optional_lines = [
+        f"- {key}: {templates.CATALOG[key]}" for key in templates.OPTIONAL_IDS
+    ]
     return (
         "A new patient just completed self-service intake. Administrative facts:\n"
         + "\n".join(facts)
-        + "\n\nTemplate catalog:\n"
-        + "\n".join(catalog)
+        + "\n\nRequired templates (include every id):\n"
+        + "\n".join(required_lines)
+        + "\n\nOptional templates (add an id only when helpful):\n"
+        + "\n".join(optional_lines)
         + "\n\nSelect the template ids for their visit-preparation checklist."
     )
 
@@ -87,24 +96,39 @@ def _build_prompt(req: InstructionsRequest) -> str:
 def _select_items(req: InstructionsRequest, selection: list[str]) -> list[str]:
     """Render the model's template selection, or the deterministic fallback.
 
-    The selection is model output and therefore untrusted: any id outside the
-    catalog, or a selection that leaves the 3-8 item contract after
-    deduplication, discards the WHOLE selection in favor of the deterministic
-    default for these request facts. Log lines carry indexes and counts only —
+    The selection is model output and therefore untrusted, and catalog
+    membership alone is not enough — a catalog id can be factually wrong for
+    THIS patient (self_pay_options for an insured one). A selection renders
+    only if it satisfies ``required <= selection <= allowed``, both sets
+    derived server-side from the request facts; anything else — a stray id
+    (off-catalog or fact-unjustified), a missing required id, or a count
+    outside the 3-8 response contract — discards the WHOLE selection in favor
+    of the deterministic default for these facts. Every violation recovers
+    here (never as an error status): the wire schema is deliberately loose so
+    a model formatting miss lands in this function, not in a 502
+    (schemas.InstructionsChecklist). Log lines carry indexes and counts only —
     an invalid "id" is model free text and must never reach a log record.
     """
-    unknown = [i for i, key in enumerate(selection) if key not in templates.CATALOG]
-    if unknown:
+    required = set(templates.default_selection(req))
+    allowed = templates.allowed_selection(req)
+    stray = [i for i, key in enumerate(selection) if key not in allowed]
+    missing = len(required - set(selection))
+    if stray or missing:
         log.warning(
-            "intake-instructions selection gate: %d/%d ids not in catalog "
-            "(indexes=%s); serving deterministic default selection",
-            len(unknown),
+            "intake-instructions selection gate: %d/%d ids unjustified by "
+            "request facts (indexes=%s), %d required ids missing; serving "
+            "deterministic default selection",
+            len(stray),
             len(selection),
-            unknown,
+            stray,
+            missing,
         )
-        return templates.render(templates.default_selection(req))
+        return templates.render(required)
     items = templates.render(selection)
     if not 3 <= len(items) <= 8:
+        # Unreachable while required <= selection <= allowed forces 4-8 items,
+        # but the response contract is 3-8 — keep the belt independent of how
+        # the sets evolve.
         log.warning(
             "intake-instructions selection gate: %d ids deduplicated to %d "
             "items, outside the 3-8 contract; serving deterministic default "
@@ -112,7 +136,7 @@ def _select_items(req: InstructionsRequest, selection: list[str]) -> list[str]:
             len(selection),
             len(items),
         )
-        return templates.render(templates.default_selection(req))
+        return templates.render(required)
     return items
 
 

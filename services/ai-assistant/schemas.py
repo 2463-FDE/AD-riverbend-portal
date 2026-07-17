@@ -18,7 +18,7 @@ adversarial tests (PHI planted in that field, end-to-end log scan) with it.
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict
 
 
 class PlanType(str, Enum):
@@ -54,30 +54,25 @@ class InstructionsChecklist(BaseModel):
     """Structured output contract for the LLM (via complete_structured).
 
     ``items`` carries template IDS from templates.CATALOG, never checklist
-    prose — the closed-vocabulary response mirror of InstructionsRequest. The
-    wire type stays ``list[str]`` (not an enum) so an off-catalog model reply
-    surfaces as an app-level fallback decision (app._select_items) instead of
-    depending on enum support in Bedrock's structured-output schema subset;
-    membership is enforced server-side against the catalog.
+    prose — the closed-vocabulary response mirror of InstructionsRequest.
 
-    The item count is enforced with a validator, NOT ``Field(min_length=...)``:
-    the Field constraints emit ``minItems``/``maxItems`` into the JSON schema,
-    and Bedrock's structured-output schema subset rejects ``minItems`` values
-    other than 0/1 (live ``ValidationException``, same class as the
-    ``additionalProperties`` rule in ``llm_client._strict_schema``). A
-    validator keeps the wire schema inside the supported subset while
-    ``model_validate_json`` still enforces the full contract locally — an
-    out-of-range response surfaces as a typed ``LLMResponseError``.
+    Deliberately the LOOSEST possible shape — a bare ``list[str]``:
+
+    * Not an enum, and no ``Field(min_length=...)`` count constraint: Bedrock's
+      structured-output schema subset rejects ``minItems`` values other than
+      0/1 (live ``ValidationException``, same class as the
+      ``additionalProperties`` rule in ``llm_client._strict_schema``), and enum
+      support is equally unproven — the wire schema stays inside the known-safe
+      subset.
+    * No local count/membership validator either: a validation failure inside
+      ``complete_structured`` surfaces as ``LLMResponseError`` → 502, which
+      would bypass the deterministic fallback. Every selection rule (catalog
+      membership, fact-justification, item count) is enforced in
+      ``app._select_items``, where a violation recovers to the fallback
+      checklist instead of an error response.
     """
 
     items: list[str]
-
-    @field_validator("items")
-    @classmethod
-    def item_count_in_range(cls, v: list[str]) -> list[str]:
-        if not 3 <= len(v) <= 8:
-            raise ValueError("checklist must have between 3 and 8 items")
-        return v
 
 
 class InstructionsResponse(BaseModel):

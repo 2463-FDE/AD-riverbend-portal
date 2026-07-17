@@ -7,17 +7,23 @@ is closed vocabulary on BOTH sides:
   * request side — enum/bool only, so PHI planted anywhere in it must be
     rejected at the edge (422) without reaching the LLM seam, the prompt, or a
     log record;
-  * response side — template ids only, so schema-valid model output that is
-    NOT a catalog id (clinical advice, hallucinated prose, PHI) must never
-    reach the patient or a log record; the deterministic default selection is
-    served instead.
+  * response side — template ids only, and only ids JUSTIFIED by the request
+    facts: schema-valid model output that is off-catalog (clinical advice,
+    hallucinated prose, PHI), factually wrong for this patient (self-pay
+    guidance for an insured one), missing a required id, or outside the 3-8
+    count must never reach the patient or a log record; the deterministic
+    default selection is served instead, always as a 200.
 
 The LLM itself is faked at the complete_structured seam — no network, no key.
+The fake mirrors the real seam's parse step (model_validate_json →
+LLMResponseError) so count/shape behavior is tested faithfully.
 """
 import json
 import re
 import sys
 from types import SimpleNamespace
+
+from pydantic import ValidationError
 
 import pytest
 from fastapi.testclient import TestClient
@@ -54,11 +60,38 @@ client = TestClient(app_mod.app, raise_server_exceptions=False)
 
 PHI_STRINGS = ("Jane Doe", "123-45-6789", "1985-03-12", "jane@example.com")
 
-FAKE_SELECTION = ["photo_id", "insurance_card", "arrive_early"]
+# The request used by the happy-path tests, and the model selection that is
+# valid FOR IT (its required set) — required ids are derived from the facts
+# server-side, so fake selections must match the request they're posted with.
+HAPPY_REQUEST = {
+    "has_insurance": True,
+    "plan_type": "PPO",
+    "policy_holder_is_self": False,
+    "communications_opt_in": True,
+    "financial_ack": True,
+}
+FAKE_SELECTION = [
+    "photo_id",
+    "insurance_card",
+    "policy_holder_info",
+    "reminder_watch",
+    "arrive_early",
+]
 
 
-def _fake_result(items=None):
-    parsed = schemas.InstructionsChecklist(items=items or list(FAKE_SELECTION))
+def _seam_parse(items):
+    """Mirror complete_structured's parse step (llm_client.py) exactly:
+    model_validate_json on the wire JSON, ValidationError → LLMResponseError.
+    Keeps count/shape behavior faithful to the real seam instead of
+    constructing the parsed model directly."""
+    try:
+        parsed = schemas.InstructionsChecklist.model_validate_json(
+            json.dumps({"items": items})
+        )
+    except ValidationError:
+        raise app_mod.llm_client.LLMResponseError(
+            "response failed InstructionsChecklist validation (request_id=fake)"
+        ) from None
     return SimpleNamespace(parsed=parsed)
 
 
@@ -69,7 +102,7 @@ def fake_llm(monkeypatch):
 
     def _fake(prompt, output_model, system=None, max_tokens=None):
         calls.append({"prompt": prompt, "output_model": output_model, "system": system})
-        return _fake_result()
+        return _seam_parse(list(FAKE_SELECTION))
 
     monkeypatch.setattr(app_mod.llm_client, "complete_structured", _fake)
     return calls
@@ -77,9 +110,15 @@ def fake_llm(monkeypatch):
 
 def _fake_selection(monkeypatch, items):
     def _fake(prompt, output_model, system=None, max_tokens=None):
-        return SimpleNamespace(parsed=schemas.InstructionsChecklist(items=items))
+        return _seam_parse(items)
 
     monkeypatch.setattr(app_mod.llm_client, "complete_structured", _fake)
+
+
+def _default_items(**req_kwargs):
+    """Rendered deterministic fallback for a request shape."""
+    req = schemas.InstructionsRequest(**req_kwargs)
+    return templates.render(templates.default_selection(req))
 
 
 # --- boundary: closed vocabulary rejects PHI at the edge ---------------------
@@ -124,16 +163,7 @@ def test_wrong_type_boolean_rejected(fake_llm):
 
 
 def test_happy_path_renders_selection_and_fixed_disclaimer(fake_llm):
-    r = client.post(
-        "/intake-instructions",
-        json={
-            "has_insurance": True,
-            "plan_type": "PPO",
-            "policy_holder_is_self": False,
-            "communications_opt_in": True,
-            "financial_ack": True,
-        },
-    )
+    r = client.post("/intake-instructions", json=dict(HAPPY_REQUEST))
     assert r.status_code == 200
     body = r.json()
     # The response carries the RENDERED catalog strings, never the ids.
@@ -159,8 +189,14 @@ def test_prompt_is_deterministic_closed_vocabulary():
         communications_opt_in=False,
         financial_ack=True,
     )
-    catalog_lines = "\n".join(
-        f"- {key}: {text}" for key, text in templates.CATALOG.items()
+    # required for these facts: photo_id, insurance_card, note_appointment_time,
+    # arrive_early (financial_ack=True, policy holder is self)
+    required_lines = "\n".join(
+        f"- {key}: {templates.CATALOG[key]}"
+        for key in ["photo_id", "insurance_card", "note_appointment_time", "arrive_early"]
+    )
+    optional_lines = "\n".join(
+        f"- {key}: {templates.CATALOG[key]}" for key in templates.OPTIONAL_IDS
     )
     assert app_mod._build_prompt(req) == (
         "A new patient just completed self-service intake. Administrative facts:\n"
@@ -168,8 +204,10 @@ def test_prompt_is_deterministic_closed_vocabulary():
         "- policy holder is the patient: yes\n"
         "- opted into appointment reminders: no\n"
         "- acknowledged financial responsibility: yes\n"
-        "\nTemplate catalog:\n"
-        + catalog_lines
+        "\nRequired templates (include every id):\n"
+        + required_lines
+        + "\n\nOptional templates (add an id only when helpful):\n"
+        + optional_lines
         + "\n\nSelect the template ids for their visit-preparation checklist."
     )
 
@@ -252,31 +290,78 @@ def test_near_miss_id_is_rejected_not_fuzzy_matched(monkeypatch):
     )
 
 
-def test_duplicate_ids_collapsing_below_contract_serves_default(monkeypatch):
-    # 3 schema-valid ids that dedupe to 1 rendered item — outside the 3-8
-    # contract, so the deterministic default is served instead.
+def test_duplicate_ids_collapsing_selection_serves_default(monkeypatch):
+    # 3 schema-valid ids that are one repeated required id — required ids are
+    # missing, so the deterministic default is served instead.
     _fake_selection(monkeypatch, ["photo_id", "photo_id", "photo_id"])
     r = client.post("/intake-instructions", json={"has_insurance": True})
     assert r.status_code == 200
-    assert r.json()["items"] == templates.render(
-        templates.default_selection(schemas.InstructionsRequest(has_insurance=True))
-    )
+    assert r.json()["items"] == _default_items(has_insurance=True)
 
 
-def test_valid_selection_renders_in_canonical_catalog_order(monkeypatch):
-    # Model order and duplicates do not survive rendering: canonical catalog
-    # order, deduplicated.
+def test_factually_wrong_but_catalog_valid_ids_serve_default(monkeypatch):
+    # Round-2 [high]: every id below EXISTS in the catalog, but self-pay
+    # guidance and "you opted out of reminders" are factually wrong for an
+    # insured, reminders-opted-in patient. Catalog membership is not enough —
+    # the selection must be justified by the request facts.
     _fake_selection(
-        monkeypatch,
-        ["arrive_early", "photo_id", "insurance_card", "photo_id"],
+        monkeypatch, ["photo_id", "self_pay_options", "note_appointment_time"]
     )
-    r = client.post("/intake-instructions", json={"has_insurance": True})
+    r = client.post(
+        "/intake-instructions",
+        json={"has_insurance": True, "communications_opt_in": True},
+    )
     assert r.status_code == 200
-    assert r.json()["items"] == [
-        templates.CATALOG["photo_id"],
-        templates.CATALOG["insurance_card"],
-        templates.CATALOG["arrive_early"],
+    body = r.json()
+    assert templates.CATALOG["self_pay_options"] not in body["items"]
+    assert templates.CATALOG["note_appointment_time"] not in body["items"]
+    assert body["items"] == _default_items(
+        has_insurance=True, communications_opt_in=True
+    )
+
+
+def test_missing_required_id_serves_default(monkeypatch):
+    # A selection of only justified ids that OMITS a required one (the
+    # insurance card, for an insured patient) is incomplete for these facts
+    # and gets discarded.
+    req = {"has_insurance": True}
+    required = templates.default_selection(schemas.InstructionsRequest(**req))
+    sel = [i for i in required if i != "insurance_card"]
+    assert len(sel) >= 3
+    _fake_selection(monkeypatch, sel)
+    r = client.post("/intake-instructions", json=req)
+    assert r.status_code == 200
+    assert r.json()["items"] == _default_items(**req)
+
+
+def test_optional_extras_render_with_required_in_canonical_order(monkeypatch):
+    # The model's real freedom: required set + neutral optional extras, in any
+    # order with duplicates — renders deduplicated, in canonical catalog order.
+    req = {"has_insurance": True}
+    required = templates.default_selection(schemas.InstructionsRequest(**req))
+    scrambled = list(reversed(required)) + ["billing_questions", required[0]]
+    _fake_selection(monkeypatch, scrambled)
+    r = client.post("/intake-instructions", json=req)
+    assert r.status_code == 200
+    expected_keys = [
+        k for k in templates.CATALOG if k in set(required) | {"billing_questions"}
     ]
+    assert r.json()["items"] == [templates.CATALOG[k] for k in expected_keys]
+
+
+@pytest.mark.parametrize("count", [0, 2, 10])
+def test_out_of_range_count_recovers_to_default_not_502(monkeypatch, count):
+    # Round-2 [medium]: the wire schema cannot carry minItems/maxItems
+    # (Bedrock subset), so the provider CAN return any count. That must land
+    # in the fallback path as a 200 — never surface as a 502 — so the count
+    # rule lives in _select_items, not in the output model's validation.
+    req = {"has_insurance": True}
+    required = templates.default_selection(schemas.InstructionsRequest(**req))
+    sel = (required * 3)[:count] if count else []
+    _fake_selection(monkeypatch, sel)
+    r = client.post("/intake-instructions", json=req)
+    assert r.status_code == 200
+    assert r.json()["items"] == _default_items(**req)
 
 
 # --- catalog lint: patient-facing copy stays administrative --------------------
@@ -340,8 +425,13 @@ def test_default_selection_valid_for_every_request_shape(
     assert len(ids) == len(set(ids))
     items = templates.render(ids)
     assert 3 <= len(items) <= 8
-    # Contract check via the same model the LLM path uses.
-    schemas.InstructionsChecklist(items=items)
+    # The gate's set algebra must hold for every shape: required is a subset
+    # of allowed, allowed stays in the catalog, and even a maximal valid
+    # selection (required + every optional extra) stays inside the 3-8
+    # contract — otherwise a fully valid model response could trip the belt.
+    allowed = templates.allowed_selection(req)
+    assert set(ids) <= allowed <= set(templates.CATALOG)
+    assert 3 <= len(templates.render(allowed)) <= 8
 
 
 # --- output contract stays inside Bedrock's schema subset ---------------------
@@ -387,12 +477,15 @@ def test_checklist_wire_schema_stays_plain_string_list():
     assert "enum" not in set(keys(wire))
 
 
-def test_checklist_count_still_enforced_locally():
-    with pytest.raises(ValueError):
-        schemas.InstructionsChecklist(items=["only", "two"])
-    with pytest.raises(ValueError):
-        schemas.InstructionsChecklist(items=[str(i) for i in range(9)])
-    assert schemas.InstructionsChecklist(items=["a", "b", "c"]).items == ["a", "b", "c"]
+def test_wire_model_accepts_any_count():
+    # Deliberately loose: a count violation inside complete_structured would
+    # become LLMResponseError → 502, bypassing the deterministic fallback.
+    # The count rule is _select_items' job (see
+    # test_out_of_range_count_recovers_to_default_not_502).
+    assert schemas.InstructionsChecklist(items=[]).items == []
+    assert schemas.InstructionsChecklist(items=["only", "two"]).items == ["only", "two"]
+    nine = [str(i) for i in range(9)]
+    assert schemas.InstructionsChecklist(items=nine).items == nine
 
 
 # --- typed error mapping (no internals, no PHI, real status codes) ------------
