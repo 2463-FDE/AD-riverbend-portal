@@ -81,9 +81,13 @@ jobs:
     needs: [frontend, services, tests, secret-scan]
     steps:
       - uses: actions/checkout@v4
-      # .env is gitignored (untracked secret file). Compose validates env_file:
-      # .env at parse time, so seed a non-secret one from the committed example.
-      - name: Seed non-secret env from example
-        run: cp .env.example .env
+      # .env and .env.ai-proxy are gitignored (untracked secret files). Compose
+      # validates every env_file at parse time, so seed non-secret ones from
+      # the committed examples. Both templates ship fail-closed (empty
+      # secrets), so nothing here can weaken a guard.
+      - name: Seed non-secret env from examples
+        run: |
+          cp .env.example .env
+          cp .env.ai-proxy.example .env.ai-proxy
       - name: Build images
         run: docker compose build

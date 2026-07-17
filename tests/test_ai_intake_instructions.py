@@ -224,6 +224,52 @@ def test_wrong_type_boolean_rejected(fake_llm):
     assert fake_llm == []
 
 
+# --- request side: contradictory insurance facts (Codex PR #7 round 4) --------
+# has_insurance and plan_type arrive as separate fields describing the same
+# fact, so a direct caller (or a frontend derivation bug) can assert both "no
+# insurance" and an insured plan. A checklist rendered from the flag alone
+# would then be financially wrong for the patient — self-pay guidance for an
+# insured one. The invariant is enforced server-side at the same 422 edge as
+# the closed vocabulary itself. Every insured enum member is exercised so a
+# future PlanType addition is covered automatically.
+
+INSURED_PLAN_TYPES = tuple(
+    p.value for p in schemas.PlanType if p is not schemas.PlanType.self_pay
+)
+
+
+@pytest.mark.parametrize("plan", INSURED_PLAN_TYPES)
+def test_uninsured_with_insured_plan_type_rejected(fake_llm, plan):
+    r = client.post(
+        "/intake-instructions",
+        json={"has_insurance": False, "plan_type": plan},
+    )
+    assert r.status_code == 422
+    assert fake_llm == []
+
+
+def test_insured_with_self_pay_plan_type_rejected(fake_llm):
+    r = client.post(
+        "/intake-instructions",
+        json={"has_insurance": True, "plan_type": "Self-pay"},
+    )
+    assert r.status_code == 422
+    assert fake_llm == []
+
+
+def test_consistent_insurance_combinations_accepted(fake_llm):
+    for body in (
+        {"has_insurance": True, "plan_type": "HMO"},
+        # Carrier/member entered but no plan type selected.
+        {"has_insurance": True, "plan_type": None},
+        # Explicit self-pay selection.
+        {"has_insurance": False, "plan_type": "Self-pay"},
+        {"has_insurance": False, "plan_type": None},
+    ):
+        r = client.post("/intake-instructions", json=body)
+        assert r.status_code == 200, body
+
+
 # --- happy path ---------------------------------------------------------------
 
 

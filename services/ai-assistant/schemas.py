@@ -18,7 +18,7 @@ adversarial tests (PHI planted in that field, end-to-end log scan) with it.
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class PlanType(str, Enum):
@@ -48,6 +48,23 @@ class InstructionsRequest(BaseModel):
     policy_holder_is_self: bool = True
     communications_opt_in: bool = False
     financial_ack: bool = False
+
+    @model_validator(mode="after")
+    def _insurance_facts_consistent(self):
+        """``has_insurance`` and ``plan_type`` arrive separately but describe
+        one fact. A contradictory pair would render a financially wrong
+        checklist — the templates are selected from the flag, so an insured
+        patient could receive self-pay guidance. Rejected at the same 422
+        edge as the closed vocabulary (plan_type is enum-valued, so naming it
+        in the message echoes nothing client-controlled)."""
+        if self.plan_type is None:
+            return self
+        is_self_pay = self.plan_type == PlanType.self_pay.value
+        if self.has_insurance and is_self_pay:
+            raise ValueError("plan_type Self-pay contradicts has_insurance=true")
+        if not self.has_insurance and not is_self_pay:
+            raise ValueError("an insured plan_type contradicts has_insurance=false")
+        return self
 
 
 class InstructionsChecklist(BaseModel):

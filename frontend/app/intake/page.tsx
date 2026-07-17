@@ -118,13 +118,22 @@ export default function IntakePage() {
   async function fetchInstructions() {
     setAiBusy(true);
     setAiError(null);
+    // Insurance facts must be internally consistent — the assistant rejects a
+    // contradictory pair (e.g. has_insurance=false with an insured plan type).
+    // An explicit Self-pay selection wins; otherwise any insurance signal —
+    // a selected plan type, carrier, or member ID — counts as insured.
+    const planType = ins.plan_type || null;
+    const hasInsurance =
+      planType === "Self-pay"
+        ? false
+        : Boolean(planType || ins.carrier || ins.member_id);
     try {
       const res = await apiFetch("/api/ai/intake-instructions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          has_insurance: Boolean(ins.carrier || ins.member_id),
-          plan_type: ins.plan_type || null,
+          has_insurance: hasInsurance,
+          plan_type: planType,
           policy_holder_is_self: !ins.policy_holder,
           communications_opt_in: consents.communications,
           financial_ack: consents.financial,
