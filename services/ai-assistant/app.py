@@ -218,8 +218,18 @@ def intake_instructions(req: InstructionsRequest):
         log.error("intake-instructions config error: %s", e)
         raise HTTPException(status_code=503, detail="assistant is not configured")
     except llm_client.LLMUnavailable as e:
+        # POST-egress failure: throttle / upstream 5xx / connection error raised
+        # AFTER the Bedrock call was attempted (llm_client._call retries, then
+        # maps the botocore error here). 502 (bad gateway = the upstream provider
+        # failed), deliberately NOT the 503 the pre-egress "not configured" cases
+        # above use: the gateway refunds the aggregate spend budget on a
+        # downstream 503/401/422 (proof no paid fan-out happened) but KEEPS the
+        # charge on 502. If a provider outage surfaced as 503, every retry during
+        # the outage would be refunded and the tenant ceiling would stop bounding
+        # vendor fan-out (a retry storm would keep reaching Bedrock unmetered) —
+        # Codex PR #7 round 9. See gateway _NON_PAID_DOWNSTREAM_STATUS, ADR 0007.
         log.error("intake-instructions provider unavailable: %s", e)
-        raise HTTPException(status_code=503, detail="assistant is temporarily unavailable")
+        raise HTTPException(status_code=502, detail="assistant is temporarily unavailable")
     except llm_client.LLMResponseError as e:
         log.error("intake-instructions bad model response: %s", e)
         raise HTTPException(status_code=502, detail="assistant returned an unusable response")

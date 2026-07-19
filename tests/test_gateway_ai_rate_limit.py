@@ -429,6 +429,44 @@ def test_repeated_config_503_does_not_exhaust_budget_for_a_later_success(monkeyp
     assert r.json()["items"] == ["Bring a photo ID."]
 
 
+def test_downstream_provider_502_keeps_the_budget_charged(monkeypatch, downstream):
+    # Codex PR #7 round 9 (high): a Bedrock outage/throttle reaches the provider
+    # and surfaces as a downstream 502 (ai-assistant maps LLMUnavailable -> 502).
+    # Unlike the pre-egress 503 (test above), this is a PAID attempt and must NOT
+    # be refunded — otherwise every outage retry gives its slot back and the
+    # aggregate ceiling stops bounding vendor fan-out.
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_per_minute", 1000)
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 3)
+    state, calls = downstream
+    state["status"], state["body"] = 502, {"detail": "assistant is temporarily unavailable"}
+
+    r = client.post("/ai/intake-instructions", json={"has_insurance": True})
+
+    assert r.status_code == 502  # the outage is surfaced to the caller
+    assert len(calls) == 1  # the fan-out was attempted (provider path entered)...
+    # ...and the reserved slot was KEPT (not refunded): the counter still reads 1.
+    assert [security._redis_client.counts.get(k, 0) for k in _global_budget_keys()] == [1]
+
+
+def test_provider_502_retry_storm_is_bounded_by_the_ceiling(monkeypatch, downstream):
+    # The outage-path invariant the round-9 review asked for: with provider 502s
+    # kept charged, a retry storm during a Bedrock outage cannot exceed the daily
+    # ceiling — once the cap is reached the gateway 429s further attempts BEFORE
+    # fan-out, so vendor fan-out stays bounded even while every call fails.
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_per_minute", 1000)
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 2)
+    state, calls = downstream
+    state["status"], state["body"] = 502, {"detail": "assistant is temporarily unavailable"}
+
+    # First two attempts reserve the two slots and fan out (each a paid attempt).
+    for _ in range(2):
+        assert client.post("/ai/intake-instructions", json={"has_insurance": True}).status_code == 502
+    # The third is refused at the ceiling — 429, no additional fan-out.
+    r = client.post("/ai/intake-instructions", json={"has_insurance": True})
+    assert r.status_code == 429
+    assert len(calls) == 2  # the storm did not reach Bedrock a third time
+
+
 def test_anonymous_rejected_before_rate_limit(monkeypatch, fan_out_calls):
     # require_session runs first: an unauthenticated caller is 401'd before any
     # counting or fan-out happens.

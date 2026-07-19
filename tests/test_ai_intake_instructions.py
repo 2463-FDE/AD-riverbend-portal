@@ -606,7 +606,7 @@ def test_wire_model_accepts_any_count():
     "exc,status",
     [
         ("LLMConfigError", 503),
-        ("LLMUnavailable", 503),
+        ("LLMUnavailable", 502),
         ("LLMResponseError", 502),
         ("LLMBudgetExceeded", 500),
     ],
@@ -620,3 +620,28 @@ def test_llm_errors_map_to_typed_statuses(monkeypatch, exc, status):
     assert r.status_code == status
     # Generic detail only — internal error text stays in the service log.
     assert "code=X" not in r.text
+
+
+# Statuses the gateway treats as "no paid Bedrock call happened" and REFUNDS the
+# aggregate spend slot for (gateway app.py _NON_PAID_DOWNSTREAM_STATUS). Mirrored
+# here — like PlanType ↔ the portal select — so this service's error mapping and
+# the gateway's refund policy cannot drift apart silently.
+_GATEWAY_REFUNDED_STATUSES = frozenset({401, 422, 503})
+
+
+def test_provider_unavailable_maps_to_a_status_the_gateway_keeps_charged(monkeypatch):
+    # Codex PR #7 round 9 (high): LLMUnavailable is a POST-egress failure —
+    # throttle / upstream 5xx / connection error raised only AFTER the Bedrock
+    # call was attempted. It must NOT surface as a status the gateway refunds
+    # (401/422/503), or a Bedrock outage would have every retry's reservation
+    # refunded and the tenant-wide spend ceiling would stop bounding vendor
+    # fan-out during a retry storm. It shares 502 with LLMResponseError (both
+    # "the provider path was entered"); the pre-egress 503 is reserved for
+    # LLMConfigError / not-configured.
+    def _raise(*a, **k):
+        raise app_mod.llm_client.LLMUnavailable("throttled after retries (code=X)")
+
+    monkeypatch.setattr(app_mod.llm_client, "complete_structured", _raise)
+    r = client.post("/intake-instructions", json={"has_insurance": True})
+    assert r.status_code == 502
+    assert r.status_code not in _GATEWAY_REFUNDED_STATUSES

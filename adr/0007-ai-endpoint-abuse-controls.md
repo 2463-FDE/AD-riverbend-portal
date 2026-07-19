@@ -75,16 +75,28 @@ applied in this order on `POST /ai/intake-instructions`:
      (so it still caps concurrent spend and fails closed), but **refunded** when
      the downstream response proves *no paid Bedrock call occurred* — a
      **401** (bad service-to-service auth), **422** (rejected at the boundary),
-     or **503** ("assistant is not configured" / temporarily unavailable). This
-     is what makes the counter track paid calls *only*: without it, a blank
-     `AI_PROXY_SHARED_SECRET` or missing Bedrock config returns 503 on every
-     authenticated retry, and a retry storm during that misconfiguration walks
-     the shared counter to its cap — 429-ing every valid caller until the Redis
-     window rolls over, *even after the config is fixed*. **502/504/500 keep the
-     charge** (Bedrock may have been contacted/billed). The refund is
-     best-effort: a lost refund only slightly over-counts (fails toward the
-     ceiling, never past it), and it clears the counter to zero cleanly rather
-     than resurrecting an expired window as a negative.
+     or **503** (ai-assistant refused *before egress*: "assistant is not
+     configured" — blank `AI_PROXY_SHARED_SECRET`, missing/placeholder Bedrock
+     credentials, or an unpriced model). This is what makes the counter track
+     paid calls *only*: without it, a blank secret or missing Bedrock config
+     returns 503 on every authenticated retry, and a retry storm during that
+     misconfiguration walks the shared counter to its cap — 429-ing every valid
+     caller until the Redis window rolls over, *even after the config is fixed*.
+   - **The refund split turns on egress, not on a bare status (Codex PR #7
+     round 9).** A refund must fire only for a *pre-egress* refusal. ai-assistant
+     originally mapped its *post-egress* provider failure (`LLMUnavailable` —
+     throttle / upstream 5xx / connection error raised only *after* the Bedrock
+     call was attempted) to **503** as well, so a genuine Bedrock outage looked
+     identical to a config 503 and every retry was refunded — the ceiling stopped
+     bounding vendor fan-out precisely when a retry storm made that bounding
+     matter. Fixed by mapping `LLMUnavailable` to **502** (bad gateway = upstream
+     provider failed), joining `LLMResponseError`. So now **502/504/500 keep the
+     charge** (the provider path was entered — Bedrock may have been
+     contacted/billed; gateway→service transport failures also land here), and
+     **503 is unambiguously pre-egress**. The refund is best-effort: a lost
+     refund only slightly over-counts (fails toward the ceiling, never past it),
+     and it clears the counter to zero cleanly rather than resurrecting an
+     expired window as a negative.
 
 3. **Response cache** (`security.ai_cache_*`, in the handler).
    - Key = `aicache:` + SHA-256 of the canonicalized request body. The body is
@@ -213,14 +225,20 @@ because the spend ceiling — not the cache — is the authoritative spend guard
   single-flight lock helpers (Redis-backed; the module now covers auth **and**
   Redis-backed abuse controls). `services/gateway/app.py` gains the gateway-side
   request-validation pre-filter and (round 8) the reserve-then-refund wiring
-  around the fan-out. ai-assistant is unchanged.
+  around the fan-out. ai-assistant is unchanged except (round 9) that its
+  `LLMUnavailable` handler now returns **502** instead of 503, so the gateway's
+  status-based refund split can tell a pre-egress refusal (503, refund) from a
+  post-egress provider failure (502, keep charge).
 - Tests: `tests/test_gateway_ai_rate_limit.py` proves per-user rejection before
   fan-out, per-user isolation, the aggregate ceiling, cache collapse, that cache
   hits bypass the spend ceiling, PHI-safe (hashed) cache keys, fail-closed on
   both counters, (round 7) that invalid bodies are rejected before the spend
   ceiling is charged and that concurrent identical misses coalesce to one paid
-  call, and (round 8) that a downstream 503 refunds the reserved slot so
-  repeated config failures past the cap do not block a later success.
+  call, (round 8) that a downstream 503 refunds the reserved slot so
+  repeated config failures past the cap do not block a later success, and
+  (round 9) that a post-egress provider **502** is *kept charged* so an outage
+  retry storm stays bounded by the ceiling, with `test_ai_intake_instructions`
+  pinning `LLMUnavailable → 502` (a status the gateway does not refund).
   Regression-proven against pre-fix code.
 - The controls mitigate the *effect* of non-expiring sessions on this endpoint
   but do **not** change auth behavior (ADR 0003 / §6 remains untouched).

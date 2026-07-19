@@ -269,10 +269,18 @@ def _reserve_ai_budget() -> None:
 
 
 # Downstream statuses that prove the fan-out made NO paid Bedrock call, so a
-# reserved budget slot must be refunded (Codex PR #7 round 8): 401 = bad
+# reserved budget slot must be refunded (Codex PR #7 rounds 8, 9): 401 = bad
 # service-to-service auth, 422 = request rejected at the ai-assistant boundary,
-# 503 = "assistant is not configured" / temporarily unavailable. NOT 502/504/500
-# — there Bedrock may have been contacted and billed, so the charge stands.
+# 503 = ai-assistant refused BEFORE egress ("assistant is not configured": blank
+# proxy secret, missing/placeholder Bedrock credentials, or an unpriced model).
+# NOT 502/504/500 — there the provider path was entered, so Bedrock may have been
+# contacted/billed and the charge stands. This split is only sound because
+# ai-assistant maps its POST-egress provider failure (LLMUnavailable: throttle /
+# upstream 5xx / connection error) to 502, never 503 (Codex PR #7 round 9);
+# otherwise an outage retry storm would refund every attempt and the tenant
+# ceiling would stop bounding vendor fan-out. gateway→service transport failures
+# also surface as 502/504 and likewise keep the charge (conservative: over-counts
+# toward the ceiling, never past it).
 _NON_PAID_DOWNSTREAM_STATUS = frozenset({401, 422, 503})
 
 

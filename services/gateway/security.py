@@ -146,8 +146,12 @@ def release_ai_global_budget(per_day: int) -> None:
 
     Called when a reserved fan-out proves to have made no paid Bedrock call — a
     downstream 401/422/503 (bad service-to-service auth, request rejected at the
-    boundary, or "assistant is not configured"/temporarily unavailable), none of
-    which bill inference. Without the refund those non-paid failures would drive
+    boundary, or "assistant is not configured": a PRE-egress refusal before any
+    Bedrock call), none of which bill inference. A provider outage/throttle is a
+    POST-egress 502 and is deliberately NOT refunded, so an outage retry storm
+    cannot escape the tenant ceiling that bounds vendor fan-out (Codex PR #7
+    round 9; see gateway _NON_PAID_DOWNSTREAM_STATUS). Without the refund those
+    non-paid failures would drive
     the shared daily counter to its cap during a misconfiguration or a retry
     storm and 429 every valid caller until the Redis window rolls over — even
     after the config is fixed (Codex PR #7 round 8).
