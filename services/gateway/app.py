@@ -36,6 +36,7 @@ from security import (
     create_session,
     destroy_session,
     get_session,
+    release_ai_global_budget,
     verify_password,
 )
 
@@ -267,6 +268,25 @@ def _reserve_ai_budget() -> None:
         )
 
 
+# Downstream statuses that prove the fan-out made NO paid Bedrock call, so a
+# reserved budget slot must be refunded (Codex PR #7 round 8): 401 = bad
+# service-to-service auth, 422 = request rejected at the ai-assistant boundary,
+# 503 = "assistant is not configured" / temporarily unavailable. NOT 502/504/500
+# — there Bedrock may have been contacted and billed, so the charge stands.
+_NON_PAID_DOWNSTREAM_STATUS = frozenset({401, 422, 503})
+
+
+def _refund_ai_budget() -> None:
+    """Give back an aggregate-budget slot reserved for a fan-out that turned out
+    to make no paid Bedrock call (ADR 0007). Best-effort: a lost refund only
+    slightly over-counts spend (fails toward the ceiling, never past it), so a
+    Redis fault here must not fail the request path."""
+    try:
+        release_ai_global_budget(settings.ai_rate_limit_global_per_day)
+    except Exception as e:
+        log.error("ai global budget refund unavailable: %s", type(e).__name__)
+
+
 class _AiPlanType(str, Enum):
     hmo = "HMO"
     ppo = "PPO"
@@ -388,22 +408,34 @@ def proxy_intake_instructions(payload: dict, session: dict = Depends(_ai_rate_li
         )
     try:
         # Winner: this is the paid fan-out. Reserve the aggregate budget now,
-        # immediately before the LLM call — only genuine paid fan-outs count.
+        # immediately before the LLM call — the reservation is provisional and is
+        # refunded below if the call proves to make no paid Bedrock request.
         _reserve_ai_budget()
-        # Deliberately NOT _post: that helper swallows failures into a 200-OK
-        # {"error": str(e)} body, and str(e) on an httpx error can embed the
-        # request URL (the member_id leak class). New routes use _post_checked.
-        result = _post_checked(
-            "ai",
-            "/intake-instructions",
-            payload,
-            timeout=settings.ai_read_timeout_seconds,
-            # Service-to-service auth: ai-assistant refuses calls without this
-            # header, so a direct (gateway-bypassing) caller cannot reach the paid
-            # LLM path even if the service port were ever exposed. Value is a
-            # secret — _post_checked never logs headers.
-            headers={"X-Internal-Auth": settings.ai_proxy_shared_secret},
-        )
+        try:
+            # Deliberately NOT _post: that helper swallows failures into a 200-OK
+            # {"error": str(e)} body, and str(e) on an httpx error can embed the
+            # request URL (the member_id leak class). New routes use _post_checked.
+            result = _post_checked(
+                "ai",
+                "/intake-instructions",
+                payload,
+                timeout=settings.ai_read_timeout_seconds,
+                # Service-to-service auth: ai-assistant refuses calls without this
+                # header, so a direct (gateway-bypassing) caller cannot reach the
+                # paid LLM path even if the service port were ever exposed. Value
+                # is a secret — _post_checked never logs headers.
+                headers={"X-Internal-Auth": settings.ai_proxy_shared_secret},
+            )
+        except HTTPException as e:
+            # A downstream config/auth/validation rejection (401/422/503) means no
+            # paid Bedrock call happened, so the reservation must not stick —
+            # otherwise a misconfiguration or retry storm walks the shared daily
+            # counter to its cap and 429s every valid caller until the window
+            # rolls over, even after the config is fixed (Codex PR #7 round 8).
+            # 502/504/500 keep the charge: Bedrock may have been contacted/billed.
+            if e.status_code in _NON_PAID_DOWNSTREAM_STATUS:
+                _refund_ai_budget()
+            raise
         # Only successful responses reach here (_post_checked raises on failure),
         # so only good checklists are cached. Best-effort write.
         ai_cache_set(cache_key, result, settings.ai_cache_ttl_seconds)

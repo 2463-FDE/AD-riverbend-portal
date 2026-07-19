@@ -56,6 +56,10 @@ class _FakeRedis:
         self.counts[key] = self.counts.get(key, 0) + 1
         return self.counts[key]
 
+    def decr(self, key):
+        self.counts[key] = self.counts.get(key, 0) - 1
+        return self.counts[key]
+
     def expire(self, key, seconds):
         return True
 
@@ -71,6 +75,9 @@ class _FakeRedis:
         return True
 
     def delete(self, key):
+        # One keyspace in real Redis; the fake splits counters (INCR/DECR) from
+        # values (GET/SET), so delete clears the key from both.
+        self.counts.pop(key, None)
         self.store.pop(key, None)
         return 1
 
@@ -357,6 +364,69 @@ def test_concurrent_identical_miss_loser_times_out_controlled_retry(monkeypatch,
     assert int(r.headers["Retry-After"]) >= 0  # a controlled retry hint
     assert len(fan_out_calls) == 0
     assert _global_budget_keys() == []
+
+
+@pytest.fixture
+def downstream(monkeypatch):
+    """Drive the downstream response status/body per call so a test can make the
+    fan-out fail (no paid Bedrock call) or succeed. Returns the recorded modes."""
+    calls = []
+    state = {"status": 503, "body": {"detail": "assistant is not configured"}}
+
+    class _Resp:
+        def __init__(self, status_code, body):
+            self.status_code = status_code
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    def _fake_post(url, json=None, timeout=None, headers=None):
+        calls.append(state["status"])
+        return _Resp(state["status"], state["body"])
+
+    monkeypatch.setattr(gw.httpx, "post", _fake_post)
+    return state, calls
+
+
+def test_downstream_config_503_refunds_the_global_budget(monkeypatch, downstream):
+    # Codex PR #7 round 8 (high): a downstream failure that never reaches Bedrock
+    # (here "assistant is not configured" → 503) must NOT keep the reserved slot
+    # of the tenant-wide spend ceiling — the counter tracks paid fan-outs only.
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_per_minute", 1000)
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 3)
+    state, calls = downstream
+    state["status"], state["body"] = 503, {"detail": "assistant is not configured"}
+
+    r = client.post("/ai/intake-instructions", json={"has_insurance": True})
+
+    assert r.status_code == 503  # the failure is still surfaced to the caller
+    assert len(calls) == 1  # the fan-out was attempted...
+    # ...but made no paid call, so the reservation was refunded to zero.
+    assert _global_budget_keys() == [] or all(
+        security._redis_client.counts.get(k, 0) == 0 for k in _global_budget_keys()
+    )
+
+
+def test_repeated_config_503_does_not_exhaust_budget_for_a_later_success(monkeypatch, downstream):
+    # The scenario the review named: a misconfiguration produces repeated 503s
+    # past the daily cap. With reserve-then-refund, none of them consume budget,
+    # so once the config is fixed a real call is NOT 429'd by stale consumption.
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_per_minute", 1000)
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 2)
+    state, calls = downstream
+
+    # Five misconfigured retries (> the cap of 2), each a non-paid 503.
+    state["status"], state["body"] = 503, {"detail": "assistant is not configured"}
+    for _ in range(5):
+        assert client.post("/ai/intake-instructions", json={"has_insurance": True}).status_code == 503
+
+    # Config fixed → a genuine paid call succeeds instead of hitting a stale cap.
+    state["status"], state["body"] = 200, {"items": ["Bring a photo ID."], "disclaimer": "d"}
+    r = client.post("/ai/intake-instructions", json={"has_insurance": True})
+
+    assert r.status_code == 200
+    assert r.json()["items"] == ["Bring a photo ID."]
 
 
 def test_anonymous_rejected_before_rate_limit(monkeypatch, fan_out_calls):

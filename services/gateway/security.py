@@ -110,6 +110,12 @@ def check_ai_rate_limit(username: str, per_minute: int, per_day: int) -> int:
     return 0
 
 
+def _global_budget_key(now: int) -> str:
+    """Day-window key for the aggregate spend counter. Single-sourced so
+    consume and release can never disagree on the bucket."""
+    return f"ratelimit:ai:global:{now // 86400}"
+
+
 def consume_ai_global_budget(per_day: int) -> int:
     """Aggregate daily ceiling over *paid* AI fan-outs (ADR 0007).
 
@@ -120,14 +126,45 @@ def consume_ai_global_budget(per_day: int) -> int:
     Per-user caps bound one user; this bounds total spend across all users
     (N * per-user is otherwise unbounded in N). Callers must fail closed if
     this raises — do not spend when the ceiling cannot be verified.
+
+    A reservation is provisional: the counter tracks fan-outs that reach the
+    paid path, so a caller whose fan-out turns out to make NO paid Bedrock call
+    (a downstream config/auth/validation rejection) must give the slot back with
+    release_ai_global_budget.
     """
     if per_day <= 0:
         return 0
     now = int(time.time())
-    count = _incr_fixed_window(f"ratelimit:ai:global:{now // 86400}", 86400)
+    count = _incr_fixed_window(_global_budget_key(now), 86400)
     if count > per_day:
         return 86400 - (now % 86400)
     return 0
+
+
+def release_ai_global_budget(per_day: int) -> None:
+    """Refund one slot reserved by consume_ai_global_budget (ADR 0007).
+
+    Called when a reserved fan-out proves to have made no paid Bedrock call — a
+    downstream 401/422/503 (bad service-to-service auth, request rejected at the
+    boundary, or "assistant is not configured"/temporarily unavailable), none of
+    which bill inference. Without the refund those non-paid failures would drive
+    the shared daily counter to its cap during a misconfiguration or a retry
+    storm and 429 every valid caller until the Redis window rolls over — even
+    after the config is fixed (Codex PR #7 round 8).
+
+    ``per_day <= 0`` means the ceiling is disabled and nothing was reserved
+    (no-op). Decrements the same day-window counter and clears it once it hits
+    zero: a DECR on a missing key (the window already rolled over between
+    reserve and refund) would otherwise resurrect it as a lingering negative
+    with no TTL, so a non-positive result deletes the key back to a clean state.
+    """
+    if per_day <= 0:
+        return
+    r = _redis()
+    key = _global_budget_key(int(time.time()))
+    remaining = r.decr(key)
+    if remaining <= 0:
+        r.delete(key)
 
 
 # --------------------------------------------------------------------------- #

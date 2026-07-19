@@ -70,6 +70,21 @@ applied in this order on `POST /ai/intake-instructions`:
      the gateway has validated the request (control 4) and won the single-flight
      slot (control 5), so a body that ai-assistant would 422, and a duplicate
      concurrent miss, never charge the ceiling (Codex PR #7 round 7).
+   - **Reserve-then-refund** (`security.release_ai_global_budget`, Codex PR #7
+     round 8). The reservation is provisional: it is taken before the fan-out
+     (so it still caps concurrent spend and fails closed), but **refunded** when
+     the downstream response proves *no paid Bedrock call occurred* — a
+     **401** (bad service-to-service auth), **422** (rejected at the boundary),
+     or **503** ("assistant is not configured" / temporarily unavailable). This
+     is what makes the counter track paid calls *only*: without it, a blank
+     `AI_PROXY_SHARED_SECRET` or missing Bedrock config returns 503 on every
+     authenticated retry, and a retry storm during that misconfiguration walks
+     the shared counter to its cap — 429-ing every valid caller until the Redis
+     window rolls over, *even after the config is fixed*. **502/504/500 keep the
+     charge** (Bedrock may have been contacted/billed). The refund is
+     best-effort: a lost refund only slightly over-counts (fails toward the
+     ceiling, never past it), and it clears the counter to zero cleanly rather
+     than resurrecting an expired window as a negative.
 
 3. **Response cache** (`security.ai_cache_*`, in the handler).
    - Key = `aicache:` + SHA-256 of the canonicalized request body. The body is
@@ -193,15 +208,19 @@ because the spend ceiling — not the cache — is the authoritative spend guard
   (round 7) `AI_SINGLEFLIGHT_WAIT_SECONDS` (2.0), `AI_SINGLEFLIGHT_POLL_SECONDS`
   (0.1), `AI_SINGLEFLIGHT_LOCK_TTL_SECONDS` (≈ read timeout + 15). All
   non-secret, documented in `.env.example`.
-- `services/gateway/security.py` gains rate-limit, global-budget, cache, and
-  (round 7) single-flight lock helpers (Redis-backed; the module now covers auth
-  **and** Redis-backed abuse controls). `services/gateway/app.py` gains the
-  gateway-side request-validation pre-filter. ai-assistant is unchanged.
+- `services/gateway/security.py` gains rate-limit, global-budget (with a round-8
+  `release_ai_global_budget` refund counterpart), cache, and (round 7)
+  single-flight lock helpers (Redis-backed; the module now covers auth **and**
+  Redis-backed abuse controls). `services/gateway/app.py` gains the gateway-side
+  request-validation pre-filter and (round 8) the reserve-then-refund wiring
+  around the fan-out. ai-assistant is unchanged.
 - Tests: `tests/test_gateway_ai_rate_limit.py` proves per-user rejection before
   fan-out, per-user isolation, the aggregate ceiling, cache collapse, that cache
   hits bypass the spend ceiling, PHI-safe (hashed) cache keys, fail-closed on
-  both counters, and (round 7) that invalid bodies are rejected before the spend
+  both counters, (round 7) that invalid bodies are rejected before the spend
   ceiling is charged and that concurrent identical misses coalesce to one paid
-  call. Regression-proven against pre-fix code.
+  call, and (round 8) that a downstream 503 refunds the reserved slot so
+  repeated config failures past the cap do not block a later success.
+  Regression-proven against pre-fix code.
 - The controls mitigate the *effect* of non-expiring sessions on this endpoint
   but do **not** change auth behavior (ADR 0003 / §6 remains untouched).
