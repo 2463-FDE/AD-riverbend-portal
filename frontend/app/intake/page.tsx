@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import Card from "../components/Card";
 import { apiFetch } from "../lib/session";
+import { formatSsn, formatPhone, digitsOnly } from "../lib/format";
 
 interface Demographics {
   first_name: string;
@@ -81,8 +82,14 @@ export default function IntakePage() {
     setBusy(true);
     setResult(null);
     // Combined payload: demographics + insurance + consents.
+    // SSN/phone are stored formatted for display (F2) but sent normalized to
+    // bare digits — the wire contract is unchanged, formatting is entry-only.
     const payload = {
-      demographics: demo,
+      demographics: {
+        ...demo,
+        ssn: digitsOnly(demo.ssn),
+        phone: digitsOnly(demo.phone),
+      },
       insurance: ins,
       consents,
     };
@@ -250,8 +257,10 @@ export default function IntakePage() {
             </legend>
             <div className="rb-field-row">
               <Field id="first_name" label="First name" required value={demo.first_name}
+                autoComplete="given-name"
                 onChange={(v) => setDemo({ ...demo, first_name: v })} />
               <Field id="last_name" label="Last name" required value={demo.last_name}
+                autoComplete="family-name"
                 onChange={(v) => setDemo({ ...demo, last_name: v })} />
             </div>
             <div className="rb-field-row">
@@ -263,13 +272,18 @@ export default function IntakePage() {
             </div>
             <div className="rb-field-row">
               <Field id="ssn" label="SSN" hint="Used for insurance verification only."
-                value={demo.ssn} onChange={(v) => setDemo({ ...demo, ssn: v })} />
+                value={demo.ssn} format={formatSsn} inputMode="numeric"
+                autoComplete="off" maxLength={11}
+                onChange={(v) => setDemo({ ...demo, ssn: v })} />
               <Field id="phone" label="Phone" type="tel" value={demo.phone}
+                format={formatPhone} inputMode="tel" autoComplete="tel"
                 onChange={(v) => setDemo({ ...demo, phone: v })} />
             </div>
             <Field id="email" label="Email" type="email" value={demo.email}
+              inputMode="email" autoComplete="email"
               onChange={(v) => setDemo({ ...demo, email: v })} />
             <Field id="address" label="Home address" value={demo.address}
+              autoComplete="street-address"
               onChange={(v) => setDemo({ ...demo, address: v })} />
           </fieldset>
         )}
@@ -330,7 +344,7 @@ export default function IntakePage() {
               ["Name", `${demo.first_name} ${demo.last_name}`.trim() || "—"],
               ["Date of birth", demo.dob || "—"],
               ["Gender", demo.gender || "—"],
-              ["SSN", demo.ssn ? `•••-••-${demo.ssn.slice(-4)}` : "—"],
+              ["SSN", demo.ssn ? `•••-••-${digitsOnly(demo.ssn).slice(-4)}` : "—"],
               ["Phone", demo.phone || "—"],
               ["Email", demo.email || "—"],
               ["Address", demo.address || "—"],
@@ -394,6 +408,10 @@ function Field({
   type = "text",
   required = false,
   hint,
+  format,
+  inputMode,
+  autoComplete,
+  maxLength,
 }: {
   id: string;
   label: string;
@@ -402,6 +420,10 @@ function Field({
   type?: string;
   required?: boolean;
   hint?: string;
+  format?: (raw: string) => string;
+  inputMode?: "text" | "numeric" | "tel" | "email";
+  autoComplete?: string;
+  maxLength?: number;
 }) {
   return (
     <div className="rb-field">
@@ -416,7 +438,10 @@ function Field({
         value={value}
         required={required}
         aria-required={required}
-        onChange={(e) => onChange(e.target.value)}
+        inputMode={inputMode}
+        autoComplete={autoComplete}
+        maxLength={maxLength}
+        onChange={(e) => onChange(format ? format(e.target.value) : e.target.value)}
       />
       {hint && <span className="rb-field__hint">{hint}</span>}
     </div>

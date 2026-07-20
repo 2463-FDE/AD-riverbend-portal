@@ -154,9 +154,21 @@ textarea:focus-visible,
   color: var(--rb-nav-text);
   display: flex;
   flex-direction: column;
+  /* Let the grid row size the panel so its navy background fills tall pages
+     (F1). A fixed height:100vh stopped one viewport down and revealed the page
+     background below the panel. The inner wrapper keeps the nav sticky. */
+  align-self: stretch;
+}
+
+/* Sticky inner column so the nav follows the viewport on long pages while the
+   outer panel background still fills the full grid height (F1). */
+.rb-sidebar__inner {
+  display: flex;
+  flex-direction: column;
   position: sticky;
   top: 0;
-  height: 100vh;
+  max-height: 100vh;
+  overflow-y: auto;
 }
 
 .rb-sidebar__brand {
