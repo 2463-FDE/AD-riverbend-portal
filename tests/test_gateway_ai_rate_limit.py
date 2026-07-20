@@ -78,6 +78,18 @@ class _FakeRedis:
                 self.ttls.pop(key, None)
                 return 1
             return 0
+        if script == security._DECR_AND_CLEAR_LUA:
+            # Decrement-and-clear: DECR and, if exhausted, DEL — one call, no
+            # interleaving, exactly as the real script does. Inline pops, NOT
+            # self.delete: the script runs server-side, so it must not route
+            # through the client methods tests stub out to prove atomicity.
+            remaining = self.counts.get(key, 0) - 1
+            self.counts[key] = remaining
+            if remaining <= 0:
+                self.counts.pop(key, None)
+                self.store.pop(key, None)
+                self.ttls.pop(key, None)
+            return remaining
         # _INCR_FIXED_WINDOW_LUA: INCR the key and, on the first hit, bind its TTL,
         # all in ONE call (no interleaving), exactly as the real script does.
         window = keys_and_args[1]
@@ -587,14 +599,131 @@ def test_over_limit_reject_then_refund_lets_a_valid_request_succeed(monkeypatch,
     assert len(fan_out_calls) == 0
 
     # (2) The in-flight call finishes with a refundable downstream 503 — it made no
-    # paid Bedrock call, so it returns its slot.
-    gw._refund_ai_budget()
+    # paid Bedrock call, so it returns its slot (refunding the exact bucket it
+    # reserved, as the handler does with the key _reserve_ai_budget returned).
+    gw._refund_ai_budget(security._global_budget_key(1_000_000))
 
     # (3) A fresh valid request must now succeed: the refund freed the only slot,
     # and the rejected over-limit attempt must not have consumed it.
     r2 = client.post("/ai/intake-instructions", json={"has_insurance": False})
     assert r2.status_code == 200
     assert len(fan_out_calls) == 1
+
+
+def test_midnight_rollover_refund_credits_the_reserved_days_bucket(monkeypatch):
+    # Codex PR #7 round 14 (high): the reviewer's named sequence, end to end. A
+    # fan-out reserved just before UTC midnight comes back refundable (503) just
+    # AFTER it. The refund must credit the bucket that was actually charged (the
+    # old day's), not one recomputed from refund time — pre-fix it decremented
+    # the NEW day's counter, quietly erasing one of that day's real paid calls
+    # and letting more Bedrock fan-outs through than the ceiling permits.
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_per_minute", 1000)
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 10)
+    midnight = 86400 * 200
+    clock = [float(midnight - 2)]  # reservation lands just before the rollover
+    monkeypatch.setattr(security.time, "time", lambda: clock[0])
+    old_key = security._global_budget_key(midnight - 2)
+    new_key = security._global_budget_key(midnight + 2)
+
+    # Concurrent traffic has already made three PAID calls in the new day.
+    security._redis_client.counts[new_key] = 3
+
+    class _Resp:
+        status_code = 503
+
+        def json(self):
+            return {"detail": "assistant is not configured"}
+
+    def _post_crossing_midnight(url, json=None, timeout=None, headers=None):
+        clock[0] = float(midnight + 2)  # the refundable 503 lands after midnight
+        return _Resp()
+
+    monkeypatch.setattr(gw.httpx, "post", _post_crossing_midnight)
+
+    r = client.post("/ai/intake-instructions", json={"has_insurance": True})
+
+    assert r.status_code == 503
+    # The refund credited the OLD day's bucket — the one the reservation charged
+    # (back to zero, then cleaned up)...
+    assert security._redis_client.counts.get(old_key, 0) == 0
+    # ...and the new day's paid count is untouched. Pre-fix this read 2: the
+    # refund keyed off refund time and erased one legitimate new-day paid call.
+    assert security._redis_client.counts.get(new_key) == 3
+
+
+def test_release_targets_the_exact_reserved_bucket_across_rollover(monkeypatch):
+    # Codex PR #7 round 14 (high), unit level: consume returns the exact charged
+    # bucket as a reservation key, and release decrements THAT key — never one
+    # re-derived from the current clock — so reserve/refund pairs that straddle
+    # the day boundary stay bucket-accurate.
+    midnight = 86400 * 300
+    clock = [float(midnight - 1)]
+    monkeypatch.setattr(security.time, "time", lambda: clock[0])
+
+    retry_after, reservation = security.consume_ai_global_budget(10)
+    assert retry_after == 0
+    assert reservation == security._global_budget_key(midnight - 1)
+
+    # The day rolls over and two new-day paid calls are reserved.
+    clock[0] = float(midnight + 5)
+    new_key = security._global_budget_key(midnight + 5)
+    for _ in range(2):
+        assert security.consume_ai_global_budget(10) == (0, new_key)
+
+    # Refund the pre-rollover reservation: the old bucket clears, the new one
+    # keeps both of its real paid calls.
+    security.release_ai_global_budget(reservation)
+
+    assert security._redis_client.counts.get(reservation, 0) == 0
+    assert security._redis_client.counts.get(new_key) == 2
+
+
+def test_refund_decrements_and_clears_atomically_without_separate_calls(monkeypatch):
+    # Codex PR #7 round 14 follow-through (same class as round 12): giving a
+    # budget slot back is DECR + delete-if-exhausted. As two separate calls that
+    # pair is check-then-act — a concurrent reservation's INCR can land between
+    # a refund's DECR (reading 0) and its trailing DELETE, and the DELETE wipes
+    # the legitimate fresh charge; a crash between them strands a no-TTL
+    # negative key. Simulate the SEPARATE decr/delete being unavailable: a
+    # correct implementation performs both as one atomic server-side step and
+    # never calls them individually.
+    fake = security._redis_client
+    key = security._global_budget_key(1_000_000)
+    security._incr_fixed_window(key, 86400)
+    security._incr_fixed_window(key, 86400)  # two reserved slots
+
+    def _boom(*a, **k):
+        raise RuntimeError("separate DECR/DELETE round-trip attempted")
+
+    monkeypatch.setattr(fake, "decr", _boom)
+    monkeypatch.setattr(fake, "delete", _boom)
+
+    security.release_ai_global_budget(key)
+    assert fake.counts.get(key) == 1  # one slot back, counter intact
+
+    security.release_ai_global_budget(key)
+    assert key not in fake.counts  # exhausted -> cleared, in the same step
+
+
+def test_over_limit_undo_uses_the_same_atomic_decrement(monkeypatch):
+    # The other give-back site: an over-limit reservation is undone on the spot
+    # (round 11). That undo must share the atomic decrement-and-clear — the same
+    # interleaving wipes a concurrent charge if it runs as separate calls.
+    fake = security._redis_client
+    key = security._global_budget_key(1_000_000)
+
+    def _boom(*a, **k):
+        raise RuntimeError("separate DECR/DELETE round-trip attempted")
+
+    monkeypatch.setattr(fake, "decr", _boom)
+    monkeypatch.setattr(fake, "delete", _boom)
+
+    assert security.consume_ai_global_budget(1) == (0, key)  # fills the one slot
+    retry_after, reservation = security.consume_ai_global_budget(1)  # over limit
+
+    assert retry_after > 0
+    assert reservation is None  # nothing reserved, nothing to refund
+    assert fake.counts.get(key) == 1  # the undo left only the real paid call
 
 
 def test_first_hit_binds_ttl_atomically_even_if_separate_expire_is_unavailable(monkeypatch):

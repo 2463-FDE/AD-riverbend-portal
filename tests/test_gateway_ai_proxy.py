@@ -48,7 +48,7 @@ def _no_abuse_controls(monkeypatch):
     # and never intercept: quota open, budget open, cache always misses and
     # never writes.
     monkeypatch.setattr(gw, "check_ai_rate_limit", lambda *a, **k: 0)
-    monkeypatch.setattr(gw, "consume_ai_global_budget", lambda *a, **k: 0)
+    monkeypatch.setattr(gw, "consume_ai_global_budget", lambda *a, **k: (0, None))
     monkeypatch.setattr(gw, "ai_cache_get", lambda *a, **k: None)
     monkeypatch.setattr(gw, "ai_cache_set", lambda *a, **k: None)
     # Single-flight lock (round 7) also stays off Redis: every request wins its

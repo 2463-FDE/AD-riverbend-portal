@@ -118,6 +118,24 @@ applied in this order on `POST /ai/intake-instructions`:
      refund only slightly over-counts (fails toward the ceiling, never past it),
      and it clears the counter to zero cleanly rather than resurrecting an
      expired window as a negative.
+   - **A refund credits the exact bucket that was reserved (Codex PR #7
+     round 14).** `consume_ai_global_budget` returns the day-window key it
+     charged as a reservation key, and `release_ai_global_budget` decrements
+     *that key* — it never re-derives the bucket from the clock at refund time.
+     A fan-out reserved just before the UTC midnight rollover can come back
+     refundable just after it; a re-derived key would credit the *new* day's
+     counter, silently erasing part of that day's real paid count and admitting
+     more Bedrock calls than the ceiling permits. Same principle as the
+     single-flight owner token (control 5): the acquirer carries proof of what
+     it holds, and the release acts only on that proof.
+   - **Giving a slot back is atomic (same class as the round-12 fix).** Both
+     give-back sites — the refund and the over-limit undo — run DECR +
+     delete-if-exhausted as ONE server-side Lua step
+     (`security._decr_and_clear`). As two round-trips the pair is
+     check-then-act: a concurrent reservation's INCR can land between a
+     refund's DECR (reading 0) and its trailing DELETE, and the DELETE wipes
+     the legitimate fresh charge (and its TTL); a crash between the calls
+     strands a no-TTL negative key.
 
 3. **Response cache** (`security.ai_cache_*`, in the handler).
    - Key = `aicache:` + SHA-256 of the canonicalized request body. The body is
@@ -295,7 +313,12 @@ because the spend ceiling — not the cache — is the authoritative spend guard
   strand a no-TTL key) and that every quota key — minute, per-user day, and
   global — is created with a TTL, and (round 13) that a stale winner's release
   cannot delete a newer winner's lock (owner-checked compare-and-delete) and that
-  the lock TTL is clamped above the read timeout even under an unsafe override.
-  Regression-proven against pre-fix code.
+  the lock TTL is clamped above the read timeout even under an unsafe override,
+  and (round 14) that a refund crossing the UTC midnight rollover credits the
+  bucket that was actually reserved — the new day's paid count stays intact —
+  both end-to-end through the handler and at the consume/release unit level,
+  and that both give-back sites (refund and over-limit undo) decrement and
+  clear in one atomic step (stubbed-unavailable separate `DECR`/`DELETE` calls
+  are never reached). Regression-proven against pre-fix code.
 - The controls mitigate the *effect* of non-expiring sessions on this endpoint
   but do **not** change auth behavior (ADR 0003 / §6 remains untouched).

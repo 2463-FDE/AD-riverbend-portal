@@ -245,7 +245,7 @@ def _ai_rate_limited(session: dict = Depends(require_session)) -> dict:
     return session
 
 
-def _reserve_ai_budget() -> None:
+def _reserve_ai_budget() -> str | None:
     """Consume one slot of the aggregate daily spend ceiling, or reject (ADR 0007).
 
     Called on the paid path only (single-flight winner, after a cache miss and
@@ -253,9 +253,18 @@ def _reserve_ai_budget() -> None:
     fan-outs — not cache hits, not per-user-rejected requests, and not bodies
     that would 422 downstream. Fails closed: a Redis fault here means we cannot
     verify the spend ceiling, so we do not spend.
+
+    Returns the reservation key — the exact day bucket that was charged. A
+    refund must pass this key back (never re-derive it from the clock): a
+    fan-out reserved just before UTC midnight refunds after the rollover, and a
+    re-derived key would credit the new day's counter instead of the one that
+    was charged (Codex PR #7 round 14). ``None`` means the ceiling is disabled
+    and there is nothing to refund.
     """
     try:
-        retry_after = consume_ai_global_budget(settings.ai_rate_limit_global_per_day)
+        retry_after, reservation_key = consume_ai_global_budget(
+            settings.ai_rate_limit_global_per_day
+        )
     except Exception as e:
         log.error("ai global budget check unavailable: %s", type(e).__name__)
         raise HTTPException(status_code=503, detail="assistant is temporarily unavailable")
@@ -266,6 +275,7 @@ def _reserve_ai_budget() -> None:
             detail="assistant is at capacity for today; please try again later",
             headers={"Retry-After": str(retry_after)},
         )
+    return reservation_key
 
 
 # Downstream statuses that prove the fan-out made NO paid Bedrock call, so a
@@ -284,13 +294,16 @@ def _reserve_ai_budget() -> None:
 _NON_PAID_DOWNSTREAM_STATUS = frozenset({401, 422, 503})
 
 
-def _refund_ai_budget() -> None:
+def _refund_ai_budget(reservation_key: str | None) -> None:
     """Give back an aggregate-budget slot reserved for a fan-out that turned out
-    to make no paid Bedrock call (ADR 0007). Best-effort: a lost refund only
-    slightly over-counts spend (fails toward the ceiling, never past it), so a
-    Redis fault here must not fail the request path."""
+    to make no paid Bedrock call (ADR 0007). ``reservation_key`` is the exact
+    bucket _reserve_ai_budget charged — passed back verbatim so a refund that
+    crosses the UTC midnight rollover still credits the day it was charged to,
+    never the new day's counter (Codex PR #7 round 14). Best-effort: a lost
+    refund only slightly over-counts spend (fails toward the ceiling, never
+    past it), so a Redis fault here must not fail the request path."""
     try:
-        release_ai_global_budget(settings.ai_rate_limit_global_per_day)
+        release_ai_global_budget(reservation_key)
     except Exception as e:
         log.error("ai global budget refund unavailable: %s", type(e).__name__)
 
@@ -432,8 +445,9 @@ def proxy_intake_instructions(payload: dict, session: dict = Depends(_ai_rate_li
     try:
         # Winner: this is the paid fan-out. Reserve the aggregate budget now,
         # immediately before the LLM call — the reservation is provisional and is
-        # refunded below if the call proves to make no paid Bedrock request.
-        _reserve_ai_budget()
+        # refunded below (by its exact reserved key) if the call proves to make
+        # no paid Bedrock request.
+        budget_reservation = _reserve_ai_budget()
         try:
             # Deliberately NOT _post: that helper swallows failures into a 200-OK
             # {"error": str(e)} body, and str(e) on an httpx error can embed the
@@ -457,7 +471,7 @@ def proxy_intake_instructions(payload: dict, session: dict = Depends(_ai_rate_li
             # rolls over, even after the config is fixed (Codex PR #7 round 8).
             # 502/504/500 keep the charge: Bedrock may have been contacted/billed.
             if e.status_code in _NON_PAID_DOWNSTREAM_STATUS:
-                _refund_ai_budget()
+                _refund_ai_budget(budget_reservation)
             raise
         # Only successful responses reach here (_post_checked raises on failure),
         # so only good checklists are cached. Best-effort write.

@@ -127,27 +127,65 @@ def check_ai_rate_limit(username: str, per_minute: int, per_day: int) -> int:
     return 0
 
 
+# Give back one budget slot: DECR and, if the counter is now exhausted (<= 0),
+# DELETE it — as ONE atomic server-side step. Running DECR and DELETE as two
+# round-trips is check-then-act: a concurrent reserve can INCR the key to 1 in
+# the gap after a refund's DECR read 0, and the refund's trailing DELETE then
+# wipes that legitimate fresh reservation (and its TTL). A crash between the two
+# calls likewise strands a no-TTL negative key. Same reasoning as
+# _INCR_FIXED_WINDOW_LUA (Codex PR #7 round 12): the read and the write it
+# justifies must not interleave with other clients.
+_DECR_AND_CLEAR_LUA = """
+local remaining = redis.call('DECR', KEYS[1])
+if remaining <= 0 then
+    redis.call('DEL', KEYS[1])
+end
+return remaining
+"""
+
+
+def _decr_and_clear(key: str) -> int:
+    """Atomically decrement a budget counter and delete it once exhausted.
+
+    Shared by the refund path (release_ai_global_budget) and the over-limit
+    undo (consume_ai_global_budget) — the two places a reserved increment is
+    given back. See ``_DECR_AND_CLEAR_LUA`` for why the decrement and the
+    exhausted-key cleanup must be one server-side step."""
+    return int(_redis().eval(_DECR_AND_CLEAR_LUA, 1, key))
+
+
 def _global_budget_key(now: int) -> str:
-    """Day-window key for the aggregate spend counter. Single-sourced so
-    consume and release can never disagree on the bucket."""
+    """Day-window key for the aggregate spend counter. Derived ONLY at reserve
+    time (consume_ai_global_budget); a refund receives the reserved key back
+    verbatim rather than re-deriving it, so the two can never disagree on the
+    bucket across a day rollover (Codex PR #7 round 14)."""
     return f"ratelimit:ai:global:{now // 86400}"
 
 
-def consume_ai_global_budget(per_day: int) -> int:
+def consume_ai_global_budget(per_day: int) -> tuple[int, str | None]:
     """Aggregate daily ceiling over *paid* AI fan-outs (ADR 0007).
 
     A single global day-window counter, incremented once per paid call
-    (callers invoke this only on a cache MISS, just before fan-out). Returns a
-    Retry-After hint in seconds if the aggregate cap is now exceeded, else 0.
-    ``per_day <= 0`` disables the ceiling (returns 0 without touching Redis).
-    Per-user caps bound one user; this bounds total spend across all users
-    (N * per-user is otherwise unbounded in N). Callers must fail closed if
-    this raises — do not spend when the ceiling cannot be verified.
+    (callers invoke this only on a cache MISS, just before fan-out). Returns
+    ``(retry_after, reservation_key)``: ``retry_after`` is a Retry-After hint in
+    seconds if the aggregate cap is now exceeded (else 0), and
+    ``reservation_key`` is the EXACT bucket that was charged — the value a
+    refund must pass back to release_ai_global_budget. It is ``None`` when
+    nothing was reserved (ceiling disabled, or the attempt was rejected and its
+    increment already undone here). ``per_day <= 0`` disables the ceiling
+    (returns ``(0, None)`` without touching Redis). Per-user caps bound one
+    user; this bounds total spend across all users (N * per-user is otherwise
+    unbounded in N). Callers must fail closed if this raises — do not spend
+    when the ceiling cannot be verified.
 
     A reservation is provisional: the counter tracks fan-outs that reach the
     paid path, so a caller whose fan-out turns out to make NO paid Bedrock call
     (a downstream config/auth/validation rejection) must give the slot back with
-    release_ai_global_budget.
+    release_ai_global_budget — passing the returned key, never a recomputed
+    one. A fan-out reserved just before the UTC midnight rollover can refund
+    after it; recomputing the bucket from refund time would credit the NEW
+    day's counter, silently erasing part of that day's real paid count and
+    letting the ceiling over-admit (Codex PR #7 round 14).
 
     An OVER-LIMIT attempt is undone immediately. The counter is incremented
     before the cap comparison (a fixed-window INCR is the atomic read), but a
@@ -157,24 +195,32 @@ def consume_ai_global_budget(per_day: int) -> int:
     above real paid usage; the reserve-then-refund path only claws back paid-path
     401/422/503s, so it could never bring the inflated count down, and valid
     callers would stay 429'd until the day window rolls over (Codex PR #7
-    round 11). The undo mirrors release_ai_global_budget's decr + delete-if-<=0
-    so an expired-window edge cannot strand a lingering negative.
+    round 11). The undo shares release_ai_global_budget's atomic
+    decrement-and-clear (``_decr_and_clear``), so an expired-window edge cannot
+    strand a lingering negative and a concurrent reservation cannot be wiped by
+    the cleanup.
     """
     if per_day <= 0:
-        return 0
+        return 0, None
     now = int(time.time())
     key = _global_budget_key(now)
     count = _incr_fixed_window(key, 86400)
     if count > per_day:
-        r = _redis()
-        if r.decr(key) <= 0:
-            r.delete(key)
-        return 86400 - (now % 86400)
-    return 0
+        _decr_and_clear(key)
+        return 86400 - (now % 86400), None
+    return 0, key
 
 
-def release_ai_global_budget(per_day: int) -> None:
+def release_ai_global_budget(reservation_key: str | None) -> None:
     """Refund one slot reserved by consume_ai_global_budget (ADR 0007).
+
+    ``reservation_key`` is the exact bucket consume_ai_global_budget charged and
+    returned — never a key recomputed from the current clock. A reservation
+    taken just before the UTC midnight rollover refunds AFTER it; a recomputed
+    key would land the credit on the new day's counter, quietly erasing part of
+    the new day's real paid count and letting more Bedrock calls through than
+    the ceiling permits (Codex PR #7 round 14). ``None`` means nothing was
+    reserved (ceiling disabled or the attempt was rejected) — a no-op.
 
     Called when a reserved fan-out proves to have made no paid Bedrock call — a
     downstream 401/422/503 (bad service-to-service auth, request rejected at the
@@ -188,19 +234,16 @@ def release_ai_global_budget(per_day: int) -> None:
     storm and 429 every valid caller until the Redis window rolls over — even
     after the config is fixed (Codex PR #7 round 8).
 
-    ``per_day <= 0`` means the ceiling is disabled and nothing was reserved
-    (no-op). Decrements the same day-window counter and clears it once it hits
-    zero: a DECR on a missing key (the window already rolled over between
-    reserve and refund) would otherwise resurrect it as a lingering negative
-    with no TTL, so a non-positive result deletes the key back to a clean state.
+    Decrements the reserved bucket and clears it once it hits zero — as one
+    atomic server-side step (``_decr_and_clear``): a DECR on a missing key (the
+    old day's counter already expired between reserve and refund) would
+    otherwise resurrect it as a lingering negative with no TTL, and a separate
+    trailing DELETE could race a concurrent reservation's INCR and wipe a
+    legitimate fresh charge.
     """
-    if per_day <= 0:
+    if not reservation_key:
         return
-    r = _redis()
-    key = _global_budget_key(int(time.time()))
-    remaining = r.decr(key)
-    if remaining <= 0:
-        r.delete(key)
+    _decr_and_clear(reservation_key)
 
 
 # --------------------------------------------------------------------------- #
