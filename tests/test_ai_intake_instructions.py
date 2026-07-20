@@ -608,7 +608,7 @@ def test_wire_model_accepts_any_count():
         ("LLMConfigError", 503),
         ("LLMUnavailable", 502),
         ("LLMResponseError", 502),
-        ("LLMBudgetExceeded", 500),
+        ("LLMBudgetExceeded", 503),
     ],
 )
 def test_llm_errors_map_to_typed_statuses(monkeypatch, exc, status):
@@ -645,3 +645,22 @@ def test_provider_unavailable_maps_to_a_status_the_gateway_keeps_charged(monkeyp
     r = client.post("/intake-instructions", json={"has_insurance": True})
     assert r.status_code == 502
     assert r.status_code not in _GATEWAY_REFUNDED_STATUSES
+
+
+def test_local_budget_refusal_maps_to_a_refundable_status(monkeypatch):
+    # Codex PR #7 round 10 (high): LLMBudgetExceeded is a PRE-egress refusal —
+    # llm_client enforces the token / char / cost caps locally, before any Bedrock
+    # call. For this fixed-size closed-vocabulary prompt it can only fire on a
+    # misconfigured (too-low) cap, and no paid call was made. It must map to a
+    # status the gateway REFUNDS (503), never the keep-charge 500, or a low-cap
+    # misconfig would burn the shared daily spend ceiling on every request that
+    # never reached Bedrock and 429 all users.
+    def _raise(*a, **k):
+        raise app_mod.llm_client.LLMBudgetExceeded("input tokens 999 exceed cap 8")
+
+    monkeypatch.setattr(app_mod.llm_client, "complete_structured", _raise)
+    r = client.post("/intake-instructions", json={"has_insurance": True})
+    assert r.status_code == 503
+    assert r.status_code in _GATEWAY_REFUNDED_STATUSES
+    # The cap value is internal — it must not leak to the caller.
+    assert "999" not in r.text and "cap" not in r.text

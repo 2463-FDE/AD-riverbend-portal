@@ -77,8 +77,12 @@ applied in this order on `POST /ai/intake-instructions`:
      **401** (bad service-to-service auth), **422** (rejected at the boundary),
      or **503** (ai-assistant refused *before egress*: "assistant is not
      configured" — blank `AI_PROXY_SHARED_SECRET`, missing/placeholder Bedrock
-     credentials, or an unpriced model). This is what makes the counter track
-     paid calls *only*: without it, a blank secret or missing Bedrock config
+     credentials, an unpriced model, or a **local budget-cap refusal**
+     (`LLMBudgetExceeded`, whose token/char/cost caps are all enforced locally
+     before any Bedrock call — Codex PR #7 round 10; it previously fell through
+     to a keep-charge 500, so a cap set too low burned the ceiling on every
+     request)). This is what makes the counter track paid calls *only*: without
+     it, a blank secret or missing Bedrock config
      returns 503 on every authenticated retry, and a retry storm during that
      misconfiguration walks the shared counter to its cap — 429-ing every valid
      caller until the Redis window rolls over, *even after the config is fixed*.
@@ -111,12 +115,20 @@ applied in this order on `POST /ai/intake-instructions`:
    - TTL bounds staleness against catalog/template deploys. Default **300s**
      (`AI_CACHE_TTL_SECONDS`); `<=0` disables.
 
-4. **Gateway request validation** (`_validate_ai_request`, before the cache key
-   and the spend ceiling — Codex PR #7 round 7).
+4. **Gateway request validation → canonical facts** (`_validate_ai_request`,
+   before the cache key and the spend ceiling — Codex PR #7 rounds 7, 10).
    - The gateway parses the body with a **mirror of ai-assistant's
      `InstructionsRequest`** (`extra="forbid"` + the insurance-consistency rule)
      and returns a **no-echo 422** on failure, *before* deriving the cache key or
      reserving the budget.
+   - On success it returns the **normalized `model_dump(mode="json")`**, and the
+     cache key, single-flight lock, and fan-out payload all derive from that
+     canonical fact vector — not the raw body (Codex PR #7 round 10). Otherwise
+     `{}`, a body spelling out the schema defaults, and coerced booleans
+     (`"true"` vs `true`) hash to different keys for the *same* facts, letting a
+     caller bypass duplicate-collapse (control 3 / control 5) and spend repeated
+     Bedrock calls for one fact vector. `extra="forbid"` means the dump carries
+     only closed-vocabulary fields, so nothing smuggled rides into the fan-out.
    - Closes the round-7 **high**: without it, a logged-in caller could send many
      distinct invalid bodies (unknown fields, contradictory insurance facts),
      each a cache miss that charged `ratelimit:ai:global` and was only rejected
@@ -224,11 +236,14 @@ because the spend ceiling — not the cache — is the authoritative spend guard
   `release_ai_global_budget` refund counterpart), cache, and (round 7)
   single-flight lock helpers (Redis-backed; the module now covers auth **and**
   Redis-backed abuse controls). `services/gateway/app.py` gains the gateway-side
-  request-validation pre-filter and (round 8) the reserve-then-refund wiring
-  around the fan-out. ai-assistant is unchanged except (round 9) that its
-  `LLMUnavailable` handler now returns **502** instead of 503, so the gateway's
-  status-based refund split can tell a pre-egress refusal (503, refund) from a
-  post-egress provider failure (502, keep charge).
+  request-validation pre-filter, (round 8) the reserve-then-refund wiring
+  around the fan-out, and (round 10) canonicalization of the cache/single-flight/
+  fan-out key via the validated `model_dump`. ai-assistant changed only in its
+  error-status mapping: (round 9) `LLMUnavailable` returns **502** (post-egress
+  provider failure, keep charge) and (round 10) `LLMBudgetExceeded` returns
+  **503** (pre-egress local cap refusal, refund) instead of the keep-charge 500 —
+  both so the gateway's status-based refund split correctly tells a pre-egress
+  refusal (refund) from a call that may have reached Bedrock (keep charge).
 - Tests: `tests/test_gateway_ai_rate_limit.py` proves per-user rejection before
   fan-out, per-user isolation, the aggregate ceiling, cache collapse, that cache
   hits bypass the spend ceiling, PHI-safe (hashed) cache keys, fail-closed on
@@ -238,7 +253,10 @@ because the spend ceiling — not the cache — is the authoritative spend guard
   repeated config failures past the cap do not block a later success, and
   (round 9) that a post-egress provider **502** is *kept charged* so an outage
   retry storm stays bounded by the ceiling, with `test_ai_intake_instructions`
-  pinning `LLMUnavailable → 502` (a status the gateway does not refund).
-  Regression-proven against pre-fix code.
+  pinning `LLMUnavailable → 502` (a status the gateway does not refund), and
+  (round 10) that a local budget refusal maps to a *refundable* **503** (pinning
+  `LLMBudgetExceeded → 503`, a gateway-refunded status) and that requests
+  spelled differently (`{}` vs explicit defaults vs coerced booleans) collapse
+  to one cached paid call. Regression-proven against pre-fix code.
 - The controls mitigate the *effect* of non-expiring sessions on this endpoint
   but do **not** change auth behavior (ADR 0003 / §6 remains untouched).

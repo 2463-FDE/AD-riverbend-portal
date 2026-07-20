@@ -339,9 +339,9 @@ class _AiIntakeInstructionsRequest(BaseModel):
         return self
 
 
-def _validate_ai_request(payload: dict) -> None:
-    """Reject bodies ai-assistant would 422, BEFORE they can consume the shared
-    paid-spend ceiling (Codex PR #7 round 7).
+def _validate_ai_request(payload: dict) -> dict:
+    """Validate the body and return its CANONICAL fact vector (Codex PR #7
+    rounds 7, 10).
 
     A budget pre-filter, not the authority: ai-assistant's
     ``schemas.InstructionsRequest`` is the authoritative validator, but rejecting
@@ -351,11 +351,22 @@ def _validate_ai_request(payload: dict) -> None:
     422 (``validation_error_no_echo``): a rejected value is exactly where PHI
     could be smuggled (an unknown field), so neither the value nor the parse
     error is logged or echoed — only that the request was invalid.
+
+    Returns the NORMALIZED facts (``model_dump``), not the raw body. The cache
+    key, single-flight lock, and fan-out payload must all derive from the same
+    canonical fact vector so semantically identical requests collapse to ONE paid
+    call — otherwise ``{}``, a body spelling out the schema defaults, and coerced
+    booleans (``"true"`` vs ``true``) hash to different keys for the same facts,
+    letting a caller bypass duplicate-collapse and spend repeated Bedrock calls
+    (Codex PR #7 round 10). ``extra="forbid"`` already rejected unknown fields
+    above, so the dump carries only the closed-vocabulary fields — nothing
+    smuggled can ride along into the fan-out or the key.
     """
     try:
-        _AiIntakeInstructionsRequest.model_validate(payload)
+        model = _AiIntakeInstructionsRequest.model_validate(payload)
     except ValidationError:
         raise HTTPException(status_code=422, detail="invalid intake-instructions request")
+    return model.model_dump(mode="json")
 
 
 def _await_coalesced_result(cache_key: str):
@@ -385,14 +396,17 @@ def proxy_intake_instructions(payload: dict, session: dict = Depends(_ai_rate_li
     # many distinct invalid bodies (unknown fields, contradictory insurance
     # facts) — each a cache miss that increments the aggregate budget and is only
     # rejected downstream — a cheap tenant-wide denial of the paid assistant.
-    _validate_ai_request(payload)
+    # Returns the CANONICAL facts (normalized dump), used for the cache key, the
+    # single-flight lock, and the fan-out so identical requests spelled different
+    # ways collapse to one paid call (Codex PR #7 round 10).
+    facts = _validate_ai_request(payload)
 
     # Closed-vocabulary body → identical facts yield the same checklist, so a
     # response cache collapses retries/double-clicks and repeat identical
     # intakes into one paid call. Cache read is best-effort (a fault degrades to
     # a paid call, never an error) and does NOT consume the spend ceiling — a
     # hit costs nothing, so it must not count against the aggregate budget.
-    cache_key = ai_cache_key(payload)
+    cache_key = ai_cache_key(facts)
     cached = ai_cache_get(cache_key)
     if cached is not None:
         return cached
@@ -426,7 +440,7 @@ def proxy_intake_instructions(payload: dict, session: dict = Depends(_ai_rate_li
             result = _post_checked(
                 "ai",
                 "/intake-instructions",
-                payload,
+                facts,
                 timeout=settings.ai_read_timeout_seconds,
                 # Service-to-service auth: ai-assistant refuses calls without this
                 # header, so a direct (gateway-bypassing) caller cannot reach the

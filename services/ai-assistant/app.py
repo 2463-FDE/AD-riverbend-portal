@@ -233,9 +233,23 @@ def intake_instructions(req: InstructionsRequest):
     except llm_client.LLMResponseError as e:
         log.error("intake-instructions bad model response: %s", e)
         raise HTTPException(status_code=502, detail="assistant returned an unusable response")
+    except llm_client.LLMBudgetExceeded as e:
+        # PRE-egress: llm_client enforces the token / char / cost caps LOCALLY,
+        # before any Bedrock call (_enforce_char_cap and _enforce_budget run
+        # ahead of _call's try). For this closed-vocabulary endpoint the prompt is
+        # fixed-size and small, so tripping a cap means the caps are misconfigured
+        # too low — a configuration problem, and no paid call was made. Return a
+        # 503 (a pre-egress status the gateway REFUNDS), never the generic 500:
+        # 500 keeps the charge, so a low-cap misconfig would otherwise burn the
+        # gateway's shared daily spend ceiling on every request that never reached
+        # Bedrock and 429 all users (Codex PR #7 round 10). Must precede the
+        # LLMError catch — LLMBudgetExceeded subclasses it. See gateway
+        # _NON_PAID_DOWNSTREAM_STATUS and ADR 0007.
+        log.error("intake-instructions local budget refusal: %s", e)
+        raise HTTPException(status_code=503, detail="assistant is not configured")
     except llm_client.LLMError as e:
-        # Includes LLMBudgetExceeded — unexpected here (the prompt is fixed-size
-        # and small), so it indicates misconfigured budget settings.
+        # Any other unexpected LLM error. 500 keeps the charge: this branch is not
+        # a proven pre-egress refusal, so the gateway must not refund the slot.
         log.error("intake-instructions llm error (%s): %s", type(e).__name__, e)
         raise HTTPException(status_code=500, detail="assistant request failed")
     items = _select_items(req, result.parsed.items)

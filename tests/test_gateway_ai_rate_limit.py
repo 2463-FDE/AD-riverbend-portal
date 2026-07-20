@@ -323,7 +323,9 @@ def test_concurrent_identical_miss_loser_returns_winner_result_no_second_paid_ca
     monkeypatch.setattr(gw.time, "sleep", lambda s: None)
 
     body = {"has_insurance": True}
-    key = security.ai_cache_key(body)
+    # Key off the CANONICAL facts, exactly as the handler does (round 10) — the
+    # single-flight lock is derived from the normalized dump, not the raw body.
+    key = security.ai_cache_key(gw._validate_ai_request(body))
     # A winner already holds the slot for this key.
     security._redis_client.set(security._flight_key(key), "1", nx=True, ex=90)
 
@@ -355,7 +357,8 @@ def test_concurrent_identical_miss_loser_times_out_controlled_retry(monkeypatch,
     monkeypatch.setattr(gw, "ai_cache_get", lambda k: None)  # winner never publishes in time
 
     body = {"has_insurance": True}
-    key = security.ai_cache_key(body)
+    # Key off the CANONICAL facts, exactly as the handler does (round 10).
+    key = security.ai_cache_key(gw._validate_ai_request(body))
     security._redis_client.set(security._flight_key(key), "1", nx=True, ex=90)
 
     r = client.post("/ai/intake-instructions", json=body)
@@ -465,6 +468,55 @@ def test_provider_502_retry_storm_is_bounded_by_the_ceiling(monkeypatch, downstr
     r = client.post("/ai/intake-instructions", json={"has_insurance": True})
     assert r.status_code == 429
     assert len(calls) == 2  # the storm did not reach Bedrock a third time
+
+
+def test_requests_spelled_differently_share_one_cached_paid_call(monkeypatch, fan_out_calls):
+    # Codex PR #7 round 10 (medium): the cache/single-flight key derives from the
+    # NORMALIZED fact vector (model_dump), not the raw body. All three variants
+    # below describe the SAME facts — an empty body (all schema defaults), the
+    # defaults spelled out, and a string-coerced boolean — so they must collapse
+    # to ONE paid fan-out. Keying off the raw JSON would give three distinct keys
+    # and three paid Bedrock calls for one fact vector (duplicate-collapse bypass).
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_per_minute", 1000)
+    monkeypatch.setattr(gw.settings, "ai_cache_ttl_seconds", 300)
+    variants = [
+        {},
+        {
+            "has_insurance": False,
+            "plan_type": None,
+            "policy_holder_is_self": True,
+            "communications_opt_in": False,
+            "financial_ack": False,
+        },
+        {"has_insurance": "false"},  # coerced to the same bool by the mirror schema
+    ]
+
+    statuses = [client.post("/ai/intake-instructions", json=v).status_code for v in variants]
+
+    assert statuses == [200, 200, 200]
+    assert len(fan_out_calls) == 1  # canonical key → first fans out, rest cache-hit
+
+
+def test_downstream_local_budget_503_refunds_the_global_budget(monkeypatch, downstream):
+    # Codex PR #7 round 10 (high): a local budget-cap refusal in ai-assistant is
+    # PRE-egress (llm_client enforces the caps before any Bedrock call) and now
+    # surfaces as 503 (was a keep-charge 500). At the gateway boundary that 503 is
+    # refunded like any other pre-egress failure — same mechanism as the round-8
+    # config-503 test, exercised here for the budget-misconfig path the review
+    # named — so a low-cap misconfig cannot walk the shared ceiling to its cap.
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_per_minute", 1000)
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 3)
+    state, calls = downstream
+    state["status"], state["body"] = 503, {"detail": "assistant is not configured"}
+
+    r = client.post("/ai/intake-instructions", json={"has_insurance": True})
+
+    assert r.status_code == 503
+    assert len(calls) == 1  # fan-out attempted, but made no paid call...
+    # ...so the reserved slot was refunded to zero.
+    assert _global_budget_keys() == [] or all(
+        security._redis_client.counts.get(k, 0) == 0 for k in _global_budget_keys()
+    )
 
 
 def test_anonymous_rejected_before_rate_limit(monkeypatch, fan_out_calls):
