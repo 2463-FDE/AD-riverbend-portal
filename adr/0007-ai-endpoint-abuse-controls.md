@@ -48,7 +48,11 @@ applied in this order on `POST /ai/intake-instructions`:
 1. **Per-user request rate limit** (`security.check_ai_rate_limit`, enforced in
    the `_ai_rate_limited` dependency, before any work).
    - Fixed-window Redis counters: a **minute** window and a **per-user daily**
-     window. `INCR` + `EXPIRE`-on-first-hit; keys self-clear.
+     window. `INCR` + first-hit `EXPIRE` run as **one atomic Lua step**
+     (`_incr_fixed_window`), so a counter can never be created without its TTL
+     and every window self-clears — two separate round-trips could crash between
+     them and strand a never-resetting quota key (a permanent lockout; Codex
+     PR #7 round 12).
    - **Keyed by the authenticated username** — the abuse unit here, because a
      leaked/stale token replays as one user (sessions never expire).
    - Over cap → **429 + `Retry-After`** (seconds to window rollover).
@@ -211,9 +215,10 @@ because the spend ceiling — not the cache — is the authoritative spend guard
 - **Maintainability:** simplest correct algorithm (fixed-window), all knobs in
   env/config, all Redis-backed logic colocated in `security.py`, decisions
   captured here.
-- **Scalability:** Redis `INCR` is atomic and O(1); no per-instance state, so
-  gateway replicas share one view; key cardinality is bounded by staff count and
-  TTL-reaped.
+- **Scalability:** the fixed-window `INCR`+`EXPIRE` is one atomic O(1) Lua call;
+  no per-instance state, so gateway replicas share one view; key cardinality is
+  bounded by staff count and TTL-reaped (and the TTL is bound atomically at
+  creation, so reaping can never be defeated by a partial write).
 
 ## Accepted tradeoffs / deferred gaps
 
@@ -274,6 +279,9 @@ because the spend ceiling — not the cache — is the authoritative spend guard
   global counter unchanged (no stray increment) and that — modelling a
   concurrent in-flight reservation — an over-limit reject followed by a
   refundable 503 lets a subsequent valid request succeed instead of staying
-  429'd on an inflated counter. Regression-proven against pre-fix code.
+  429'd on an inflated counter, and (round 12) that a counter's TTL is bound
+  atomically on its first write (a stubbed-unavailable separate `EXPIRE` cannot
+  strand a no-TTL key) and that every quota key — minute, per-user day, and
+  global — is created with a TTL. Regression-proven against pre-fix code.
 - The controls mitigate the *effect* of non-expiring sessions on this endpoint
   but do **not** change auth behavior (ADR 0003 / §6 remains untouched).

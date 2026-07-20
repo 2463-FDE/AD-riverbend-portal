@@ -72,15 +72,32 @@ def destroy_session(token: str) -> None:
 # --------------------------------------------------------------------------- #
 # paid-endpoint rate limiting (Codex PR #7 round 6)
 # --------------------------------------------------------------------------- #
+# INCR the counter and, on the FIRST hit of a window, bind its TTL — as ONE
+# atomic server-side step. Running INCR and EXPIRE as two round-trips (the prior
+# implementation) could crash / lose Redis connectivity between them and strand a
+# counter with NO expiry, which never resets at the window boundary. That is a
+# permanent lockout: a per-user key wedges one user, and ratelimit:ai:global:*
+# wedges the WHOLE tenant out of the paid assistant until Redis is cleared by
+# hand — a blip turned into an outage (Codex PR #7 round 12). A Lua script runs
+# atomically on the server, so the TTL is bound to the counter's first write with
+# no interleaving window; a partial (INCR-without-EXPIRE) write is impossible.
+_INCR_FIXED_WINDOW_LUA = """
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return count
+"""
+
+
 def _incr_fixed_window(key: str, window_seconds: int) -> int:
-    """Increment a fixed-window counter, setting its TTL on first hit."""
-    r = _redis()
-    count = r.incr(key)
-    if count == 1:
-        # First request in this window — give the key a TTL so the counter
-        # self-clears when the window rolls over (no unbounded key growth).
-        r.expire(key, window_seconds)
-    return count
+    """Atomically increment a fixed-window counter and bind its TTL on first hit.
+
+    The increment and the first-hit expiry are a single server-side Lua execution
+    so the counter can never be created without an expiry — see
+    ``_INCR_FIXED_WINDOW_LUA`` for why a two-call INCR-then-EXPIRE was an outage
+    risk (a stranded, never-resetting quota key)."""
+    return int(_redis().eval(_INCR_FIXED_WINDOW_LUA, 1, key, window_seconds))
 
 
 def check_ai_rate_limit(username: str, per_minute: int, per_day: int) -> int:

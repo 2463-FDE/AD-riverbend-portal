@@ -45,12 +45,14 @@ client = TestClient(gw.app, raise_server_exceptions=False)
 
 
 class _FakeRedis:
-    """Minimal INCR/EXPIRE + GET/SET/DEL — enough for the limiter, the cache,
-    and the single-flight lock (SET NX)."""
+    """Minimal INCR/EXPIRE + GET/SET/DEL + EVAL — enough for the limiter, the
+    cache, and the single-flight lock (SET NX). ``ttls`` records which keys carry
+    an expiry so tests can assert no quota counter is ever left without one."""
 
     def __init__(self):
         self.counts = {}
         self.store = {}
+        self.ttls = {}
 
     def incr(self, key):
         self.counts[key] = self.counts.get(key, 0) + 1
@@ -61,7 +63,22 @@ class _FakeRedis:
         return self.counts[key]
 
     def expire(self, key, seconds):
+        self.ttls[key] = seconds
         return True
+
+    def eval(self, script, numkeys, *keys_and_args):
+        # Emulate _INCR_FIXED_WINDOW_LUA — the only script used: INCR the key and,
+        # on the first hit, bind its TTL, all in ONE call (no interleaving),
+        # exactly as the real server-side Lua executes it atomically. The fake
+        # emulates the script's SEMANTICS, not its text (a test-double limitation;
+        # real Lua runs in the integration path).
+        key = keys_and_args[0]
+        window = keys_and_args[1]
+        count = self.counts.get(key, 0) + 1
+        self.counts[key] = count
+        if count == 1:
+            self.ttls[key] = int(window)
+        return count
 
     def get(self, key):
         return self.store.get(key)
@@ -72,13 +89,16 @@ class _FakeRedis:
         if nx and key in self.store:
             return None
         self.store[key] = value
+        if ex is not None:
+            self.ttls[key] = ex
         return True
 
     def delete(self, key):
         # One keyspace in real Redis; the fake splits counters (INCR/DECR) from
-        # values (GET/SET), so delete clears the key from both.
+        # values (GET/SET), so delete clears the key from both (and its TTL).
         self.counts.pop(key, None)
         self.store.pop(key, None)
+        self.ttls.pop(key, None)
         return 1
 
 
@@ -568,6 +588,48 @@ def test_over_limit_reject_then_refund_lets_a_valid_request_succeed(monkeypatch,
     r2 = client.post("/ai/intake-instructions", json={"has_insurance": False})
     assert r2.status_code == 200
     assert len(fan_out_calls) == 1
+
+
+def test_first_hit_binds_ttl_atomically_even_if_separate_expire_is_unavailable(monkeypatch):
+    # Codex PR #7 round 12 (high): the first write to a fixed-window counter must
+    # bind its TTL atomically. If INCR and EXPIRE were separate calls, a crash or
+    # Redis hiccup between them would strand the key with NO expiry — a counter
+    # that never resets, locking a user (or, via ratelimit:ai:global:*, the whole
+    # tenant) out of the assistant until Redis is cleared by hand. Simulate the
+    # SEPARATE expire being unavailable: a correct implementation performs the
+    # increment and TTL as one atomic step and never relies on it, so the counter
+    # must still come out with a bound TTL.
+    fake = security._redis_client
+
+    def _boom(*a, **k):
+        raise RuntimeError("EXPIRE failed / connection dropped after INCR")
+
+    monkeypatch.setattr(fake, "expire", _boom)
+
+    count = security._incr_fixed_window("ratelimit:ai:min:frontdesk:16667", 60)
+
+    assert count == 1
+    assert fake.counts.get("ratelimit:ai:min:frontdesk:16667") == 1
+    # TTL bound at creation, not left dangling by a failed second call.
+    assert fake.ttls.get("ratelimit:ai:min:frontdesk:16667") == 60
+
+
+def test_all_quota_keys_are_created_with_a_ttl(monkeypatch, fan_out_calls):
+    # Every fixed-window counter the paid path touches — the per-user minute and
+    # day windows and the global spend key — must be created WITH an expiry so its
+    # window always self-clears (Codex PR #7 round 12). A quota key without a TTL
+    # is a permanent lockout.
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_per_minute", 1000)
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 1000)
+    fake = security._redis_client
+
+    assert client.post("/ai/intake-instructions", json={"has_insurance": True}).status_code == 200
+
+    quota_keys = [k for k in fake.counts if k.startswith("ratelimit:ai:")]
+    assert any(":min:" in k for k in quota_keys)
+    assert any(":day:" in k for k in quota_keys)
+    assert any(":global:" in k for k in quota_keys)
+    assert all(fake.ttls.get(k) for k in quota_keys), "a quota key was created without a TTL"
 
 
 def test_anonymous_rejected_before_rate_limit(monkeypatch, fan_out_calls):
