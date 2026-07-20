@@ -10,6 +10,8 @@ dist/
 # docs/debt-log.md (remediation runbook).
 .env
 .env.local
+# Scoped gateway->ai-assistant secret (template: .env.ai-proxy.example)
+.env.ai-proxy
 
 # Application logs may contain PHI (see docs/phi-logging-policy.md) — never track them.
 *.log

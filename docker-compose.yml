@@ -29,7 +29,15 @@ services:
 
   gateway:
     build: ./services/gateway
-    env_file: .env
+    # .env.ai-proxy holds AI_PROXY_SHARED_SECRET, scoped to exactly the two
+    # ends of the gateway->ai-assistant auth boundary. It must never move into
+    # the shared .env: env_file hands that file to every service, and any
+    # secret holder can bypass the gateway session check on the paid LLM path.
+    # `make up` creates the file from its template (empty = fail-closed 503).
+    # Guarded by tests/test_compose_topology.py.
+    env_file:
+      - .env
+      - .env.ai-proxy
     environment:
       INTAKE_URL: http://intake-service:8071
       ELIGIBILITY_URL: http://eligibility-service:8072
@@ -37,6 +45,7 @@ services:
       SCHEDULING_URL: http://scheduling-service:8074
       INTEROP_URL: http://interop-service:8075
       ROI_URL: http://roi-service:8076
+      AI_ASSISTANT_URL: http://ai-assistant:8077
     ports:
       - "8070:8070"
     depends_on:
@@ -51,6 +60,8 @@ services:
       scheduling-service:
         condition: service_started
       roi-service:
+        condition: service_started
+      ai-assistant:
         condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8070/healthz')\""]
@@ -140,9 +151,18 @@ services:
 
   ai-assistant:
     build: ./services/ai-assistant
-    env_file: .env
-    ports:
-      - "8077:8077"
+    # .env.ai-proxy: see the gateway service — the secret reaches only the two
+    # ends of the auth boundary, never the shared .env.
+    env_file:
+      - .env
+      - .env.ai-proxy
+    # Deliberately NOT published to the host (expose = compose-network only):
+    # the endpoint has no auth of its own — the gateway session check is the
+    # auth boundary, and every request spends paid Bedrock capacity. Other
+    # services publish host ports as pre-existing dev topology; do not copy
+    # that pattern here. Guarded by tests/test_compose_topology.py.
+    expose:
+      - "8077"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8077/healthz')\""]
       interval: 10s

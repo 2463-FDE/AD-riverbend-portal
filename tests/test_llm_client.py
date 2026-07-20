@@ -324,6 +324,12 @@ def test_complete_structured_happy_path(monkeypatch):
     # structured request carried the json_schema output format
     extra = fake.create_calls[0]["extra_body"]
     assert extra["output_config"]["format"]["type"] == "json_schema"
+    # ...and the TRANSMITTED schema equals the strict schema of the output
+    # model. Guard for the silent-degradation regression: a request that keeps
+    # type=json_schema but sends {} (or the wrong model's schema) would still
+    # pass the type assertion above while no longer constraining the output —
+    # exactly the failure the W7 grounding work must be able to rule out.
+    assert extra["output_config"]["format"]["schema"] == llm_mod._strict_schema(SampleOutput)
 
 
 def test_structured_schema_pins_additional_properties_false(monkeypatch):
