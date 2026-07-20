@@ -120,6 +120,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       </a>
 
       <aside className="rb-sidebar">
+        <div className="rb-sidebar__inner">
         <div className="rb-sidebar__brand">
           <Logo className="rb-sidebar__mark" />
           <div>
@@ -157,6 +158,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </span>
           ))}
         </nav>
+        </div>
       </aside>
 
       <header className="rb-topbar">

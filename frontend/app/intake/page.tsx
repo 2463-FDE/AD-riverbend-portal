@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import Card from "../components/Card";
 import { apiFetch } from "../lib/session";
+import { formatSsn, formatPhone, digitsOnly } from "../lib/format";
 
 interface Demographics {
   first_name: string;
@@ -81,8 +82,16 @@ export default function IntakePage() {
     setBusy(true);
     setResult(null);
     // Combined payload: demographics + insurance + consents.
+    // SSN is display-formatted (F2) but sent as bare digits — a 9-digit SSN
+    // loses no meaning. Phone is sent as-is: dashes are only readability and
+    // any country code / extension the patient typed must survive to storage
+    // (formatPhone leaves those verbatim), so we do NOT collapse it to digits.
     const payload = {
-      demographics: demo,
+      demographics: {
+        ...demo,
+        ssn: digitsOnly(demo.ssn),
+        phone: demo.phone.trim(),
+      },
       insurance: ins,
       consents,
     };
@@ -250,8 +259,10 @@ export default function IntakePage() {
             </legend>
             <div className="rb-field-row">
               <Field id="first_name" label="First name" required value={demo.first_name}
+                autoComplete="given-name"
                 onChange={(v) => setDemo({ ...demo, first_name: v })} />
               <Field id="last_name" label="Last name" required value={demo.last_name}
+                autoComplete="family-name"
                 onChange={(v) => setDemo({ ...demo, last_name: v })} />
             </div>
             <div className="rb-field-row">
@@ -262,14 +273,23 @@ export default function IntakePage() {
                 options={["", "Female", "Male", "Non-binary", "Prefer not to say"]} />
             </div>
             <div className="rb-field-row">
+              {/* No maxLength: it caps RAW characters before formatSsn runs, so a
+                  pasted "123-45-6789" (or "SSN: 123-45-6789") would be truncated
+                  and submit a partial SSN. formatSsn already caps at 9 digits
+                  post-sanitize, which bounds the formatted value at 11 chars. */}
               <Field id="ssn" label="SSN" hint="Used for insurance verification only."
-                value={demo.ssn} onChange={(v) => setDemo({ ...demo, ssn: v })} />
+                value={demo.ssn} format={formatSsn} inputMode="numeric"
+                autoComplete="off" revealable
+                onChange={(v) => setDemo({ ...demo, ssn: v })} />
               <Field id="phone" label="Phone" type="tel" value={demo.phone}
+                format={formatPhone} inputMode="tel" autoComplete="tel"
                 onChange={(v) => setDemo({ ...demo, phone: v })} />
             </div>
             <Field id="email" label="Email" type="email" value={demo.email}
+              inputMode="email" autoComplete="email"
               onChange={(v) => setDemo({ ...demo, email: v })} />
             <Field id="address" label="Home address" value={demo.address}
+              autoComplete="street-address"
               onChange={(v) => setDemo({ ...demo, address: v })} />
           </fieldset>
         )}
@@ -330,7 +350,7 @@ export default function IntakePage() {
               ["Name", `${demo.first_name} ${demo.last_name}`.trim() || "—"],
               ["Date of birth", demo.dob || "—"],
               ["Gender", demo.gender || "—"],
-              ["SSN", demo.ssn ? `•••-••-${demo.ssn.slice(-4)}` : "—"],
+              ["SSN", demo.ssn ? `•••-••-${digitsOnly(demo.ssn).slice(-4)}` : "—"],
               ["Phone", demo.phone || "—"],
               ["Email", demo.email || "—"],
               ["Address", demo.address || "—"],
@@ -394,6 +414,10 @@ function Field({
   type = "text",
   required = false,
   hint,
+  format,
+  inputMode,
+  autoComplete,
+  revealable = false,
 }: {
   id: string;
   label: string;
@@ -402,22 +426,50 @@ function Field({
   type?: string;
   required?: boolean;
   hint?: string;
+  format?: (raw: string) => string;
+  inputMode?: "text" | "numeric" | "tel" | "email";
+  autoComplete?: string;
+  // Render obscured (password-style) with a show/hide toggle — for sensitive
+  // fields like SSN, so the value is not shoulder-surfable while typing.
+  revealable?: boolean;
 }) {
+  const [revealed, setRevealed] = useState(false);
+  const inputType = revealable ? (revealed ? "text" : "password") : type;
+  const input = (
+    <input
+      id={id}
+      className="rb-input"
+      type={inputType}
+      value={value}
+      required={required}
+      aria-required={required}
+      inputMode={inputMode}
+      autoComplete={autoComplete}
+      onChange={(e) => onChange(format ? format(e.target.value) : e.target.value)}
+    />
+  );
   return (
     <div className="rb-field">
       <label className="rb-field__label" htmlFor={id}>
         {label}
         {required && <span className="rb-field__req" aria-hidden="true">*</span>}
       </label>
-      <input
-        id={id}
-        className="rb-input"
-        type={type}
-        value={value}
-        required={required}
-        aria-required={required}
-        onChange={(e) => onChange(e.target.value)}
-      />
+      {revealable ? (
+        <div className="rb-input-reveal">
+          {input}
+          <button
+            type="button"
+            className="rb-input-reveal__btn"
+            onClick={() => setRevealed((r) => !r)}
+            aria-pressed={revealed}
+            aria-label={revealed ? `Hide ${label}` : `Show ${label}`}
+          >
+            {revealed ? "Hide" : "Show"}
+          </button>
+        </div>
+      ) : (
+        input
+      )}
       {hint && <span className="rb-field__hint">{hint}</span>}
     </div>
   );

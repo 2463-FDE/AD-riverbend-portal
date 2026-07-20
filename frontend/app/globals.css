@@ -154,9 +154,21 @@ textarea:focus-visible,
   color: var(--rb-nav-text);
   display: flex;
   flex-direction: column;
+  /* Let the grid row size the panel so its navy background fills tall pages
+     (F1). A fixed height:100vh stopped one viewport down and revealed the page
+     background below the panel. The inner wrapper keeps the nav sticky. */
+  align-self: stretch;
+}
+
+/* Sticky inner column so the nav follows the viewport on long pages while the
+   outer panel background still fills the full grid height (F1). */
+.rb-sidebar__inner {
+  display: flex;
+  flex-direction: column;
   position: sticky;
   top: 0;
-  height: 100vh;
+  max-height: 100vh;
+  overflow-y: auto;
 }
 
 .rb-sidebar__brand {
@@ -645,6 +657,32 @@ textarea:focus-visible,
 .rb-textarea {
   min-height: 84px;
   resize: vertical;
+}
+/* Sensitive input with a show/hide toggle (e.g. SSN). Input flexes to fill,
+   the toggle button sits beside it. */
+.rb-input-reveal {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.rb-input-reveal .rb-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.rb-input-reveal__btn {
+  flex: none;
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 0 12px;
+  border: 1px solid var(--rb-border-strong);
+  border-radius: var(--rb-radius-sm);
+  background: var(--rb-surface);
+  color: var(--rb-text-muted);
+  cursor: pointer;
+}
+.rb-input-reveal__btn:hover {
+  color: var(--rb-text);
+  border-color: var(--rb-primary);
 }
 .rb-field-row {
   display: grid;
