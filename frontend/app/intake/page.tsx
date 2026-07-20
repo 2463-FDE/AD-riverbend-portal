@@ -273,9 +273,13 @@ export default function IntakePage() {
                 options={["", "Female", "Male", "Non-binary", "Prefer not to say"]} />
             </div>
             <div className="rb-field-row">
+              {/* No maxLength: it caps RAW characters before formatSsn runs, so a
+                  pasted "123-45-6789" (or "SSN: 123-45-6789") would be truncated
+                  and submit a partial SSN. formatSsn already caps at 9 digits
+                  post-sanitize, which bounds the formatted value at 11 chars. */}
               <Field id="ssn" label="SSN" hint="Used for insurance verification only."
                 value={demo.ssn} format={formatSsn} inputMode="numeric"
-                autoComplete="off" maxLength={11} revealable
+                autoComplete="off" revealable
                 onChange={(v) => setDemo({ ...demo, ssn: v })} />
               <Field id="phone" label="Phone" type="tel" value={demo.phone}
                 format={formatPhone} inputMode="tel" autoComplete="tel"
@@ -413,7 +417,6 @@ function Field({
   format,
   inputMode,
   autoComplete,
-  maxLength,
   revealable = false,
 }: {
   id: string;
@@ -426,7 +429,6 @@ function Field({
   format?: (raw: string) => string;
   inputMode?: "text" | "numeric" | "tel" | "email";
   autoComplete?: string;
-  maxLength?: number;
   // Render obscured (password-style) with a show/hide toggle — for sensitive
   // fields like SSN, so the value is not shoulder-surfable while typing.
   revealable?: boolean;
@@ -443,7 +445,6 @@ function Field({
       aria-required={required}
       inputMode={inputMode}
       autoComplete={autoComplete}
-      maxLength={maxLength}
       onChange={(e) => onChange(format ? format(e.target.value) : e.target.value)}
     />
   );
