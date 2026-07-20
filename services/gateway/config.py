@@ -76,8 +76,18 @@ class Settings:
     # above the AI read timeout.
     ai_singleflight_wait_seconds = float(os.getenv("AI_SINGLEFLIGHT_WAIT_SECONDS", "2.0"))
     ai_singleflight_poll_seconds = float(os.getenv("AI_SINGLEFLIGHT_POLL_SECONDS", "0.1"))
-    ai_singleflight_lock_ttl_seconds = int(
-        os.getenv("AI_SINGLEFLIGHT_LOCK_TTL_SECONDS", str(int(ai_read_timeout_seconds) + 15))
+    # The lock TTL MUST exceed the read timeout, or a still-running winner's lock
+    # can expire mid-fan-out, a second winner acquires the same key, and the two
+    # overlap — the stale-owner race (Codex PR #7 round 13). Ownership-checked
+    # release stops A from deleting B's lock, but keeping the TTL above the
+    # fan-out bound stops the overlap from arising at all. So the configured value
+    # is CLAMPED to a safe floor (read timeout + 15s headroom): an operator
+    # override can only RAISE it, never set it below the fan-out bound — a
+    # misconfiguration cannot reopen the race, and startup never has to fail.
+    _ai_singleflight_lock_ttl_floor = int(ai_read_timeout_seconds) + 15
+    ai_singleflight_lock_ttl_seconds = max(
+        int(os.getenv("AI_SINGLEFLIGHT_LOCK_TTL_SECONDS", str(_ai_singleflight_lock_ttl_floor))),
+        _ai_singleflight_lock_ttl_floor,
     )
 
     @property

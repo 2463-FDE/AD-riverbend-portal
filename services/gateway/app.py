@@ -416,7 +416,8 @@ def proxy_intake_instructions(payload: dict, session: dict = Depends(_ai_rate_li
     # elect one winner to make the paid fan-out; other in-flight duplicates wait
     # briefly for the winner's cached result rather than each making their own
     # paid call (Codex PR #7 round 7 — closes ADR 0007 deferred gap #4).
-    if not ai_singleflight_acquire(cache_key, settings.ai_singleflight_lock_ttl_seconds):
+    flight_token = ai_singleflight_acquire(cache_key, settings.ai_singleflight_lock_ttl_seconds)
+    if not flight_token:
         coalesced = _await_coalesced_result(cache_key)
         if coalesced is not None:
             return coalesced
@@ -465,7 +466,10 @@ def proxy_intake_instructions(payload: dict, session: dict = Depends(_ai_rate_li
     finally:
         # Release the single-flight slot so a later identical miss (e.g. after
         # the cache TTL expires) is never wedged, even if the fan-out raised.
-        ai_singleflight_release(cache_key)
+        # Owner-checked (our token): if this winner outran the lock TTL and a new
+        # winner already holds the key, this release is a no-op (Codex PR #7
+        # round 13).
+        ai_singleflight_release(cache_key, flight_token)
 
 
 # --------------------------------------------------------------------------- #

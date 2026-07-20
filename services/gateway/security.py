@@ -261,36 +261,61 @@ def _flight_key(cache_key: str) -> str:
     return "aiflight:" + cache_key
 
 
-def ai_singleflight_acquire(cache_key: str, lock_ttl_seconds: int) -> bool:
+# Compare-and-delete: remove the lock ONLY if its stored value is still our own
+# owner token. A blind DELETE lets a winner that outran the lock TTL delete a
+# SECOND winner's still-valid lock (the first winner's slot expired, a second
+# acquired the same key), after which a third identical request would acquire and
+# make another paid fan-out — defeating the guard during the exact latency stress
+# it exists for (Codex PR #7 round 13). Running the check and the delete in one
+# server-side script keeps them atomic (no check-then-delete race).
+_SINGLEFLIGHT_RELEASE_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+
+
+def ai_singleflight_acquire(cache_key: str, lock_ttl_seconds: int) -> str | None:
     """Elect a single winner to make the paid fan-out for a cache-miss key.
 
-    Atomic ``SET NX EX``: returns True to exactly one concurrent caller (the
-    winner, which must fan out and then release the slot), and False to any
-    other caller that finds the slot already held — a duplicate concurrent miss
-    (double-click, browser retry, or many staff submitting the same
-    closed-vocabulary facts at once). The TTL bounds how long a crashed winner
-    can hold the slot, so the key can never wedge permanently.
+    Atomic ``SET NX EX`` of a UNIQUE owner token: returns that token to exactly
+    one concurrent caller (the winner, which must fan out and then release the
+    slot with the SAME token), and ``None`` to any other caller that finds the
+    slot already held — a duplicate concurrent miss (double-click, browser retry,
+    or many staff submitting the same closed-vocabulary facts at once). The token
+    is what makes release owner-checked: a winner can only ever delete the lock
+    it still owns (see ``_SINGLEFLIGHT_RELEASE_LUA``). The TTL bounds how long a
+    crashed winner can hold the slot, so the key can never wedge permanently.
 
-    Best-effort like the cache: a Redis fault returns True (fail OPEN to a paid
-    call). The authoritative spend guard is the aggregate budget ceiling
-    (``consume_ai_global_budget``, which itself fails CLOSED), so failing the
-    lock closed here would only turn a Redis blip into an outage for no
+    Best-effort like the cache: a Redis fault returns a token anyway (fail OPEN
+    to a paid call — the later owner-checked release simply finds no matching
+    key and no-ops). The authoritative spend guard is the aggregate budget
+    ceiling (``consume_ai_global_budget``, which itself fails CLOSED), so failing
+    the lock closed here would only turn a Redis blip into an outage for no
     spend-safety gain — the coalescing is a spend/latency optimization, not the
     ceiling.
     """
+    token = uuid.uuid4().hex
     try:
-        got = _redis().set(_flight_key(cache_key), "1", nx=True, ex=max(1, lock_ttl_seconds))
-        return bool(got)
+        got = _redis().set(_flight_key(cache_key), token, nx=True, ex=max(1, lock_ttl_seconds))
+        return token if got else None
     except Exception:
-        return True
+        return token
 
 
-def ai_singleflight_release(cache_key: str) -> None:
+def ai_singleflight_release(cache_key: str, token: str | None) -> None:
     """Release a single-flight slot after the winner's fan-out (best-effort).
 
-    A failure is harmless — the lock's TTL clears it either way — so a Redis
-    fault here must not fail the request whose response we already have."""
+    Owner-checked compare-and-delete (``_SINGLEFLIGHT_RELEASE_LUA``): deletes the
+    lock only if it still holds ``token``, so a winner that outran the lock TTL
+    cannot delete a newer winner's valid lock. ``token`` of ``None`` (a loser
+    that never acquired) is a no-op. A failure is harmless — the lock's TTL
+    clears it either way — so a Redis fault here must not fail the request whose
+    response we already have."""
+    if not token:
+        return
     try:
-        _redis().delete(_flight_key(cache_key))
+        _redis().eval(_SINGLEFLIGHT_RELEASE_LUA, 1, _flight_key(cache_key), token)
     except Exception:
         pass

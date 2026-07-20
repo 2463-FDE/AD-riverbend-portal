@@ -67,12 +67,19 @@ class _FakeRedis:
         return True
 
     def eval(self, script, numkeys, *keys_and_args):
-        # Emulate _INCR_FIXED_WINDOW_LUA — the only script used: INCR the key and,
-        # on the first hit, bind its TTL, all in ONE call (no interleaving),
-        # exactly as the real server-side Lua executes it atomically. The fake
-        # emulates the script's SEMANTICS, not its text (a test-double limitation;
-        # real Lua runs in the integration path).
+        # Emulate the two Lua scripts by their SEMANTICS, not their text (a
+        # test-double limitation; real Lua runs in the integration path).
         key = keys_and_args[0]
+        if script == security._SINGLEFLIGHT_RELEASE_LUA:
+            # Compare-and-delete: only the owner (matching token) may delete.
+            token = keys_and_args[1]
+            if self.store.get(key) == token:
+                self.store.pop(key, None)
+                self.ttls.pop(key, None)
+                return 1
+            return 0
+        # _INCR_FIXED_WINDOW_LUA: INCR the key and, on the first hit, bind its TTL,
+        # all in ONE call (no interleaving), exactly as the real script does.
         window = keys_and_args[1]
         count = self.counts.get(key, 0) + 1
         self.counts[key] = count
@@ -630,6 +637,45 @@ def test_all_quota_keys_are_created_with_a_ttl(monkeypatch, fan_out_calls):
     assert any(":day:" in k for k in quota_keys)
     assert any(":global:" in k for k in quota_keys)
     assert all(fake.ttls.get(k) for k in quota_keys), "a quota key was created without a TTL"
+
+
+def test_release_is_owner_checked_and_cannot_delete_a_newer_lock(monkeypatch):
+    # Codex PR #7 round 13 (medium): if winner A outruns the lock TTL, Redis
+    # expires its lock and winner B acquires the SAME key. A's release must NOT
+    # delete B's still-valid lock — otherwise a third identical request would
+    # acquire and make another paid fan-out, defeating the guard under the exact
+    # latency stress it exists for. Release is owner-checked (compare-and-delete).
+    token_a = security.ai_singleflight_acquire("aicache:x", 90)
+    assert token_a  # A won the slot
+    flight = security._flight_key("aicache:x")
+
+    # A's lock expires (A outran the TTL); the key is gone.
+    security._redis_client.delete(flight)
+
+    # B acquires the now-free slot and gets a DISTINCT token.
+    token_b = security.ai_singleflight_acquire("aicache:x", 90)
+    assert token_b and token_b != token_a
+
+    # A finally returns and releases with ITS token — must be a no-op.
+    security.ai_singleflight_release("aicache:x", token_a)
+    assert security._redis_client.get(flight) == token_b  # B's lock survives
+
+    # B's own release (matching token) frees the slot.
+    security.ai_singleflight_release("aicache:x", token_b)
+    assert security._redis_client.get(flight) is None
+
+
+def test_lock_ttl_is_clamped_above_the_read_timeout(monkeypatch):
+    # Codex PR #7 round 13: the single-flight lock TTL must outlive the slowest
+    # fan-out. An operator override below the read timeout would reopen the
+    # stale-owner window, so the configured value is clamped to a safe floor
+    # (read timeout + 15s) — an override can only raise it, never lower it.
+    monkeypatch.setenv("AI_SINGLEFLIGHT_LOCK_TTL_SECONDS", "1")  # unsafe: below read timeout
+    monkeypatch.setenv("AI_READ_TIMEOUT_SECONDS", "60")
+    cfg = load_module("services/gateway/config.py", "gw_rl_config_clamp_probe")
+
+    assert cfg.settings.ai_singleflight_lock_ttl_seconds == 75  # 60 + 15 floor, override ignored
+    assert cfg.settings.ai_singleflight_lock_ttl_seconds > cfg.settings.ai_read_timeout_seconds
 
 
 def test_anonymous_rejected_before_rate_limit(monkeypatch, fan_out_calls):

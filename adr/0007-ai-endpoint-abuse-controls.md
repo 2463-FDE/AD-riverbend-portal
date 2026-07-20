@@ -171,9 +171,20 @@ applied in this order on `POST /ai/intake-instructions`:
      initial miss reserved budget and made its own paid call before the first
      response cached.
    - The winner **releases** the slot in a `finally` (even if the fan-out
-     raised), and the lock **TTL** (`AI_SINGLEFLIGHT_LOCK_TTL_SECONDS`, default
-     just above the AI read timeout) bounds a crashed winner, so the key can
-     never wedge.
+     raised), and the lock **TTL** (`AI_SINGLEFLIGHT_LOCK_TTL_SECONDS`) bounds a
+     crashed winner, so the key can never wedge.
+   - **Release is owner-checked (Codex PR #7 round 13).** `acquire` stores a
+     unique owner token (not a constant), and `release` is a **compare-and-delete
+     Lua script** that removes the lock only if it still holds that token. A
+     blind `DEL` let a winner that outran the lock TTL delete a *second* winner's
+     valid lock (A's slot expired, B acquired the same key), after which a third
+     identical request would acquire and make another paid fan-out — defeating
+     the guard during the exact latency stress it exists for. Belt **and**
+     suspenders: `AI_SINGLEFLIGHT_LOCK_TTL_SECONDS` is also **clamped to a floor
+     of the read timeout + 15s** (`config.py`), so an operator override can only
+     *raise* it — a too-low value can never expire the lock mid-fan-out and let
+     the overlap arise in the first place. (No startup assertion: clamping is
+     non-fatal and cannot be misconfigured open.)
    - **Best-effort / fail-OPEN:** a Redis fault on the lock returns "winner"
      (degrades to an uncoalesced paid call, today's behavior), because the
      authoritative spend guard is the fail-CLOSED budget ceiling (control 2), not
@@ -282,6 +293,9 @@ because the spend ceiling — not the cache — is the authoritative spend guard
   429'd on an inflated counter, and (round 12) that a counter's TTL is bound
   atomically on its first write (a stubbed-unavailable separate `EXPIRE` cannot
   strand a no-TTL key) and that every quota key — minute, per-user day, and
-  global — is created with a TTL. Regression-proven against pre-fix code.
+  global — is created with a TTL, and (round 13) that a stale winner's release
+  cannot delete a newer winner's lock (owner-checked compare-and-delete) and that
+  the lock TTL is clamped above the read timeout even under an unsafe override.
+  Regression-proven against pre-fix code.
 - The controls mitigate the *effect* of non-expiring sessions on this endpoint
   but do **not** change auth behavior (ADR 0003 / §6 remains untouched).
