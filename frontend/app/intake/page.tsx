@@ -82,13 +82,15 @@ export default function IntakePage() {
     setBusy(true);
     setResult(null);
     // Combined payload: demographics + insurance + consents.
-    // SSN/phone are stored formatted for display (F2) but sent normalized to
-    // bare digits — the wire contract is unchanged, formatting is entry-only.
+    // SSN is display-formatted (F2) but sent as bare digits — a 9-digit SSN
+    // loses no meaning. Phone is sent as-is: dashes are only readability and
+    // any country code / extension the patient typed must survive to storage
+    // (formatPhone leaves those verbatim), so we do NOT collapse it to digits.
     const payload = {
       demographics: {
         ...demo,
         ssn: digitsOnly(demo.ssn),
-        phone: digitsOnly(demo.phone),
+        phone: demo.phone.trim(),
       },
       insurance: ins,
       consents,
@@ -273,7 +275,7 @@ export default function IntakePage() {
             <div className="rb-field-row">
               <Field id="ssn" label="SSN" hint="Used for insurance verification only."
                 value={demo.ssn} format={formatSsn} inputMode="numeric"
-                autoComplete="off" maxLength={11}
+                autoComplete="off" maxLength={11} revealable
                 onChange={(v) => setDemo({ ...demo, ssn: v })} />
               <Field id="phone" label="Phone" type="tel" value={demo.phone}
                 format={formatPhone} inputMode="tel" autoComplete="tel"
@@ -412,6 +414,7 @@ function Field({
   inputMode,
   autoComplete,
   maxLength,
+  revealable = false,
 }: {
   id: string;
   label: string;
@@ -424,25 +427,48 @@ function Field({
   inputMode?: "text" | "numeric" | "tel" | "email";
   autoComplete?: string;
   maxLength?: number;
+  // Render obscured (password-style) with a show/hide toggle — for sensitive
+  // fields like SSN, so the value is not shoulder-surfable while typing.
+  revealable?: boolean;
 }) {
+  const [revealed, setRevealed] = useState(false);
+  const inputType = revealable ? (revealed ? "text" : "password") : type;
+  const input = (
+    <input
+      id={id}
+      className="rb-input"
+      type={inputType}
+      value={value}
+      required={required}
+      aria-required={required}
+      inputMode={inputMode}
+      autoComplete={autoComplete}
+      maxLength={maxLength}
+      onChange={(e) => onChange(format ? format(e.target.value) : e.target.value)}
+    />
+  );
   return (
     <div className="rb-field">
       <label className="rb-field__label" htmlFor={id}>
         {label}
         {required && <span className="rb-field__req" aria-hidden="true">*</span>}
       </label>
-      <input
-        id={id}
-        className="rb-input"
-        type={type}
-        value={value}
-        required={required}
-        aria-required={required}
-        inputMode={inputMode}
-        autoComplete={autoComplete}
-        maxLength={maxLength}
-        onChange={(e) => onChange(format ? format(e.target.value) : e.target.value)}
-      />
+      {revealable ? (
+        <div className="rb-input-reveal">
+          {input}
+          <button
+            type="button"
+            className="rb-input-reveal__btn"
+            onClick={() => setRevealed((r) => !r)}
+            aria-pressed={revealed}
+            aria-label={revealed ? `Hide ${label}` : `Show ${label}`}
+          >
+            {revealed ? "Hide" : "Show"}
+          </button>
+        </div>
+      ) : (
+        input
+      )}
       {hint && <span className="rb-field__hint">{hint}</span>}
     </div>
   );

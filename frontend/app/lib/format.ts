@@ -56,16 +56,20 @@ export function formatSsn(raw: string): string {
   return `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}`;
 }
 
-// Phone: readability only — dash the first 10 digits as ###-###-####, keep any
-// extra digits (e.g. an extension) appended undashed. Permissive by design.
+// Phone: readability only, and NON-DESTRUCTIVE. Only auto-dash a plain domestic
+// number — up to 10 digits using just spaces/parens/dashes/dots. Anything that
+// carries extra semantics (a leading "+", a country code, an "x"/letters for an
+// extension, or more than 10 digits) is left exactly as the patient typed it,
+// so nothing is silently discarded before it reaches storage. The submit path
+// sends the phone string as-is (no digit collapse) — see intake submit().
 export function formatPhone(raw: string): string {
   const digits = raw.replace(/\D/g, "");
-  const head = digits.slice(0, 10);
-  const tail = digits.slice(10);
-  let out = head;
-  if (head.length > 6) out = `${head.slice(0, 3)}-${head.slice(3, 6)}-${head.slice(6)}`;
-  else if (head.length > 3) out = `${head.slice(0, 3)}-${head.slice(3)}`;
-  return tail ? `${out}${tail}` : out;
+  // Preserve verbatim if it uses any char beyond a plain domestic format, or
+  // exceeds 10 digits (country code / extension digits we must not merge).
+  if (/[^\d\s().-]/.test(raw) || digits.length > 10) return raw;
+  if (digits.length > 6) return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+  if (digits.length > 3) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  return digits;
 }
 
 // Strip a formatted value back to bare digits for the wire payload.

@@ -658,6 +658,32 @@ textarea:focus-visible,
   min-height: 84px;
   resize: vertical;
 }
+/* Sensitive input with a show/hide toggle (e.g. SSN). Input flexes to fill,
+   the toggle button sits beside it. */
+.rb-input-reveal {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.rb-input-reveal .rb-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.rb-input-reveal__btn {
+  flex: none;
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 0 12px;
+  border: 1px solid var(--rb-border-strong);
+  border-radius: var(--rb-radius-sm);
+  background: var(--rb-surface);
+  color: var(--rb-text-muted);
+  cursor: pointer;
+}
+.rb-input-reveal__btn:hover {
+  color: var(--rb-text);
+  border-color: var(--rb-primary);
+}
 .rb-field-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
