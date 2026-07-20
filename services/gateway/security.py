@@ -131,12 +131,27 @@ def consume_ai_global_budget(per_day: int) -> int:
     paid path, so a caller whose fan-out turns out to make NO paid Bedrock call
     (a downstream config/auth/validation rejection) must give the slot back with
     release_ai_global_budget.
+
+    An OVER-LIMIT attempt is undone immediately. The counter is incremented
+    before the cap comparison (a fixed-window INCR is the atomic read), but a
+    request that lands over the ceiling is rejected here BEFORE any fan-out — it
+    makes no paid call — so its increment is rolled back on the spot. Without the
+    rollback, rejected over-limit retries would permanently inflate the counter
+    above real paid usage; the reserve-then-refund path only claws back paid-path
+    401/422/503s, so it could never bring the inflated count down, and valid
+    callers would stay 429'd until the day window rolls over (Codex PR #7
+    round 11). The undo mirrors release_ai_global_budget's decr + delete-if-<=0
+    so an expired-window edge cannot strand a lingering negative.
     """
     if per_day <= 0:
         return 0
     now = int(time.time())
-    count = _incr_fixed_window(_global_budget_key(now), 86400)
+    key = _global_budget_key(now)
+    count = _incr_fixed_window(key, 86400)
     if count > per_day:
+        r = _redis()
+        if r.decr(key) <= 0:
+            r.delete(key)
         return 86400 - (now % 86400)
     return 0
 

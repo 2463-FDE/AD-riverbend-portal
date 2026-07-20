@@ -64,6 +64,19 @@ applied in this order on `POST /ai/intake-instructions`:
    - Bounds **total** Bedrock spend across all users — per-user caps alone are
      unbounded in user count (N × per-user).
    - Over ceiling → **429 + `Retry-After`**. `<=0` disables it.
+   - **Over-limit rejects are undone, not charged (Codex PR #7 round 11).** The
+     counter is incremented before the cap comparison (a fixed-window `INCR` is
+     the atomic read), but a request that lands over the ceiling is rejected
+     *before any fan-out* — it makes no paid call — so its increment is rolled
+     back immediately (`DECR`, with the same delete-if-`<=0` guard as the
+     refund). Otherwise rejected over-limit retries would permanently inflate the
+     counter above real paid usage, and the reserve-then-refund path (which only
+     claws back paid-path 401/422/503s) could never bring it down — 429-ing valid
+     callers until the day window rolls over. This preserves the invariant that
+     the counter reflects paid fan-outs only. (Concurrent over-limit callers can
+     transiently `INCR` past the cap before each `DECR`s back, but the excess is
+     self-healing and bounded by concurrency — the same accepted fixed-window
+     transient as gap 1, never a permanent inflation.)
    - Default: **2000/day** (`AI_RATE_LIMIT_GLOBAL_PER_DAY`), ≈ expected active
      staff × per-user cap.
    - **Only genuine paid fan-outs are charged.** The counter is reserved *after*
@@ -257,6 +270,10 @@ because the spend ceiling — not the cache — is the authoritative spend guard
   (round 10) that a local budget refusal maps to a *refundable* **503** (pinning
   `LLMBudgetExceeded → 503`, a gateway-refunded status) and that requests
   spelled differently (`{}` vs explicit defaults vs coerced booleans) collapse
-  to one cached paid call. Regression-proven against pre-fix code.
+  to one cached paid call, and (round 11) that an over-limit 429 leaves the
+  global counter unchanged (no stray increment) and that — modelling a
+  concurrent in-flight reservation — an over-limit reject followed by a
+  refundable 503 lets a subsequent valid request succeed instead of staying
+  429'd on an inflated counter. Regression-proven against pre-fix code.
 - The controls mitigate the *effect* of non-expiring sessions on this endpoint
   but do **not** change auth behavior (ADR 0003 / §6 remains untouched).

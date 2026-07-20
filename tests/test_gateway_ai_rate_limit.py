@@ -519,6 +519,57 @@ def test_downstream_local_budget_503_refunds_the_global_budget(monkeypatch, down
     )
 
 
+def test_over_limit_global_reject_does_not_consume_budget(monkeypatch, fan_out_calls):
+    # Codex PR #7 round 11 (high): consume_ai_global_budget must only ever reflect
+    # PAID fan-outs. A request rejected AT the ceiling makes no paid call, so it
+    # must leave the counter unchanged — otherwise rejected over-limit retries
+    # permanently inflate it above real usage, and the reserve-then-refund path
+    # (which only claws back paid 401/422/503s) can never bring it down, 429-ing
+    # valid callers until the day window rolls over.
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_per_minute", 1000)
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 1)
+
+    # One paid call fills the single global slot.
+    assert client.post("/ai/intake-instructions", json={"has_insurance": True}).status_code == 200
+    # A second, different body is rejected at the ceiling (429) before any fan-out.
+    r = client.post("/ai/intake-instructions", json={"has_insurance": False})
+    assert r.status_code == 429
+    assert len(fan_out_calls) == 1  # only the first call was paid
+    # The rejected attempt did NOT inflate the counter: it still reads exactly the
+    # one real paid fan-out (pre-fix it climbed to 2).
+    assert [security._redis_client.counts.get(k, 0) for k in _global_budget_keys()] == [1]
+
+
+def test_over_limit_reject_then_refund_lets_a_valid_request_succeed(monkeypatch, fan_out_calls):
+    # Codex PR #7 round 11 (high): the reviewer's named sequence. A synchronous
+    # fake cannot truly overlap two requests, so an in-flight paid reservation is
+    # modelled by pre-seeding the global counter at the cap. Then an over-limit
+    # attempt is rejected (429); the in-flight call finishes with a refundable 503
+    # (modelled by the refund the handler performs on 401/422/503), returning its
+    # slot; and a fresh valid request must then succeed. Pre-fix, the rejected
+    # attempt's stray increment survives the refund and 429s the valid caller.
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_per_minute", 1000)
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 1)
+
+    # An in-flight paid call already holds the single slot (concurrent reservation).
+    security._redis_client.counts[security._global_budget_key(1_000_000)] = 1
+
+    # (1) An over-limit attempt is rejected before any fan-out.
+    r1 = client.post("/ai/intake-instructions", json={"has_insurance": True})
+    assert r1.status_code == 429
+    assert len(fan_out_calls) == 0
+
+    # (2) The in-flight call finishes with a refundable downstream 503 — it made no
+    # paid Bedrock call, so it returns its slot.
+    gw._refund_ai_budget()
+
+    # (3) A fresh valid request must now succeed: the refund freed the only slot,
+    # and the rejected over-limit attempt must not have consumed it.
+    r2 = client.post("/ai/intake-instructions", json={"has_insurance": False})
+    assert r2.status_code == 200
+    assert len(fan_out_calls) == 1
+
+
 def test_anonymous_rejected_before_rate_limit(monkeypatch, fan_out_calls):
     # require_session runs first: an unauthenticated caller is 401'd before any
     # counting or fan-out happens.
