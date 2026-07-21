@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Card from "../components/Card";
+import DateField from "../components/DateField";
 import StatusBadge from "../components/StatusBadge";
 import { IconRoi, IconPlus } from "../components/icons";
 import { apiFetch } from "../lib/session";
@@ -155,16 +156,10 @@ export default function RoiPage() {
             </div>
 
             <div className="rb-field-row">
-              <div className="rb-field">
-                <label className="rb-field__label" htmlFor="roi-start">Records from</label>
-                <input id="roi-start" className="rb-input" type="date" value={start}
-                  onChange={(e) => setStart(e.target.value)} />
-              </div>
-              <div className="rb-field">
-                <label className="rb-field__label" htmlFor="roi-end">Records to</label>
-                <input id="roi-end" className="rb-input" type="date" value={end}
-                  onChange={(e) => setEnd(e.target.value)} />
-              </div>
+              <DateField id="roi-start" label="Records from" value={start}
+                disableFuture fromYear={1990} onChange={setStart} />
+              <DateField id="roi-end" label="Records to" value={end}
+                disableFuture fromYear={1990} onChange={setEnd} />
             </div>
 
             <button className="rb-btn rb-btn--primary rb-btn--block" disabled={busy} type="submit">
