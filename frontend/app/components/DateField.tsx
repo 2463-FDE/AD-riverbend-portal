@@ -36,7 +36,7 @@ export default function DateField({
   required = false,
   hint,
   disableFuture = false,
-  fromYear,
+  fromYear = 1900,
 }: {
   id: string;
   label: string;
@@ -46,7 +46,14 @@ export default function DateField({
   hint?: string;
   // Records dates and dates of birth cannot be in the future.
   disableFuture?: boolean;
-  // Earliest selectable year (bounds the year dropdown). 1900 for DOB.
+  // Earliest selectable year (bounds the year dropdown). Defaults to 1900.
+  // This default is load-bearing: with `captionLayout="dropdown"` and no
+  // `startMonth`, react-day-picker v9 collapses the year dropdown to a rolling
+  // ~100-year window (today−100y .. today), a *hidden* lower wall that is worse
+  // than a native `<input type="date">` (which accepts any typed year). Pinning
+  // an explicit floor means no consumer silently inherits that wall; 1900
+  // covers any living patient's DOB and any real records date. Callers reaching
+  // further back pass a smaller `fromYear`.
   fromYear?: number;
 }) {
   const [open, setOpen] = useState(false);

@@ -155,13 +155,14 @@ export default function RoiPage() {
               </div>
             </div>
 
-            {/* No fromYear floor: records can predate any fixed cutoff (migrated
-                charts, lifetime history, legal/insurance discovery). Omitting it
-                lets the year dropdown fall back to react-day-picker's rolling
-                100-year window (today−100y .. today), which covers any living
-                patient's records without a hard wall. Only the future is barred
-                (records cannot postdate today). Per ADR 0008 — ROI uses DateField
-                without the DOB-style floor. */}
+            {/* Records dates can predate any recent cutoff (migrated charts,
+                lifetime history, legal/insurance discovery), so we rely on
+                DateField's default 1900 floor rather than a recent one. We do
+                NOT omit the floor: with captionLayout="dropdown" an unset
+                startMonth silently collapses the year dropdown to today−100y,
+                a hidden wall that would block pre-~1926 record dates. 1900
+                reaches back past any living patient's earliest record. Only the
+                future is barred (records cannot postdate today). Per ADR 0008. */}
             <div className="rb-field-row">
               <DateField id="roi-start" label="Records from" value={start}
                 disableFuture onChange={setStart} />
