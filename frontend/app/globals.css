@@ -684,6 +684,44 @@ textarea:focus-visible,
   color: var(--rb-text);
   border-color: var(--rb-primary);
 }
+/* Date-entry field: a trigger button that opens a calendar popover
+   (react-day-picker — ADR 0008). Trigger is styled as an rb-input. */
+.rb-datefield {
+  position: relative;
+}
+.rb-datefield__trigger {
+  text-align: left;
+  cursor: pointer;
+}
+.rb-datefield__placeholder {
+  color: var(--rb-text-faint);
+}
+.rb-datefield__pop {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  left: 0;
+  background: var(--rb-surface);
+  border: 1px solid var(--rb-border-strong);
+  border-radius: var(--rb-radius);
+  box-shadow: var(--rb-shadow-md);
+  padding: 8px;
+}
+/* Recolor react-day-picker to the rb- palette; scoped to the popover so the
+   library's base stylesheet only ever paints inside our control. */
+.rb-datefield__pop .rdp-root {
+  --rdp-accent-color: var(--rb-primary);
+  --rdp-accent-background-color: var(--rb-primary-tint);
+  --rdp-today-color: var(--rb-primary-dark);
+  --rdp-day-width: 38px;
+  --rdp-day-height: 38px;
+  --rdp-day_button-width: 36px;
+  --rdp-day_button-height: 36px;
+  margin: 0;
+  font-family: inherit;
+  font-size: 0.9rem;
+  color: var(--rb-text);
+}
 .rb-field-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

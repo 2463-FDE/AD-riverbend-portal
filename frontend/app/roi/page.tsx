@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Card from "../components/Card";
+import DateField from "../components/DateField";
 import StatusBadge from "../components/StatusBadge";
 import { IconRoi, IconPlus } from "../components/icons";
 import { apiFetch } from "../lib/session";
@@ -154,17 +155,19 @@ export default function RoiPage() {
               </div>
             </div>
 
+            {/* Records dates can predate any recent cutoff (migrated charts,
+                lifetime history, legal/insurance discovery), so we rely on
+                DateField's default 1900 floor rather than a recent one. We do
+                NOT omit the floor: with captionLayout="dropdown" an unset
+                startMonth silently collapses the year dropdown to today−100y,
+                a hidden wall that would block pre-~1926 record dates. 1900
+                reaches back past any living patient's earliest record. Only the
+                future is barred (records cannot postdate today). Per ADR 0008. */}
             <div className="rb-field-row">
-              <div className="rb-field">
-                <label className="rb-field__label" htmlFor="roi-start">Records from</label>
-                <input id="roi-start" className="rb-input" type="date" value={start}
-                  onChange={(e) => setStart(e.target.value)} />
-              </div>
-              <div className="rb-field">
-                <label className="rb-field__label" htmlFor="roi-end">Records to</label>
-                <input id="roi-end" className="rb-input" type="date" value={end}
-                  onChange={(e) => setEnd(e.target.value)} />
-              </div>
+              <DateField id="roi-start" label="Records from" value={start}
+                disableFuture onChange={setStart} />
+              <DateField id="roi-end" label="Records to" value={end}
+                disableFuture onChange={setEnd} />
             </div>
 
             <button className="rb-btn rb-btn--primary rb-btn--block" disabled={busy} type="submit">

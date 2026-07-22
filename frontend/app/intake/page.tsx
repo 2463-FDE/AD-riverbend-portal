@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import Card from "../components/Card";
+import DateField from "../components/DateField";
 import { apiFetch } from "../lib/session";
 import { formatSsn, formatPhone, digitsOnly } from "../lib/format";
 
@@ -266,7 +267,8 @@ export default function IntakePage() {
                 onChange={(v) => setDemo({ ...demo, last_name: v })} />
             </div>
             <div className="rb-field-row">
-              <Field id="dob" label="Date of birth" type="date" required value={demo.dob}
+              <DateField id="dob" label="Date of birth" required value={demo.dob}
+                disableFuture fromYear={1900}
                 onChange={(v) => setDemo({ ...demo, dob: v })} />
               <SelectField id="gender" label="Gender" value={demo.gender}
                 onChange={(v) => setDemo({ ...demo, gender: v })}
