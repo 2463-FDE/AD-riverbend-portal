@@ -1,8 +1,12 @@
-# ADR 0005 — ai-assistant LLM provider: Claude on AWS Bedrock
+# ADR 0009 — ai-assistant LLM provider: Claude on AWS Bedrock
 
 **Status:** Accepted
 **Date:** 2026-07-15
 **Author:** Riverbend engagement team
+**Numbering note:** filed as ADR 0005 at merge time (2026-07-15); renumbered to
+0009 on 2026-07-23 after discovering `0005-mpi-match-key.md` (merged
+2026-07-13) had already claimed that number. This file's content and decision
+are unchanged — only the filename/number moved.
 **Supersedes:** the vendor decision in ADR 0004 (Decision bullet "Vendor:
 Anthropic API direct (not Bedrock)"). Every other guarantee in ADR 0004 —
 Bounded, Budgeted, Typed, PHI-silent — is preserved unchanged.

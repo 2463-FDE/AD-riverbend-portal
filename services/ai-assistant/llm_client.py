@@ -1,6 +1,6 @@
 """Production LLM client wrapper for Claude on AWS Bedrock.
 
-Contract (see ADR 0004, provider superseded by ADR 0005):
+Contract (see ADR 0004, provider superseded by ADR 0009):
   * every call is bounded — connect/read timeouts and SDK-managed retries
     with exponential backoff (the opposite of the D4 no-timeout pattern);
   * a token/cost budget is enforced BEFORE any request is sent, using a

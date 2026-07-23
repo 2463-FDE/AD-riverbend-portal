@@ -2,7 +2,7 @@
 
 Additive, metadata-only observability wrapped around the single Bedrock
 provider seam (``_BedrockMessages.create`` in ``llm_client``). It preserves
-every guarantee ADR 0004 / 0005 make — PHI-silence above all:
+every guarantee ADR 0004 / 0009 make — PHI-silence above all:
 
 * **Off by default.** With ``LANGSMITH_TRACING`` unset (CI, local, and any
   deploy that has not opted in) :func:`wrap_create` returns the underlying

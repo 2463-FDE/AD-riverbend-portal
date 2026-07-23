@@ -5,7 +5,7 @@
 **Author:** Riverbend engagement team
 **Relates to:** ADR 0003 (authentication/sessions — the "sessions never expire"
 weakness this ADR mitigates in effect), ADR 0004 (ai-assistant service + PHI-safe
-LLM wrapper), ADR 0005 (Bedrock provider — the paid inference path being
+LLM wrapper), ADR 0009 (Bedrock provider — the paid inference path being
 protected), ADR 0006 (observability). Closes the Codex PR #7 round-6 no-ship
 finding: an authenticated but unthrottled paid LLM endpoint.
 
