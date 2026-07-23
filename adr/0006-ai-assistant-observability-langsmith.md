@@ -4,13 +4,13 @@
 **Date:** 2026-07-15
 **Author:** Riverbend engagement team
 **Relates to:** ADR 0004 (ai-assistant service + PHI-safe LLM wrapper) and
-ADR 0005 (Bedrock provider). This ADR discharges the "Observability follow-up"
-item recorded in ADR 0005 (§Consequences) and preserves every guarantee those
+ADR 0009 (Bedrock provider). This ADR discharges the "Observability follow-up"
+item recorded in ADR 0009 (§Consequences) and preserves every guarantee those
 ADRs make — Bounded, Budgeted, Typed, **PHI-silent**.
 
 ## Context
 
-ADR 0005 (§Consequences) planned LangSmith tracing "once this integration is
+ADR 0009 (§Consequences) planned LangSmith tracing "once this integration is
 merged," named the wrap point (`_BedrockMessages.create` — the single provider
 seam), and set a hard constraint carried forward from the PHI-silent guarantee:
 
@@ -23,7 +23,7 @@ docs. It is a landmine-adjacent change: the ai-assistant handles prompts that
 may carry PHI (`{name, dob, mrn, notes}`), and LangSmith cloud is a third-party
 processor. Sending raw prompts/completions to it without a BAA would be a new
 instance of debt **D13 / #5** ("PHI to a cloud LLM on standard SaaS ToS, no
-BAA") — the exact gap ADR 0005 closed for the inference path. Observability must
+BAA") — the exact gap ADR 0009 closed for the inference path. Observability must
 not silently reopen it.
 
 Why LangSmith at all: the ai-assistant currently emits a single metadata-only
@@ -45,7 +45,7 @@ the implementation PR merges.
 - **SDK:** `pip install langsmith`, latest **0.10.5** (2026-07-15), requires
   **Python ≥ 3.10**. The ai-assistant container is `python:3.12-slim` and the
   test suite runs in python:3.12, so this is fine; local dev (3.8) already
-  cannot run this service since ADR 0005 (boto3 bearer), so nothing regresses.
+  cannot run this service since ADR 0009 (boto3 bearer), so nothing regresses.
 - **Enablement (env):** `LANGSMITH_TRACING=true` (master switch),
   `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` (defaults to `default`; this
   engagement uses `"Riverbend"`), `LANGSMITH_ENDPOINT` (var name **confirmed**;
@@ -104,7 +104,7 @@ the implementation PR merges.
    latency / request id and never the prompt or completion; LangSmith captures
    the same fields and no more.
 
-2. **Wrap point = the provider seam named in ADR 0005.** Tracing is an additive
+2. **Wrap point = the provider seam named in ADR 0009.** Tracing is an additive
    decoration around the single Bedrock call. The budget gate,
    `_require_bearer_token`, error mapping, and `_result_from_response` are
    unchanged. The metadata we want (input/output tokens, estimated cost,
@@ -137,7 +137,7 @@ the implementation PR merges.
    PHI, so no BAA is required to land this. The moment anyone wants
    prompt/completion capture (for debugging real hallucinations, W7 output
    guardrail) that becomes PHI egress and requires **either** a signed
-   Enterprise BAA **or** self-hosted LangSmith — the same D13 gate ADR 0005
+   Enterprise BAA **or** self-hosted LangSmith — the same D13 gate ADR 0009
    applied to Bedrock. This ADR does not authorize that; it is called out in
    Future below.
 
@@ -191,5 +191,5 @@ the W7 ungrounded-summary hallucination class), the delta is:
   in traces a good idea.
 - **Regression check:** the adversarial "no PHI in the outbound trace" test
   must be re-pointed at the redacting path and proven to still hold before real
-  PHI flows — do not assume; confirm (same discipline ADR 0005 applied to the
+  PHI flows — do not assume; confirm (same discipline ADR 0009 applied to the
   PHI-in-logs tests).

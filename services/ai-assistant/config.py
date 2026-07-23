@@ -8,7 +8,7 @@ class Settings:
     environment = os.getenv("ENVIRONMENT", "development")
     log_level = os.getenv("LOG_LEVEL", "INFO")
 
-    # AWS Bedrock (see ADR 0005 — supersedes ADR 0004's "Anthropic direct").
+    # AWS Bedrock (see ADR 0009 — supersedes ADR 0004's "Anthropic direct").
     # Auth is a Bedrock bearer API key, which boto3/botocore reads directly from
     # the AWS_BEARER_TOKEN_BEDROCK environment variable — it is deliberately NOT
     # read here, so it can never land in a config object, a log line, or an
@@ -26,7 +26,7 @@ class Settings:
     aws_region = os.getenv("AWS_REGION", "us-east-1")
     # claude-sonnet-4-6 is the model the engagement's eval recommended for the
     # intake assistant (docs/research/llm-eval-sonnet-4-6-vs-gpt-oss-120b.md;
-    # ADR 0005). On Bedrock it is INFERENCE_PROFILE-only (the bare
+    # ADR 0009). On Bedrock it is INFERENCE_PROFILE-only (the bare
     # anthropic.claude-sonnet-4-6 foundation-model id is not invokable
     # on-demand — it returns ValidationException). The default is the US
     # cross-region inference profile; profile ids are REGION-SCOPED
