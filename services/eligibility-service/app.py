@@ -5,15 +5,18 @@ Front desk (and intake-service, inline) hit this before a visit to confirm a
 member's coverage is active. The actual clearinghouse round-trip lives in
 check.py.
 
-Inherited shortcoming (left as-is from the handoff):
-  * D4 — check() calls the payer with no timeout / retry / circuit breaker, and
-    it sits directly on the intake request path (RIV-088). The cohort's fix is to
-    bound that call; we deliberately do NOT add a timeout here.
+D4 / RIV-088 / RIV-141 (fixed, ADR 0010): check() now bounds the payer call with
+a timeout + retry + in-process circuit breaker and raises typed PayerError
+subclasses. This handler maps those to a clean degraded response and — critically
+— logs the exception class only and returns a generic error string, never
+str(e): the payer request URL carries member_id, so stringifying the failure
+would leak PHI into both the log and the response body (docs/phi-logging-policy.md).
 """
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
 
+from breaker import PayerError
 from check import check
 from config import settings
 from logging_config import configure
@@ -37,23 +40,27 @@ def check_eligibility(insurance_id: str = Query(...)):
     checked_at = datetime.now(timezone.utc)
     try:
         result = check(insurance_id)
-    except Exception as e:
-        # The payer call failed or hung. There is intentionally no timeout /
-        # circuit breaker yet (D4 — the cohort's fix); surface a clean inactive
-        # response with an error note rather than 500-ing the caller.
-        log.error("eligibility check failed for %s: %s", insurance_id, e)
+    except PayerError as e:
+        # The payer was unreachable / timed out / the breaker is open. Surface a
+        # clean "unknown" response rather than 500-ing the caller. Log the
+        # exception CLASS only and return a generic error literal — never str(e)
+        # or insurance_id (the payer request URL embeds member_id; PHI rule 3).
+        log.error("eligibility check failed (%s)", type(e).__name__)
         return EligibilityResponse(
             insurance_id=insurance_id,
             active=False,
+            status="unknown",
             payer=settings.payer_name,
             raw_status=None,
             checked_at=checked_at,
-            error=str(e),
+            error="eligibility check failed",
         )
 
+    active = bool(result.get("active"))
     return EligibilityResponse(
         insurance_id=result.get("insurance_id", insurance_id),
-        active=bool(result.get("active")),
+        active=active,
+        status="active" if active else "inactive",
         payer=settings.payer_name,
         raw_status=result.get("raw_status"),
         checked_at=checked_at,
