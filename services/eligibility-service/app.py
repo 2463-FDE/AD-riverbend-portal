@@ -40,12 +40,19 @@ def check_eligibility(insurance_id: str = Query(...)):
     checked_at = datetime.now(timezone.utc)
     try:
         result = check(insurance_id)
-    except PayerError as e:
-        # The payer was unreachable / timed out / the breaker is open. Surface a
-        # clean "unknown" response rather than 500-ing the caller. Log the
-        # exception CLASS only and return a generic error literal — never str(e)
-        # or insurance_id (the payer request URL embeds member_id; PHI rule 3).
-        log.error("eligibility check failed (%s)", type(e).__name__)
+    except Exception as e:
+        # The payer was unreachable / timed out / the breaker is open — or an
+        # unexpected error escaped check(). Surface a clean "unknown" response
+        # rather than 500-ing the caller (a 500 would hand the exception to
+        # Starlette's default handler, whose traceback could include the
+        # member_id-bearing payer URL). Log the exception CLASS only and return a
+        # generic error literal — never str(e) or insurance_id (PHI rule 3).
+        # Broad on purpose: check() is engineered to raise only PayerError, but
+        # catching everything keeps this PHI boundary safe even if that changes.
+        if not isinstance(e, PayerError):
+            log.error("eligibility check unexpected error (%s)", type(e).__name__)
+        else:
+            log.error("eligibility check failed (%s)", type(e).__name__)
         return EligibilityResponse(
             insurance_id=insurance_id,
             active=False,
