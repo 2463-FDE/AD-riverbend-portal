@@ -58,16 +58,25 @@ def check(insurance_id: str):
             # the member_id-bearing URL — can escape untyped (PHI rule 3).
             last_failure = "unavailable"
         else:
-            # 5xx is transient/retryable; 2xx and 4xx are definitive answers.
-            if resp.status_code >= 500:
+            # Only statuses the payer contract defines as a real coverage answer
+            # are definitive: 2xx = active, 404 = member-not-found = inactive.
+            # Everything else is a dependency/config failure, NOT a coverage
+            # denial — mapping a 401/403/429/etc to "inactive" would tell a
+            # patient they are uninsured because of our auth key or a rate limit.
+            if resp.ok:  # 2xx
+                _breaker.record_success()
+                return {"insurance_id": insurance_id, "active": True, "raw_status": resp.status_code}
+            if resp.status_code == 404:
+                _breaker.record_success()
+                return {"insurance_id": insurance_id, "active": False, "raw_status": resp.status_code}
+            if resp.status_code in (408, 429) or resp.status_code >= 500:
+                # Transient — retry within the budget, then fail as unavailable.
                 last_failure = "unavailable"
             else:
-                _breaker.record_success()
-                return {
-                    "insurance_id": insurance_id,
-                    "active": resp.ok,
-                    "raw_status": resp.status_code,
-                }
+                # Non-definitive and non-transient (401/403/400/422/…): retrying
+                # will not help, so stop now and surface an unavailable result.
+                last_failure = "unavailable"
+                break
         # fall through here only on a retryable failure; loop retries if budget remains
 
     # All attempts failed — count one failed call against the breaker and raise typed.

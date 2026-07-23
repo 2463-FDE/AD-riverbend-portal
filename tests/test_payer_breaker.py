@@ -5,6 +5,8 @@ A fake monotonic clock drives the reset window so the tests never sleep. This
 module is new in ADR 0010; the whole file is red against pre-fix code (no breaker
 existed).
 """
+import threading
+
 from conftest import load_module
 
 breaker_mod = load_module("services/eligibility-service/breaker.py", "payer_breaker_unit")
@@ -94,3 +96,38 @@ def test_half_open_trial_failure_reopens():
     clock.advance(31.0)
     cb.before_call()
     assert cb.state == CircuitBreaker.HALF_OPEN
+
+
+def test_half_open_admits_single_probe_under_concurrency():
+    """After the reset window, many concurrent callers must not stampede the
+    recovering payer — exactly ONE is admitted as the half-open probe, the rest
+    are rejected with PayerBreakerOpen."""
+    cb, clock = _make(threshold=1, reset=30.0)
+    cb.record_failure()  # -> OPEN
+    assert cb.state == CircuitBreaker.OPEN
+    clock.advance(31.0)  # reset window elapsed; the next caller becomes the probe
+
+    n = 20
+    start = threading.Barrier(n)
+    admitted = []
+    rejected = []
+    lock = threading.Lock()
+
+    def worker():
+        start.wait()  # maximise contention on the first admission
+        try:
+            cb.before_call()
+            with lock:
+                admitted.append(1)
+        except PayerBreakerOpen:
+            with lock:
+                rejected.append(1)
+
+    threads = [threading.Thread(target=worker) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(admitted) == 1, f"expected exactly one probe, got {len(admitted)}"
+    assert len(rejected) == n - 1

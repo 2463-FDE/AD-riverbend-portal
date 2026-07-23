@@ -95,6 +95,30 @@ def test_connection_error_raises_unavailable(monkeypatch):
     assert MEMBER_ID not in str(exc.value)
 
 
+def test_rate_limit_429_is_unavailable_not_inactive(monkeypatch):
+    """A 429 is a dependency failure, NOT a coverage denial — it must surface as
+    PayerUnavailable (-> status 'unknown'), never a definitive inactive answer."""
+    monkeypatch.setattr(check_mod.requests, "get", lambda *a, **k: _FakeResponse(False, 429))
+    with pytest.raises(breaker_mod.PayerUnavailable):
+        check_mod.check(MEMBER_ID)
+
+
+def test_auth_401_is_unavailable_not_inactive(monkeypatch):
+    """A 401/403 (our API key/config problem) must not be reported as the
+    patient being uninsured; and it must not be retried."""
+    calls = {"n": 0}
+
+    def _401(*a, **k):
+        calls["n"] += 1
+        return _FakeResponse(False, 401)
+
+    monkeypatch.setattr(check_mod.requests, "get", _401)
+    with pytest.raises(breaker_mod.PayerUnavailable):
+        check_mod.check(MEMBER_ID)
+    # Non-transient — no point retrying an auth/config failure.
+    assert calls["n"] == 1
+
+
 def test_breaker_opens_and_short_circuits(monkeypatch):
     """After enough failed calls the breaker opens and short-circuits the next
     call without hitting the payer (PayerBreakerOpen)."""
