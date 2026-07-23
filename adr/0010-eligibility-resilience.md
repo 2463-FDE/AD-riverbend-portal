@@ -95,20 +95,30 @@ already exists in `ai-assistant/llm_client.py` and the gateway's `_post_checked`
   retrieval endpoint — i.e. schema / API-contract surface a bounded Week-3 change
   should avoid.
 
-- **Additive, backward-compatible response contract.** `IntakeResponse.eligibility`
-  stays `Optional[dict]` (no schema change). Every branch keeps the existing
-  `active: bool` key so current clients keep working; `status`
-  (`active` / `inactive` / `pending` / `unknown`) and `reason` are purely
-  additive signal. Today a failure already returns `active=False`, so this adds
-  information, never removes any.
+- **`active` is tri-state; `active=False` never means "unknown".** `active`
+  becomes `Optional[bool]`: `True` = active, `False` = **definitively** inactive
+  (the payer answered — a 2xx or a 404), `None` = unknown (timeout / breaker open
+  / non-2xx / transport failure). A degraded result returns `active=None`, not
+  `False`, so a caller reading only the boolean can never mistake a dependency
+  outage for a coverage denial (adversarial review r3). `status`
+  (`active`/`inactive`/`unknown`/`pending`) carries the finer detail. No code
+  consumer branches on `active` today (the gateway proxies the JSON through), so
+  making it nullable breaks nothing; `IntakeResponse.eligibility` stays
+  `Optional[dict]`.
+- **Budget invariant: inner < outer.** eligibility-service's worst-case payer
+  budget `(connect + read) × (max_retries + 1)` must stay strictly below intake's
+  `ELIGIBILITY_TIMEOUT_SECONDS`, with margin, so intake receives eligibility's
+  graceful degraded answer instead of timing out first and abandoning a
+  still-running downstream call (which wastes a retry and pins a worker —
+  adversarial review r3). Guarded by `tests/test_eligibility_budget_alignment.py`.
 
 - **Config defaults (SRE/ops calls, pending the real clearinghouse SLA):**
-  eligibility `PAYER_CONNECT_TIMEOUT_SECONDS=2`, `PAYER_READ_TIMEOUT_SECONDS=3`,
+  eligibility `PAYER_CONNECT_TIMEOUT_SECONDS=1`, `PAYER_READ_TIMEOUT_SECONDS=2`,
   `PAYER_MAX_RETRIES=1`, `PAYER_BREAKER_FAIL_THRESHOLD=5`,
-  `PAYER_BREAKER_RESET_SECONDS=30`; intake `ELIGIBILITY_TIMEOUT_SECONDS=6`.
-  Worst-case closed-breaker payer latency ≈ `(2+3) × (1+1) = 10s`; the breaker
-  collapses that to ~0 once open, which is what preserves intake capacity during
-  a sustained outage. Intake's 6s cap bounds worker-hold independently.
+  `PAYER_BREAKER_RESET_SECONDS=30`; intake `ELIGIBILITY_TIMEOUT_SECONDS=8`.
+  Worst-case closed-breaker payer latency = `(1+2) × (1+1) = 6s`, safely under
+  intake's 8s cap (the budget invariant above); the breaker collapses that to ~0
+  once open, which is what preserves intake capacity during a sustained outage.
 
 ## Consequences
 

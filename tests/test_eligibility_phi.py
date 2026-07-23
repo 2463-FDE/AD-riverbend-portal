@@ -50,7 +50,8 @@ def test_handler_does_not_leak_member_id_on_payer_failure(monkeypatch, caplog):
     with caplog.at_level(logging.ERROR):
         response = app_mod.check_eligibility(MEMBER_ID)
 
-    assert response.active is False
+    # active MUST be None (unknown), never False — an outage is not a denial.
+    assert response.active is None
     assert response.status == "unknown"
     assert response.error == "eligibility check failed"
     # The response object flows outward (and into /intake) — no member_id anywhere.

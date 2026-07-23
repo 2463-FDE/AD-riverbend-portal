@@ -58,7 +58,7 @@ def test_eligibility_failure_does_not_leak_member_id(monkeypatch, caplog):
 
     # The returned body flows into the /intake response — it must carry no member_id.
     assert MEMBER_ID not in str(result)
-    assert result == {"active": False, "status": "unknown", "reason": "eligibility check failed"}
+    assert result == {"active": None, "status": "unknown", "reason": "eligibility check failed"}
     # Nor may any log record carry it (the URL/query-param leak vector).
     for record in caplog.records:
         assert MEMBER_ID not in record.getMessage()

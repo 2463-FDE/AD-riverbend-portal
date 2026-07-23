@@ -50,7 +50,7 @@ def test_timeout_returns_pending(monkeypatch):
     monkeypatch.setattr(app_mod.httpx, "get", _timeout)
     ins = schemas_mod.Insurance(member_id=MEMBER_ID)
     result = app_mod._verify_eligibility(ins)
-    assert result == {"active": False, "status": "pending", "reason": "verification timed out"}
+    assert result == {"active": None, "status": "pending", "reason": "verification timed out"}
 
 
 def test_transport_failure_returns_unknown(monkeypatch):
@@ -60,7 +60,7 @@ def test_transport_failure_returns_unknown(monkeypatch):
     monkeypatch.setattr(app_mod.httpx, "get", _fail)
     ins = schemas_mod.Insurance(member_id=MEMBER_ID)
     result = app_mod._verify_eligibility(ins)
-    assert result == {"active": False, "status": "unknown", "reason": "eligibility check failed"}
+    assert result == {"active": None, "status": "unknown", "reason": "eligibility check failed"}
 
 
 def test_success_stamps_active_status(monkeypatch):
@@ -89,7 +89,7 @@ def test_non_2xx_response_is_unknown_not_inactive(monkeypatch):
     monkeypatch.setattr(app_mod.httpx, "get", lambda *a, **k: _FakeResp(body, status_code=503))
     ins = schemas_mod.Insurance(member_id=MEMBER_ID)
     result = app_mod._verify_eligibility(ins)
-    assert result == {"active": False, "status": "unknown", "reason": "eligibility check failed"}
+    assert result == {"active": None, "status": "unknown", "reason": "eligibility check failed"}
 
 
 def test_non_json_body_is_unknown(monkeypatch):

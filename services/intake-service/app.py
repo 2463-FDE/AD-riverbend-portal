@@ -163,7 +163,7 @@ def _verify_eligibility(ins: Optional[Insurance]) -> Optional[dict[str, Any]]:
         # Payer/eligibility too slow — do not block intake; verification deferred.
         # No member_id in this message.
         log.error("intake: eligibility check timed out")
-        return {"active": False, "status": "pending", "reason": "verification timed out"}
+        return {"active": None, "status": "pending", "reason": "verification timed out"}
     except Exception as e:
         # Broad on purpose (PHI policy rule 3): never stringify an outbound
         # exception here. The request URL carries insurance_id=<member_id> as a
@@ -172,7 +172,7 @@ def _verify_eligibility(ins: Optional[Insurance]) -> Optional[dict[str, Any]]:
         # the /intake response. Log the exception class only, return a generic
         # degraded result for any transport failure.
         log.error("intake: eligibility check failed (%s)", type(e).__name__)
-        return {"active": False, "status": "unknown", "reason": "eligibility check failed"}
+        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}
 
     # Only a 2xx eligibility-shaped body is a definitive coverage answer. A
     # non-2xx response (e.g. a 500/503 {"detail": ...} from eligibility-service)
@@ -181,15 +181,15 @@ def _verify_eligibility(ins: Optional[Insurance]) -> Optional[dict[str, Any]]:
     # HTTP code only, never member_id — safe to log.)
     if resp.status_code // 100 != 2:
         log.error("intake: eligibility returned HTTP %s", resp.status_code)
-        return {"active": False, "status": "unknown", "reason": "eligibility check failed"}
+        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}
     try:
         body = resp.json()
     except Exception:
         log.error("intake: eligibility returned a non-JSON body")
-        return {"active": False, "status": "unknown", "reason": "eligibility check failed"}
+        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}
     if not isinstance(body, dict) or ("status" not in body and "active" not in body):
         # A 2xx body that isn't eligibility-shaped — treat as degraded, not inactive.
-        return {"active": False, "status": "unknown", "reason": "eligibility check failed"}
+        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}
 
     # Stamp a status from the result if the service didn't supply one, so every
     # branch of this function returns a uniform {active, status, ...}.

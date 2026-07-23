@@ -55,7 +55,7 @@ def check_eligibility(insurance_id: str = Query(...)):
             log.error("eligibility check failed (%s)", type(e).__name__)
         return EligibilityResponse(
             insurance_id=insurance_id,
-            active=False,
+            active=None,  # unknown — NOT False; a caller must never read an outage as inactive
             status="unknown",
             payer=settings.payer_name,
             raw_status=None,
