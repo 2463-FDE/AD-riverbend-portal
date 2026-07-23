@@ -37,6 +37,8 @@ MEMBER_ID = "BCBS4471"
 
 
 class _FakeResp:
+    status_code = 200
+
     def json(self):
         return {"insurance_id": MEMBER_ID, "active": True, "status": "active", "raw_status": 200}
 

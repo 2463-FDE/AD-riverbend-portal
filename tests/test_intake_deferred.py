@@ -33,10 +33,13 @@ MEMBER_ID = "BCBS4471"
 
 
 class _FakeResp:
-    def __init__(self, body):
+    def __init__(self, body, status_code=200):
         self._body = body
+        self.status_code = status_code
 
     def json(self):
+        if isinstance(self._body, Exception):
+            raise self._body
         return self._body
 
 
@@ -77,6 +80,35 @@ def test_success_stamps_status_when_absent(monkeypatch):
     ins = schemas_mod.Insurance(member_id=MEMBER_ID)
     result = app_mod._verify_eligibility(ins)
     assert result["status"] == "inactive"
+
+
+def test_non_2xx_response_is_unknown_not_inactive(monkeypatch):
+    # A 503 with a FastAPI-style {"detail": ...} body is a dependency failure,
+    # NOT a coverage denial — it must not be stamped inactive.
+    body = {"detail": "Service Unavailable"}
+    monkeypatch.setattr(app_mod.httpx, "get", lambda *a, **k: _FakeResp(body, status_code=503))
+    ins = schemas_mod.Insurance(member_id=MEMBER_ID)
+    result = app_mod._verify_eligibility(ins)
+    assert result == {"active": False, "status": "unknown", "reason": "eligibility check failed"}
+
+
+def test_non_json_body_is_unknown(monkeypatch):
+    monkeypatch.setattr(
+        app_mod.httpx, "get", lambda *a, **k: _FakeResp(ValueError("not json"), status_code=200)
+    )
+    ins = schemas_mod.Insurance(member_id=MEMBER_ID)
+    result = app_mod._verify_eligibility(ins)
+    assert result["status"] == "unknown"
+
+
+def test_malformed_2xx_body_is_unknown(monkeypatch):
+    # 2xx but not eligibility-shaped (no status, no active) -> degraded, not inactive.
+    monkeypatch.setattr(
+        app_mod.httpx, "get", lambda *a, **k: _FakeResp({"foo": "bar"}, status_code=200)
+    )
+    ins = schemas_mod.Insurance(member_id=MEMBER_ID)
+    result = app_mod._verify_eligibility(ins)
+    assert result["status"] == "unknown"
 
 
 def test_no_insurance_skips():
