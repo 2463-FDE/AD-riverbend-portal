@@ -79,9 +79,10 @@ def create_intake(req: IntakeRequest, db: Session = Depends(get_db)):
     if req.insurance is not None:
         _create_coverage(db, patient_id, req.insurance)
 
-    # D4 / RIV-088 (flagged, not fixed): eligibility is verified INLINE on this
-    # request thread, synchronously and with NO timeout — so a slow payer blocks
-    # the whole /intake call. The cohort's fix is to make this async / bounded.
+    # D4 / RIV-088 / RIV-141 (fixed, ADR 0010): eligibility is verified with a
+    # bounded, best-effort call. A slow/hung payer can no longer freeze /intake —
+    # the call is capped by a timeout and degrades to a "pending" status. The
+    # patient is already committed above, so verification never blocks the 201.
     eligibility = _verify_eligibility(req.insurance)
 
     _record_consents(db, patient_id, req.consents)
@@ -147,21 +148,51 @@ def _verify_eligibility(ins: Optional[Insurance]) -> Optional[dict[str, Any]]:
     if ins is None or not ins.member_id:
         return None
 
-    # RIV-088 / D4: the artificial sleep stands in for the blocking clearinghouse
-    # round-trip the front desk experiences; the httpx call below has NO timeout,
-    # so a hung payer hangs /intake. This BLOCKS the request thread by design.
-    time.sleep(4.2)
+    # ADR 0010 / RIV-141: bounded best-effort verification. The call is capped by
+    # a timeout so a slow/hung payer can never freeze /intake; on timeout or
+    # transport failure we return a degraded status instead of blocking or
+    # raising. (The seeded time.sleep(4.2) that produced the RIV-088 "spin" was
+    # removed — a synthetic block no timeout could bound.)
     try:
         resp = httpx.get(
             f"{settings.eligibility_url}/eligibility",
             params={"insurance_id": ins.member_id},
-        )  # no timeout= — synchronous, blocks /intake (RIV-088)
-        return resp.json()
+            timeout=settings.eligibility_timeout_seconds,
+        )
+    except httpx.TimeoutException:
+        # Payer/eligibility too slow — do not block intake; verification deferred.
+        # No member_id in this message.
+        log.error("intake: eligibility check timed out")
+        return {"active": None, "status": "pending", "reason": "verification timed out"}
     except Exception as e:
-        # PHI policy rule 3: never stringify an outbound exception here. The
-        # request URL carries insurance_id=<member_id> as a query param, and
-        # httpx embeds the failing URL in its exception message — so str(e)
-        # would leak a PHI-adjacent external identifier into the log AND the
-        # /intake response. Log the exception class only, return a generic error.
+        # Broad on purpose (PHI policy rule 3): never stringify an outbound
+        # exception here. The request URL carries insurance_id=<member_id> as a
+        # query param, and httpx embeds the failing URL in its exception message —
+        # so str(e) would leak a PHI-adjacent external identifier into the log AND
+        # the /intake response. Log the exception class only, return a generic
+        # degraded result for any transport failure.
         log.error("intake: eligibility check failed (%s)", type(e).__name__)
-        return {"active": False, "error": "eligibility check failed"}
+        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}
+
+    # Only a 2xx eligibility-shaped body is a definitive coverage answer. A
+    # non-2xx response (e.g. a 500/503 {"detail": ...} from eligibility-service)
+    # or a body that isn't the expected shape is a dependency failure, NOT a
+    # coverage denial — map it to "unknown", never "inactive". (raw_status is the
+    # HTTP code only, never member_id — safe to log.)
+    if resp.status_code // 100 != 2:
+        log.error("intake: eligibility returned HTTP %s", resp.status_code)
+        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}
+    try:
+        body = resp.json()
+    except Exception:
+        log.error("intake: eligibility returned a non-JSON body")
+        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}
+    if not isinstance(body, dict) or ("status" not in body and "active" not in body):
+        # A 2xx body that isn't eligibility-shaped — treat as degraded, not inactive.
+        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}
+
+    # Stamp a status from the result if the service didn't supply one, so every
+    # branch of this function returns a uniform {active, status, ...}.
+    if "status" not in body:
+        body["status"] = "active" if body.get("active") else "inactive"
+    return body

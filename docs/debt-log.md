@@ -43,9 +43,18 @@
   patients physically waiting, staff idle). Unbounded calls also exhaust
   worker threads, so one slow payer can take down all intake capacity.
 - **Ticket:** RIV-088 (Medium), RIV-141 (High)
-- **Status:** OPEN. Recommended fix: bounded timeout on the payer call +
-  deferred/async verification (register first, verify eligibility out-of-band).
-  The new `ai-assistant/llm_client.py` demonstrates the bounded-call pattern.
+- **Status:** MOSTLY CLOSED (ADR 0010). The payer call is now bounded — a
+  `(connect, read)` timeout, a small retry budget (timeout/connection/5xx only,
+  never a 4xx), and an in-process circuit breaker in
+  `eligibility-service/check.py` + `breaker.py`. intake's call to eligibility is
+  timeout-capped and the seeded `time.sleep(4.2)` was removed, so a slow/hung
+  payer can no longer freeze the `/intake` request thread (RIV-141 closed;
+  RIV-088 spin capped). A cross-service **PHI leak** found on the same path was
+  also closed: `eligibility-service/app.py` no longer logs/returns `str(e)`
+  (the payer request URL embeds `member_id`). **Remaining (follow-up):** full
+  register-first / out-of-band re-verification (instant 201 + async verify),
+  and moving the gateway `proxy_intake` path off the legacy error-swallowing
+  `_post` onto `_post_checked`.
 
 ### D12 — ROI disclosures without authorization
 - **Location:** `services/roi-service/app.py:90,104,146,148`

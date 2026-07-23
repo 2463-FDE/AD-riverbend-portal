@@ -14,8 +14,15 @@ class Settings:
     db_user = os.getenv("DB_USER", "riverbend_app")
     db_password = os.getenv("DB_PASSWORD", "")
 
-    # downstream eligibility verification (called inline from /intake — RIV-088)
+    # downstream eligibility verification (called from /intake). Bounded per
+    # ADR 0010 — this timeout is a hard cap on intake worker-hold and is the
+    # real RIV-141 guard: a slow/hung payer can no longer freeze intake.
     eligibility_url = os.getenv("ELIGIBILITY_URL", "http://eligibility-service:8072")
+    # Must exceed eligibility-service's worst-case payer budget (6s) with margin,
+    # so intake receives its graceful "unknown"/"inactive" answer rather than
+    # timing out first and abandoning a still-running downstream call (ADR 0010;
+    # guarded by tests/test_eligibility_budget_alignment.py).
+    eligibility_timeout_seconds = float(os.getenv("ELIGIBILITY_TIMEOUT_SECONDS", "8"))
 
     # payer settings kept for parity with the legacy module; the real X12 270/271
     # round-trip is owned by eligibility-service.
