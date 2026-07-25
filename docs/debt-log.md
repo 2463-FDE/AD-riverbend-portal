@@ -43,13 +43,20 @@
   patients physically waiting, staff idle). Unbounded calls also exhaust
   worker threads, so one slow payer can take down all intake capacity.
 - **Ticket:** RIV-088 (Medium), RIV-141 (High)
-- **Status:** MOSTLY CLOSED (ADR 0010). The payer call is now bounded — a
+- **Status:** PARTLY CLOSED (ADR 0010). The payer call is now bounded — a
   `(connect, read)` timeout, a small retry budget (timeout/connection/5xx only,
   never a 4xx), and an in-process circuit breaker in
   `eligibility-service/check.py` + `breaker.py`. intake's call to eligibility is
-  timeout-capped and the seeded `time.sleep(4.2)` was removed, so a slow/hung
-  payer can no longer freeze the `/intake` request thread (RIV-141 closed;
-  RIV-088 spin capped). A cross-service **PHI leak** found on the same path was
+  timeout-capped, guarded by its **own** in-process breaker
+  (`intake-service/breaker.py`: after 3 consecutive unusable answers,
+  verification is skipped with no outbound call and returns status `pending`
+  until a 30s reset window elapses), and the seeded `time.sleep(4.2)` was
+  removed. A slow/hung payer therefore **slows** registration by at most
+  `ELIGIBILITY_TIMEOUT_SECONDS` (~0 once the circuit opens) instead of freezing
+  it indefinitely — RIV-088's spin is capped and RIV-141's freeze is bounded.
+  **RIV-141 is not fully closed:** verification still runs on the `/intake`
+  request thread, and per-worker breaker state means up to `workers × 3` slow
+  calls can still land at the start of an outage. A cross-service **PHI leak** found on the same path was
   also closed: `eligibility-service/app.py` no longer logs/returns `str(e)`
   (the payer request URL embeds `member_id`). **Remaining (follow-up):** full
   register-first / out-of-band re-verification (instant 201 + async verify),

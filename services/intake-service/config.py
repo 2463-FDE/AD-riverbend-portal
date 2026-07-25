@@ -23,6 +23,19 @@ class Settings:
     # timing out first and abandoning a still-running downstream call (ADR 0010;
     # guarded by tests/test_eligibility_budget_alignment.py).
     eligibility_timeout_seconds = float(os.getenv("ELIGIBILITY_TIMEOUT_SECONDS", "8"))
+    # Intake-side circuit breaker (ADR 0010, adversarial review r4). The timeout
+    # above bounds ONE registration's worker-hold; this bounds the *sustained*
+    # cost: after this many consecutive unusable answers, verification is skipped
+    # without an outbound call (status "pending") until the reset window elapses.
+    # Threshold is deliberately below eligibility-service's (5) — intake pays up
+    # to 8s per failed call where the payer path pays 3s, so intake should give
+    # up sooner.
+    eligibility_breaker_fail_threshold = int(
+        os.getenv("ELIGIBILITY_BREAKER_FAIL_THRESHOLD", "3")
+    )
+    eligibility_breaker_reset_seconds = float(
+        os.getenv("ELIGIBILITY_BREAKER_RESET_SECONDS", "30")
+    )
 
     # payer settings kept for parity with the legacy module; the real X12 270/271
     # round-trip is owned by eligibility-service.

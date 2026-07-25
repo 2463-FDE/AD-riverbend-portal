@@ -81,6 +81,29 @@ already exists in `ai-assistant/llm_client.py` and the gateway's `_post_checked`
   **generic literal** (`"eligibility check failed"`) — never `str(e)`. This is
   required regardless of the resilience work; it is the actual member-id leak.
 
+- **A second, intake-side breaker on the intake → eligibility hop
+  (adversarial review r4).** A per-request timeout bounds *one* registration's
+  worker-hold; it does not bound the **sustained** cost. While eligibility or the
+  payer stays wedged, every front-desk save still pays the full
+  `ELIGIBILITY_TIMEOUT_SECONDS`, so concurrent registrations keep occupying
+  intake workers — the RIV-141 mechanism, slowed but not removed. intake
+  therefore gets its own copy of the breaker (`intake-service/breaker.py`;
+  copy-paste, per ADR 0001): after
+  `ELIGIBILITY_BREAKER_FAIL_THRESHOLD` consecutive unusable answers,
+  `_verify_eligibility` returns `{"active": None, "status": "pending",
+  "reason": "verification deferred"}` with **no outbound call**, until
+  `ELIGIBILITY_BREAKER_RESET_SECONDS` elapse and one half-open probe is admitted.
+  What counts as a breaker failure is a **dependency** verdict, never a coverage
+  verdict: timeout, transport error, non-2xx, and unparseable bodies count; a
+  definitive `inactive` does not, and neither does a fast 2xx carrying
+  eligibility-service's own degraded `unknown` (it held no worker time, and the
+  payer-side outage is already handled by that service's breaker).
+  **Honest limits:** state is per-worker, so with *W* workers up to
+  `W × threshold` slow calls can still land before every circuit opens, and
+  concurrent in-flight calls are not retroactively cancelled — the breaker bounds
+  the steady state of an outage, not its first burst. This narrows the RIV-141
+  window; it is not a substitute for true deferral below.
+
 - **Decouple intake with a bounded best-effort call now; full out-of-band
   re-verification is a follow-up.** `_verify_eligibility` gets an explicit
   `timeout=` (a hard cap on intake worker-hold — the real RIV-141 guard), and
@@ -115,17 +138,29 @@ already exists in `ai-assistant/llm_client.py` and the gateway's `_post_checked`
 - **Config defaults (SRE/ops calls, pending the real clearinghouse SLA):**
   eligibility `PAYER_CONNECT_TIMEOUT_SECONDS=1`, `PAYER_READ_TIMEOUT_SECONDS=2`,
   `PAYER_MAX_RETRIES=1`, `PAYER_BREAKER_FAIL_THRESHOLD=5`,
-  `PAYER_BREAKER_RESET_SECONDS=30`; intake `ELIGIBILITY_TIMEOUT_SECONDS=8`.
+  `PAYER_BREAKER_RESET_SECONDS=30`; intake `ELIGIBILITY_TIMEOUT_SECONDS=8`,
+  `ELIGIBILITY_BREAKER_FAIL_THRESHOLD=3`, `ELIGIBILITY_BREAKER_RESET_SECONDS=30`
+  (intake trips sooner than the payer breaker because each failed call costs it
+  8s, not 3s).
   Worst-case closed-breaker payer latency = `(1+2) × (1+1) = 6s`, safely under
   intake's 8s cap (the budget invariant above); the breaker collapses that to ~0
   once open, which is what preserves intake capacity during a sustained outage.
 
 ## Consequences
 
-- A payer outage no longer freezes intake: calls are bounded, the breaker opens
-  under sustained failure, and intake returns a bounded 201 with
-  `status="pending"` instead of hanging. RIV-141 is closed; RIV-088's spin is
-  capped (and the synthetic 4.2s block removed).
+- A payer outage no longer freezes intake: calls are bounded at both hops, both
+  breakers open under sustained failure, and intake returns a bounded 201 with
+  `status="pending"` instead of hanging. Worst case per registration is now
+  `ELIGIBILITY_TIMEOUT_SECONDS` while the intake circuit is closed and ~0 once it
+  opens, versus unbounded before. RIV-088's spin is capped (and the synthetic
+  4.2s block removed).
+- **What this does NOT do:** eligibility verification still runs on the `/intake`
+  request thread, so registration is *delayed* by a bad payer, not immune to it.
+  RIV-141's freeze mechanism is bounded rather than eliminated; closing it
+  outright needs the register-first + async re-verification below. Code comments
+  and `docs/debt-log.md` state the blocking behaviour plainly — an earlier
+  revision of this branch claimed verification "never blocks the 201", which was
+  not true (adversarial review r4).
 - The member-id PHI leak on the eligibility failure path is closed, and a new
   end-to-end test exercises the real 200-with-error passthrough the old test
   missed.

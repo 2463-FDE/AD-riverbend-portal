@@ -14,9 +14,11 @@ here — the sleep removal is exactly what this test guards.
 import sys
 import time
 
+import pytest
+
 from conftest import load_module
 
-_SIBLINGS = ("config", "db", "logging_config", "models", "schemas")
+_SIBLINGS = ("config", "db", "logging_config", "models", "schemas", "breaker")
 _saved = {name: sys.modules.pop(name, None) for name in _SIBLINGS}
 sys.modules["config"] = load_module("services/intake-service/config.py", "intake_config_freeze")
 sys.modules["db"] = load_module("services/intake-service/db.py", "intake_db_freeze")
@@ -25,8 +27,10 @@ sys.modules["logging_config"] = load_module(
 )
 sys.modules["models"] = load_module("services/intake-service/models.py", "intake_models_freeze")
 sys.modules["schemas"] = load_module("services/intake-service/schemas.py", "intake_schemas_freeze")
+sys.modules["breaker"] = load_module("services/intake-service/breaker.py", "intake_breaker_freeze")
 app_mod = load_module("services/intake-service/app.py", "intake_app_freeze")
 schemas_mod = sys.modules["schemas"]
+breaker_mod = sys.modules["breaker"]
 for _name, _module in _saved.items():
     if _module is not None:
         sys.modules[_name] = _module
@@ -34,6 +38,16 @@ for _name, _module in _saved.items():
         sys.modules.pop(_name, None)
 
 MEMBER_ID = "BCBS4471"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_breaker():
+    """app.py holds a module-level breaker singleton; start closed so this test
+    measures a real outbound call and not a short-circuited one."""
+    app_mod._breaker = breaker_mod.CircuitBreaker(
+        fail_threshold=app_mod.settings.eligibility_breaker_fail_threshold,
+        reset_seconds=app_mod.settings.eligibility_breaker_reset_seconds,
+    )
 
 
 class _FakeResp:

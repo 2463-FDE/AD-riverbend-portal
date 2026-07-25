@@ -15,8 +15,13 @@ Inherited shortcomings (left as-is from the handoff):
   * D5 — no master patient index / match key: every /intake creates a brand new
     patients row, so one person forks into several charts (intake.yaml match_key:
     none).
-  * D4 / RIV-088 — eligibility is verified inline on the request thread with no
-    timeout, so a slow payer makes registration "spin ~4-5s".
+  * D4 / RIV-088 / RIV-141 — PARTLY REMEDIATED 2026-07 (ADR 0010): eligibility
+    is still verified on the request thread, but the call is now bounded by a
+    timeout and an intake-side circuit breaker, and the seeded time.sleep(4.2)
+    is gone. Registration is therefore slowed, never frozen, by a bad payer.
+    Full register-first / out-of-band re-verification (instant 201 + async
+    verify) remains the complete fix and is still open — it needs a job/result
+    store (see ADR 0010 and docs/debt-log.md D4).
   * Consents are inserted one at a time (a commit per consent).
 """
 import json
@@ -30,6 +35,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from breaker import CircuitBreaker, EligibilityBreakerOpen
 from config import settings
 from db import get_db
 from logging_config import configure
@@ -40,6 +46,16 @@ log = configure(settings.service_name)
 app = FastAPI(title="Riverbend intake-service", version="1.3.0")
 
 INTAKE_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "intake.yaml")
+
+# Per-worker breaker on the intake -> eligibility hop (ADR 0010, review r4).
+# Deliberately in-process, like eligibility-service's: no new infrastructure,
+# fully reversible. Cost of per-worker state: with W workers, up to
+# W x ELIGIBILITY_BREAKER_FAIL_THRESHOLD slow calls can still occur before every
+# worker has opened its own circuit.
+_breaker = CircuitBreaker(
+    fail_threshold=settings.eligibility_breaker_fail_threshold,
+    reset_seconds=settings.eligibility_breaker_reset_seconds,
+)
 
 
 @app.get("/healthz")
@@ -79,10 +95,15 @@ def create_intake(req: IntakeRequest, db: Session = Depends(get_db)):
     if req.insurance is not None:
         _create_coverage(db, patient_id, req.insurance)
 
-    # D4 / RIV-088 / RIV-141 (fixed, ADR 0010): eligibility is verified with a
-    # bounded, best-effort call. A slow/hung payer can no longer freeze /intake —
-    # the call is capped by a timeout and degrades to a "pending" status. The
-    # patient is already committed above, so verification never blocks the 201.
+    # D4 / RIV-088 / RIV-141 (bounded, ADR 0010): eligibility verification still
+    # runs on this request thread — it DOES delay the 201, by at most
+    # ELIGIBILITY_TIMEOUT_SECONDS, and the intake-side breaker drops that to ~0
+    # once the dependency is known-bad. So a slow/hung payer degrades
+    # registration instead of freezing it (RIV-141), but this is not yet true
+    # deferral. The patient row is already committed above, so a degraded result
+    # only changes what the eligibility *field* reports, never whether the
+    # patient is saved. Register-first + async re-verification is the remaining
+    # follow-up (ADR 0010, docs/debt-log.md D4).
     eligibility = _verify_eligibility(req.insurance)
 
     _record_consents(db, patient_id, req.consents)
@@ -148,11 +169,47 @@ def _verify_eligibility(ins: Optional[Insurance]) -> Optional[dict[str, Any]]:
     if ins is None or not ins.member_id:
         return None
 
-    # ADR 0010 / RIV-141: bounded best-effort verification. The call is capped by
-    # a timeout so a slow/hung payer can never freeze /intake; on timeout or
-    # transport failure we return a degraded status instead of blocking or
-    # raising. (The seeded time.sleep(4.2) that produced the RIV-088 "spin" was
-    # removed — a synthetic block no timeout could bound.)
+    # ADR 0010 / RIV-141: bounded best-effort verification, gated by an
+    # intake-side circuit breaker. The timeout caps ONE registration's
+    # worker-hold; the breaker caps the *sustained* cost, so a wedged
+    # eligibility-service stops charging every front-desk save the full timeout
+    # (adversarial review r4). Verification is best-effort either way — the
+    # patient is already committed by the caller.
+    try:
+        _breaker.before_call()
+    except EligibilityBreakerOpen:
+        # Known-bad dependency: skip the outbound call entirely. No member_id in
+        # this message (PHI policy rule 3).
+        log.warning("intake: eligibility verification skipped, circuit open")
+        return {"active": None, "status": "pending", "reason": "verification deferred"}
+
+    # An admitted caller MUST record an outcome, including on an unexpected
+    # exception — a half-open probe that records neither wedges the breaker shut.
+    healthy = False
+    try:
+        result, healthy = _query_eligibility(ins)
+    finally:
+        if healthy:
+            _breaker.record_success()
+        else:
+            _breaker.record_failure()
+    return result
+
+
+def _query_eligibility(ins: Insurance) -> tuple[dict[str, Any], bool]:
+    """
+    Call eligibility-service and shape the result.
+
+    Returns (payload, healthy). `healthy` reports whether the DEPENDENCY answered
+    usably — it drives the breaker and is not a coverage verdict: a definitive
+    "inactive" is a healthy answer, while a timeout, transport error, non-2xx, or
+    unparseable body is not. A fast 2xx carrying eligibility-service's own
+    degraded verdict (status "unknown", its payer breaker open) is likewise
+    healthy from here: it held no worker time, and the payer-side outage is
+    already handled by that service's breaker — tripping intake's too would only
+    suppress a cheap call. (The seeded time.sleep(4.2) that produced the RIV-088
+    "spin" was removed — a synthetic block no timeout could bound.)
+    """
     try:
         resp = httpx.get(
             f"{settings.eligibility_url}/eligibility",
@@ -163,7 +220,7 @@ def _verify_eligibility(ins: Optional[Insurance]) -> Optional[dict[str, Any]]:
         # Payer/eligibility too slow — do not block intake; verification deferred.
         # No member_id in this message.
         log.error("intake: eligibility check timed out")
-        return {"active": None, "status": "pending", "reason": "verification timed out"}
+        return {"active": None, "status": "pending", "reason": "verification timed out"}, False
     except Exception as e:
         # Broad on purpose (PHI policy rule 3): never stringify an outbound
         # exception here. The request URL carries insurance_id=<member_id> as a
@@ -172,7 +229,7 @@ def _verify_eligibility(ins: Optional[Insurance]) -> Optional[dict[str, Any]]:
         # the /intake response. Log the exception class only, return a generic
         # degraded result for any transport failure.
         log.error("intake: eligibility check failed (%s)", type(e).__name__)
-        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}
+        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}, False
 
     # Only a 2xx eligibility-shaped body is a definitive coverage answer. A
     # non-2xx response (e.g. a 500/503 {"detail": ...} from eligibility-service)
@@ -181,18 +238,30 @@ def _verify_eligibility(ins: Optional[Insurance]) -> Optional[dict[str, Any]]:
     # HTTP code only, never member_id — safe to log.)
     if resp.status_code // 100 != 2:
         log.error("intake: eligibility returned HTTP %s", resp.status_code)
-        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}
+        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}, False
     try:
         body = resp.json()
     except Exception:
         log.error("intake: eligibility returned a non-JSON body")
-        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}
+        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}, False
     if not isinstance(body, dict) or ("status" not in body and "active" not in body):
         # A 2xx body that isn't eligibility-shaped — treat as degraded, not inactive.
-        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}
+        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}, False
 
     # Stamp a status from the result if the service didn't supply one, so every
-    # branch of this function returns a uniform {active, status, ...}.
+    # branch of this function returns a uniform {active, status, ...}. `active`
+    # is tri-state, so test it identity-wise: a falsy-but-not-False `None` means
+    # the payer gave no verdict and must stamp "unknown" — stamping "inactive"
+    # would tell the front desk a patient is uninsured because of an outage
+    # (the r3 misclassification, one layer down).
     if "status" not in body:
-        body["status"] = "active" if body.get("active") else "inactive"
-    return body
+        active = body.get("active")
+        if active is True:
+            body["status"] = "active"
+        elif active is False:
+            body["status"] = "inactive"
+        else:
+            body["status"] = "unknown"
+    # A definitive inactive is a HEALTHY dependency answer — only unusable
+    # answers count against the breaker, never a coverage denial.
+    return body, True

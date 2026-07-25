@@ -12,13 +12,15 @@ which returned/logged str(e).
 import logging
 import sys
 
+import pytest
+
 from conftest import load_module
 
 # intake-service has its own config/db/logging_config/models/schemas; load_module
 # puts each service dir on sys.path, so bare sibling names are ambiguous across
 # services by the time this loads. Pin intake's copies while app.py imports, then
 # restore (same technique as test_llm_client.py).
-_SIBLINGS = ("config", "db", "logging_config", "models", "schemas")
+_SIBLINGS = ("config", "db", "logging_config", "models", "schemas", "breaker")
 _saved = {name: sys.modules.pop(name, None) for name in _SIBLINGS}
 sys.modules["config"] = load_module("services/intake-service/config.py", "intake_config_elig")
 sys.modules["db"] = load_module("services/intake-service/db.py", "intake_db_elig")
@@ -27,8 +29,10 @@ sys.modules["logging_config"] = load_module(
 )
 sys.modules["models"] = load_module("services/intake-service/models.py", "intake_models_elig")
 sys.modules["schemas"] = load_module("services/intake-service/schemas.py", "intake_schemas_elig")
+sys.modules["breaker"] = load_module("services/intake-service/breaker.py", "intake_breaker_elig")
 app_mod = load_module("services/intake-service/app.py", "intake_app_elig")
 schemas_mod = sys.modules["schemas"]
+breaker_mod = sys.modules["breaker"]
 for _name, _module in _saved.items():
     if _module is not None:
         sys.modules[_name] = _module
@@ -37,6 +41,18 @@ for _name, _module in _saved.items():
 
 
 MEMBER_ID = "BCBS4471"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_breaker():
+    """app.py holds a module-level breaker singleton. One failure is below the
+    trip threshold today, so this file cannot poison itself — but a second
+    failure-path test added later silently would, and the short-circuit branch
+    skips the outbound call this test exists to inspect."""
+    app_mod._breaker = breaker_mod.CircuitBreaker(
+        fail_threshold=app_mod.settings.eligibility_breaker_fail_threshold,
+        reset_seconds=app_mod.settings.eligibility_breaker_reset_seconds,
+    )
 
 
 def _raise_with_url(*args, **kwargs):
