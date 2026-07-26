@@ -51,8 +51,48 @@ class Settings:
     # correctly: they pin no worker, so they are not the RIV-141 mechanism.
     # Guarded by tests/test_eligibility_budget_alignment.py against both these
     # defaults and the .env.example values a fresh deploy seeds.
-    eligibility_degraded_slow_seconds = float(
-        os.getenv("ELIGIBILITY_DEGRADED_SLOW_SECONDS", "1")
+    # Clamped to a floor, mirroring the gateway's singleflight lock TTL
+    # (gateway/config.py): 0 is what an operator would plausibly set to "turn this
+    # check off", and it would do the opposite — every degraded answer, including
+    # eligibility's free short-circuit, becomes a breaker failure and verification
+    # goes off for everyone. "Off" here is a large number, not zero. An override can
+    # only raise the threshold, and startup never has to fail.
+    _degraded_slow_floor = 0.1
+    eligibility_degraded_slow_seconds = max(
+        float(os.getenv("ELIGIBILITY_DEGRADED_SLOW_SECONDS", "1")), _degraded_slow_floor
+    )
+    # The same rule for an answer that DID carry a coverage verdict (adversarial
+    # review r6): a definitive active/inactive that held this worker for at least
+    # this long counts against the breaker too. The verdict is still returned to
+    # the caller — usefulness and dependency health are separate questions — but a
+    # payer that degrades without going dark (one attempt read-times-out, the retry
+    # answers) otherwise keeps every registration paying seconds forever, which is
+    # RIV-088 in its partial-outage form.
+    # INVARIANT: ELIGIBILITY_DEGRADED_SLOW_SECONDS (1s) <= this <=
+    # eligibility-service's PAYER_READ_TIMEOUT_SECONDS (2s); the defaults keep it
+    # strictly greater.
+    # The upper bound is the FLOOR of the retried band, and that anchor is the
+    # whole game. A retry only happens after the first attempt's read timeout has
+    # burned in full, so the cheapest retried answer costs `read_timeout` while its
+    # ceiling (~2*read + 2*connect) is far higher. An earlier draft of this fix
+    # anchored on one healthy attempt's CEILING (connect + read = 3s) and so picked
+    # 4s — at or above the realistic TOP of the retried band, which made the check
+    # dead code: a payer degrading exactly as described answered in 2-4s and still
+    # counted as healthy. Anchor on the floor instead and every retried answer
+    # counts. The lower bound keeps a verdict's leash longer than a no-verdict
+    # reply's: a real answer is worth more than a shrug.
+    # Cost of the tight bound, accepted: a SINGLE attempt that is slow because the
+    # TCP connect dragged (connect up to 1s + a fast read) can also cross 2s and be
+    # counted unhealthy. That is not a misclassification worth widening the band
+    # for — 2s+ of worker-hold per registration is the RIV-088 symptom itself,
+    # whichever phase spent it.
+    # Guarded by tests/test_eligibility_budget_alignment.py against both these
+    # defaults and the .env.example values a fresh deploy seeds. Clamped to the
+    # degraded threshold for the same reason as above: a verdict must never be
+    # judged more harshly than a shrug.
+    eligibility_slow_answer_seconds = max(
+        float(os.getenv("ELIGIBILITY_SLOW_ANSWER_SECONDS", "2")),
+        eligibility_degraded_slow_seconds,
     )
 
     # payer settings kept for parity with the legacy module; the real X12 270/271

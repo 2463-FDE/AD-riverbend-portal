@@ -11,6 +11,9 @@ be kept aligned here.
    exceeded intake's 6s.
 2. intake's degraded-answer latency threshold must separate eligibility's free
    short-circuit from a real payer round trip (adversarial review r5).
+3. intake's slow-*answer* threshold — the one that judges a real coverage verdict
+   on what it cost — must be reachable by the cheapest answer that needed a payer
+   retry, or it never fires (adversarial review r6).
 
 Each invariant is checked against BOTH sources of truth: the code defaults in
 `config.py` AND the values in `.env.example`. The template is what a fresh deploy
@@ -59,6 +62,23 @@ def _budgets(source):
     return worst_case, source["ELIGIBILITY_TIMEOUT_SECONDS"], source["ELIGIBILITY_DEGRADED_SLOW_SECONDS"], connect
 
 
+def _answer_thresholds(source):
+    """(degraded threshold, slow-answer threshold, floor cost of a retried answer).
+
+    The retried floor is the payer READ timeout alone: `check.py` retries only
+    after an attempt has burned its read timeout in full, and there is no backoff
+    between attempts, so the very cheapest answer that needed a retry costs
+    read_timeout + (a fast second attempt). Connect time is deliberately NOT added
+    — a hanging read does not slow the TCP handshake, so a degraded payer's
+    connects stay fast and including them would overstate the floor.
+    """
+    return (
+        source["ELIGIBILITY_DEGRADED_SLOW_SECONDS"],
+        source["ELIGIBILITY_SLOW_ANSWER_SECONDS"],
+        source["PAYER_READ_TIMEOUT_SECONDS"],
+    )
+
+
 def _from_code_defaults():
     return {
         "PAYER_CONNECT_TIMEOUT_SECONDS": _elig.payer_connect_timeout_seconds,
@@ -66,6 +86,7 @@ def _from_code_defaults():
         "PAYER_MAX_RETRIES": _elig.payer_max_retries,
         "ELIGIBILITY_TIMEOUT_SECONDS": _intake.eligibility_timeout_seconds,
         "ELIGIBILITY_DEGRADED_SLOW_SECONDS": _intake.eligibility_degraded_slow_seconds,
+        "ELIGIBILITY_SLOW_ANSWER_SECONDS": _intake.eligibility_slow_answer_seconds,
     }
 
 
@@ -124,4 +145,42 @@ def test_degraded_slow_threshold_separates_short_circuit_from_payer_attempt():
             f"payer connect timeout ({connect_timeout}s), the floor cost of a payer "
             "attempt that times out — otherwise a real payer outage never counts "
             "against intake's breaker"
+        )
+
+
+def test_slow_answer_threshold_is_reachable_by_a_retried_payer_answer():
+    """intake counts a *definitive* eligibility answer against its breaker once it
+    has held the worker `ELIGIBILITY_SLOW_ANSWER_SECONDS` (adversarial review r6).
+    The threshold has to sit at or below the CHEAPEST answer that needed a payer
+    retry, or the check is dead code.
+
+    This test exists because the first attempt at that number got the anchor
+    backwards. It was set to one healthy attempt's *ceiling* (connect + read = 3s)
+    and shipped as 4s — but the retried band with realistic (fast) connects tops
+    out just under 2 x read_timeout = 4s, so no degrading payer could ever reach
+    it. Measured against the real `check.py` with a fake payer: a retry answering
+    in 0.1s / 1.0s / 1.9s costs intake 2.13s / 3.01s / 3.93s, all classified
+    healthy under a 4s threshold. Every registration kept paying it — the exact
+    unbounded-aggregate cost r6 rejected. An invariant is only worth having if it
+    forbids the wrong number, so this one asserts against the retried FLOOR.
+
+    Upper bound: the payer read timeout, the floor cost of a retried answer (no
+    backoff between attempts, so nothing else is guaranteed to be spent).
+    Lower bound: the degraded threshold — a real verdict must never be judged more
+    harshly than a no-verdict shrug. `config.py` also clamps this at runtime, so an
+    operator override cannot invert it; the assertion pins the shipped values."""
+    for label, source in _both_sources().items():
+        degraded, threshold, retried_floor = _answer_thresholds(source)
+        assert threshold <= retried_floor, (
+            f"[{label}] ELIGIBILITY_SLOW_ANSWER_SECONDS ({threshold}s) must be <= "
+            f"PAYER_READ_TIMEOUT_SECONDS ({retried_floor}s), the floor cost of an "
+            "answer that needed a payer retry — above it, the degrade-but-keep-"
+            "answering payer this threshold exists to catch still reads as healthy "
+            "and the check is dead code"
+        )
+        assert threshold >= degraded, (
+            f"[{label}] ELIGIBILITY_SLOW_ANSWER_SECONDS ({threshold}s) must be >= "
+            f"ELIGIBILITY_DEGRADED_SLOW_SECONDS ({degraded}s) — a real coverage "
+            "verdict must not be judged more harshly than a reply carrying no "
+            "verdict at all"
         )

@@ -94,10 +94,8 @@ already exists in `ai-assistant/llm_client.py` and the gateway's `_post_checked`
   "reason": "verification deferred"}` with **no outbound call**, until
   `ELIGIBILITY_BREAKER_RESET_SECONDS` elapse and one half-open probe is admitted.
   What counts as a breaker failure is a **dependency** verdict, never a coverage
-  verdict: timeout, transport error, 5xx, and unparseable bodies count; a
-  definitive `active`/`inactive` does not, whatever it cost (the per-call timeout
-  already caps that, and suppressing correct verdicts helps nobody).
-  A **4xx from eligibility-service does not count either** (adversarial review r5
+  verdict: timeout, transport error, 5xx, and unparseable bodies count.
+  A **4xx from eligibility-service does not** (adversarial review r5
   follow-up): it means eligibility rejected *this* request — a 422 on a blank or
   malformed `member_id`, say — which reports nothing about the dependency's
   health. The breaker is shared by every patient, so caller-driven input must not
@@ -105,6 +103,63 @@ already exists in `ai-assistant/llm_client.py` and the gateway's `_post_checked`
   otherwise open the circuit and strip verification from everyone else for the
   reset window. 408/429 are excluded from the carve-out, matching `check.py`'s
   transient/non-transient split.
+
+- **Usefulness and health are two questions, and latency answers the second
+  (adversarial review r6).** Earlier rounds decided `healthy` from what the
+  answer was *worth*: a definitive `active`/`inactive` counted as healthy whatever
+  it cost, and so did a 4xx. That is wrong for a breaker whose whole purpose is
+  bounding **worker-hold**. A clearinghouse that degrades without going dark —
+  first attempt read-times-out, the retry answers — returns a real verdict after
+  ~4–6s on every single registration, so intake recorded a success each time, the
+  circuit never opened, and the sustained cost stayed unbounded: RIV-088's
+  partial-outage form, previously written up in this ADR as an accepted limit
+  (see below). intake therefore now decides health on **both** axes: the answer
+  is returned to the caller if it is usable, and *independently* counts as a
+  breaker failure once it held the worker past a latency threshold. The same rule
+  covers the 4xx carve-out — a 422 that took four seconds to arrive pinned this
+  worker exactly as long as a slow verdict would have, so the carve-out is on
+  *fault*, not on cost.
+  Two thresholds, because the two answer classes are worth different waits:
+  `ELIGIBILITY_DEGRADED_SLOW_SECONDS` (1s) for a reply carrying no verdict, and
+  `ELIGIBILITY_SLOW_ANSWER_SECONDS` (2s) for one that does.
+  **Invariant:** `ELIGIBILITY_DEGRADED_SLOW_SECONDS <=
+  ELIGIBILITY_SLOW_ANSWER_SECONDS <= PAYER_READ_TIMEOUT_SECONDS`. The upper bound
+  is the **floor of the retried band**, and picking that anchor correctly is the
+  whole substance of this decision. `check.py` retries with no backoff only after
+  an attempt has burned its read timeout in full, so the cheapest answer that
+  needed a retry costs `read_timeout` plus a fast second attempt, while its
+  ceiling (~`2 × read + 2 × connect`) is much higher. A first cut of this fix
+  anchored on the opposite end — one healthy attempt's *ceiling*
+  (`connect + read` = 3s) — and shipped 4s, at or above the realistic **top** of
+  the retried band with fast connects. Measured against the real `check.py` with a
+  fake payer, a retry answering in 0.1s / 1.0s / 1.9s costs intake
+  2.13s / 3.01s / 3.93s: all healthy under a 4s threshold, so the check was dead
+  code and the r6 finding remained open behind a fix that looked applied. Worse,
+  the invariant *mandated* it — its lower bound sat above the band's floor by
+  construction, so every satisfying value missed. Anchoring on the floor makes
+  every retried answer count. The lower bound keeps a verdict's leash no shorter
+  than a shrug's. Guarded by `tests/test_eligibility_budget_alignment.py` against
+  both the `config.py` defaults and the `.env.example` values a fresh deploy
+  seeds, and clamped at runtime in `config.py` (both knobs) so an operator
+  override cannot invert the ordering or, by setting `0` to "disable" the check,
+  turn it into a circuit that never closes.
+  **Accepted cost of the tight bound:** at 2s, a *single* payer attempt that is
+  slow because the TCP connect dragged (up to 1s) plus a fast read can also cross
+  the threshold and count unhealthy. That is not worth widening the band for —
+  2s+ of worker-hold per registration is the RIV-088 symptom whichever phase spent
+  it — and the lever for a longer leash is lowering `PAYER_READ_TIMEOUT_SECONDS`,
+  which raises this ceiling with it, not raising this knob alone.
+  **Consequence, stated plainly:** during a slow-but-answering payer incident the
+  front desk now gets `status: "pending"` for most registrations instead of a
+  real verdict it waited seconds for. (Smaller than it sounds: `_create_coverage`
+  never writes `insurance_coverages.status` / `verified_at`, so the verdict was
+  only ever a field in the `/intake` response, not stored state — persisting it is
+  part of the register-first follow-up.) That is the deliberate trade — verification is
+  best-effort on this path (the patient row is already committed), intake capacity
+  is not — and it turns the incident's cost from one payer budget *per
+  registration* into roughly one *per reset window*. Rejected alternative: leave
+  it as a documented limit until true deferral lands, which is what r5 did and
+  what r6 correctly refused.
 
 - **A verdict is a boolean, not a word (adversarial review r5 follow-up).**
   `active` is the authoritative tri-state; `status` is derived detail, so intake
@@ -155,14 +210,17 @@ already exists in `ai-assistant/llm_client.py` and the gateway's `_post_checked`
     still land before every circuit opens, and concurrent in-flight calls are not
     retroactively cancelled — the breaker bounds the steady state of an outage,
     not its first burst.
-  - **A slow-but-answering payer is never bounded in aggregate.** A clearinghouse
-    that degrades without going dark (one attempt read-times-out, the retry
-    answers) returns a definitive verdict after ~4–6s, every time, forever: the
-    circuit stays closed by design, and the sustained cost is bounded only by the
-    per-call timeout. This is the RIV-088 "4–5 second spin" in its partial-outage
-    form, and it is *not* closed by this ADR. The trade is deliberate — tripping
-    here would throw away correct coverage answers the payer is still giving —
-    but the complete fix is true deferral below, not a bigger breaker.
+  - ~~**A slow-but-answering payer is never bounded in aggregate.**~~ **CLOSED by
+    review r6** — this limit was wrong to accept. A clearinghouse that degrades
+    without going dark (one attempt read-times-out, the retry answers) returns a
+    definitive verdict after ~4–6s on every save; the argument for letting it
+    through was that the answers are correct and worth having. But that is a
+    judgement about the *answer*, and this breaker exists to bound *worker-hold*,
+    so it left the RIV-088 spin unbounded in exactly its most likely form. Latency
+    now counts against the circuit on its own — see the r6 decision above. What
+    remains open is narrower: the first `workers × threshold` slow calls of an
+    incident, and the fact that a deferred verification is never re-run until true
+    deferral lands.
   - **The breaker counts *consecutive* failures, so a mixed stream keeps resetting
     it.** In the canonical outage's steady state — eligibility's payer breaker
     open, answering free `unknown`s, with one slow half-open probe every
@@ -171,6 +229,20 @@ already exists in `ai-assistant/llm_client.py` and the gateway's `_post_checked`
     what preserves intake capacity there is *eligibility's* breaker, not intake's),
     but it means intake's breaker earns its keep in the burst and in the
     eligibility-unreachable case, not in the steady state.
+  - **The latency thresholds are measured intake-side, so they charge
+    eligibility-service's own queueing to the payer's account.** The clock starts
+    before the local hop, so uvicorn threadpool queueing inside eligibility-service
+    counts too: under a concurrency spike with a perfectly healthy payer, queued
+    requests can cross the threshold and open intake's circuit. It fails in the safe
+    direction (a bounded `pending`, and the patient row is already committed) and it
+    is the unavoidable cost of measuring where the worker is actually held — the
+    alternative is a cross-service latency contract this ADR deliberately rejects.
+  - **`record_failure()` on an already-open circuit re-stamps the open window.**
+    Calls admitted just before the trip land afterwards and push the reset out by up
+    to their own latency (≤ `ELIGIBILITY_TIMEOUT_SECONDS`). Pre-existing in both
+    copies of the breaker, but newly reachable via slow *definitive* answers, which
+    used to record successes. Over-suppression, so it fails safe; not worth changing
+    the breaker's semantics for.
   - The timeouts bound each network *phase*, not total wall time: `requests`' read
     timeout is the gap between bytes and its connect timeout does not cover
     `getaddrinfo`, and `httpx.Timeout(8)` applies 8s to connect/read/write/pool
@@ -216,12 +288,17 @@ already exists in `ai-assistant/llm_client.py` and the gateway's `_post_checked`
   `PAYER_MAX_RETRIES=1`, `PAYER_BREAKER_FAIL_THRESHOLD=5`,
   `PAYER_BREAKER_RESET_SECONDS=30`; intake `ELIGIBILITY_TIMEOUT_SECONDS=8`,
   `ELIGIBILITY_BREAKER_FAIL_THRESHOLD=3`, `ELIGIBILITY_BREAKER_RESET_SECONDS=30`,
-  `ELIGIBILITY_DEGRADED_SLOW_SECONDS=1` (intake's threshold of 3 is below the
+  `ELIGIBILITY_DEGRADED_SLOW_SECONDS=1`, `ELIGIBILITY_SLOW_ANSWER_SECONDS=2`
+  (= `PAYER_READ_TIMEOUT_SECONDS`, the floor cost of a retried payer answer)
+  (intake's threshold of 3 is below the
   payer breaker's 5 because a failed call costs intake the whole payer budget it
   waited through — 6s, or 8s when eligibility itself is unreachable — where the
   payer path pays one attempt).
   Worst-case closed-breaker payer latency = `(1+2) × (1+1) = 6s`, under intake's
-  8s cap (the budget invariant above; a design budget, not a hard ceiling — see
+  8s cap; a retried answer's *cheapest* case (2s) already meets
+  `ELIGIBILITY_SLOW_ANSWER_SECONDS`, so a payer that needs its retry is classified
+  as unhealthy by design, at either end of that band (the budget invariant above; a
+  design budget, not a hard ceiling — see
   the phase-timeout limit in the honest limits). During a sustained outage what
   collapses the per-registration cost to ~0 is normally *eligibility's* breaker
   short-circuiting; intake's own circuit carries the burst before that happens and
@@ -234,9 +311,12 @@ already exists in `ai-assistant/llm_client.py` and the gateway's `_post_checked`
   `status="pending"` instead of hanging. Worst case per registration is now
   `ELIGIBILITY_TIMEOUT_SECONDS` while the intake circuit is closed and ~0 once
   either circuit is open, versus unbounded before. RIV-088's spin is capped for a
-  payer that stops answering (and the synthetic 4.2s block removed); a payer that
-  keeps answering slowly still costs its latency on every save — see the honest
-  limits.
+  payer that stops answering (and the synthetic 4.2s block removed) **and** for
+  one that keeps answering slowly: past `ELIGIBILITY_SLOW_ANSWER_SECONDS` that
+  latency counts against the circuit too, so the incident costs roughly one payer
+  budget per reset window rather than one per registration (review r6). The price
+  is that registrations in that window report `pending` instead of a verdict the
+  payer would eventually have given — see the honest limits.
 - **What this does NOT do:** eligibility verification still runs on the `/intake`
   request thread, so registration is *delayed* by a bad payer, not immune to it.
   RIV-141's freeze mechanism is bounded rather than eliminated; closing it

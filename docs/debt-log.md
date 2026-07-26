@@ -76,14 +76,19 @@
   (`intake-service/breaker.py`: after 3 consecutive unusable answers,
   verification is skipped with no outbound call and returns status `pending`
   until a 30s reset window elapses). "Unusable" covers a timeout, transport
-  error, 5xx, or unparseable body, **and** a degraded HTTP 200
-  (`status: unknown`) that held the worker for at least
-  `ELIGIBILITY_DEGRADED_SLOW_SECONDS` — that slow-but-graceful reply is what a
-  real payer outage actually looks like from intake, so excluding it left the
-  breaker closed during the exact outage it guards (adversarial review r5). A
-  **4xx** does not count: that is eligibility rejecting *our* request (e.g. a 422
-  on a blank member_id), and the breaker is shared by every patient, so a run of
-  bad rows must not strip verification from everyone else.
+  error, 5xx, or unparseable body, **and** any answer that held the worker too
+  long — a degraded HTTP 200 (`status: unknown`) past
+  `ELIGIBILITY_DEGRADED_SLOW_SECONDS` (adversarial review r5), or a real
+  `active`/`inactive` verdict past `ELIGIBILITY_SLOW_ANSWER_SECONDS` (2s, = the
+  payer read timeout, i.e. the cheapest answer that needed a retry — adversarial
+  review r6). Latency counts on its own because the breaker bounds *worker-hold*,
+  not answer quality: the verdict is still returned to the front desk, and the
+  circuit still opens. Excluding either case left the breaker closed during the
+  exact outages it guards — a payer that hangs (r5) and a payer that degrades but
+  keeps answering after a retry (r6). A **4xx** does not count *as a fault* — that
+  is eligibility rejecting *our* request (e.g. a 422 on a blank member_id), and the
+  breaker is shared by every patient, so a run of bad rows must not strip
+  verification from everyone else — but a slow 4xx still counts on cost.
   The seeded `time.sleep(4.2)` was
   removed. A payer that stops answering therefore **slows** registration by at
   most `ELIGIBILITY_TIMEOUT_SECONDS` (~0 once either circuit is open) instead of
@@ -91,11 +96,13 @@
   bounded.
   **RIV-141 is not fully closed:** verification still runs on the `/intake`
   request thread, and per-worker breaker state means up to `workers × 3` slow
-  calls can still land at the start of an outage. **Nor is RIV-088, in its
-  partial-outage form:** a payer that degrades but keeps *answering* (~4–6s per
-  call) returns a definitive verdict, so neither breaker trips by design and every
-  save still pays that latency — bounded per call, unbounded in aggregate. Both
-  need the register-first follow-up; see ADR 0010's honest limits.
+  calls can still land at the start of an outage. RIV-088's partial-outage form —
+  a payer that degrades but keeps *answering* (~4–6s per call) — **is** now
+  bounded (review r6: that latency opens intake's circuit, so the cost is ~one
+  payer budget per 30s reset window instead of per save), at the price of
+  reporting `pending` instead of a verdict for the rest of the window. The
+  register-first follow-up is what removes that price; see ADR 0010's honest
+  limits.
   A cross-service **PHI leak** found on the same path was
   also closed: `eligibility-service/app.py` no longer logs/returns `str(e)`
   (the payer request URL embeds `member_id`). **Remaining (follow-up):** full

@@ -77,19 +77,26 @@ def _install_breaker(threshold=3, reset=30.0, time_fn=None):
     return app_mod._breaker
 
 
-def _shrink_slow_threshold(monkeypatch):
-    """Scale ELIGIBILITY_DEGRADED_SLOW_SECONDS (1s in prod) down to SLOW_SECONDS'
-    scale so the suite stays fast.
+def _shrink_slow_thresholds(monkeypatch, slow_answer=SLOW_SECONDS / 2, degraded=SLOW_SECONDS / 2):
+    """Scale both latency thresholds — ELIGIBILITY_DEGRADED_SLOW_SECONDS (1s in
+    prod) and ELIGIBILITY_SLOW_ANSWER_SECONDS (2s) — down to SLOW_SECONDS' scale
+    so the suite stays fast. Both are overridable, and the tests that care which
+    knob a branch reads set them to DIFFERENT values on purpose: with the two equal,
+    a branch wired to the wrong threshold behaves identically and the test proves
+    nothing about the wiring (only about the direction).
 
-    `raising=False` on purpose: against pre-r5 code the setting does not exist,
-    and these tests must go RED on the BEHAVIOUR (the breaker never opening), not
-    on an AttributeError from the patch itself. Caveat: a typo'd attribute name
-    leaves the real 1s threshold in place, so every fake response reads as fast —
-    loud in the tests that assert the circuit OPENS, silent in the ones that
-    assert it stays CLOSED. Those are guards, not regression proofs; see
-    test_slow_definitive_answer_never_trips_the_breaker."""
+    `raising=False` on purpose: against pre-r5/pre-r6 code the settings do not
+    exist, and these tests must go RED on the BEHAVIOUR (the breaker never
+    opening), not on an AttributeError from the patch itself. Caveat: a typo'd
+    attribute name leaves the real threshold in place, so every fake response
+    reads as fast — loud in the tests that assert the circuit OPENS, silent in the
+    ones that assert it stays CLOSED. Those are guards, not regression proofs; see
+    test_definitive_answer_within_one_payer_attempt_never_trips_the_breaker."""
     monkeypatch.setattr(
-        app_mod.settings, "eligibility_degraded_slow_seconds", SLOW_SECONDS / 2, raising=False
+        app_mod.settings, "eligibility_degraded_slow_seconds", degraded, raising=False
+    )
+    monkeypatch.setattr(
+        app_mod.settings, "eligibility_slow_answer_seconds", slow_answer, raising=False
     )
 
 
@@ -206,7 +213,7 @@ def test_slow_degraded_answer_trips_the_breaker(monkeypatch):
         return _FakeResp({"insurance_id": MEMBER_ID, "active": None, "status": "unknown"})
 
     monkeypatch.setattr(app_mod.httpx, "get", _slow_degraded)
-    _shrink_slow_threshold(monkeypatch)
+    _shrink_slow_thresholds(monkeypatch)
     _install_breaker(threshold=3)
 
     for _ in range(3):
@@ -223,25 +230,77 @@ def test_slow_degraded_answer_trips_the_breaker(monkeypatch):
     assert result == {"active": None, "status": "pending", "reason": "verification deferred"}
 
 
-def test_slow_definitive_answer_never_trips_the_breaker(monkeypatch):
-    """Latency alone is not a failure: a payer that is slow but still ANSWERING
-    gives real coverage verdicts, and the per-call timeout already caps what one
-    costs. Tripping here would throw away correct answers — only degraded
-    no-verdict replies are judged on cost.
+def test_slow_definitive_answer_trips_the_breaker_but_still_returns_the_verdict(monkeypatch):
+    """The r6 no-ship, and the honest limit r5 left open: a payer that degrades
+    without going dark (first attempt read-times-out, the retry answers) returns a
+    real verdict after ~4-6s, every time. r5 read that as healthy because the
+    answer was useful, so the circuit stayed closed and every registration kept
+    paying the full latency — the availability failure this PR exists to bound.
 
-    A GUARD against over-correcting the r5 fix, not a regression proof: it is
-    green against pre-r5 code too (which treated everything as healthy). The
-    accepted cost of this rule is stated in ADR 0010's honest limits — a slow but
-    answering payer is bounded per call, not in aggregate."""
+    Health is now decided by cost as well as usefulness: the verdict is still
+    returned to the caller, and the breaker still counts a failure.
+
+    RED against r5 (3a1b072), where `definitive` returned healthy=True
+    unconditionally: the circuit stayed CLOSED and the post-threshold call still
+    went out and still blocked."""
     calls = {"n": 0}
 
     def _slow_active(*a, **k):
         calls["n"] += 1
-        time.sleep(SLOW_SECONDS)
+        time.sleep(SLOW_SECONDS)  # stands in for a retried payer attempt
         return _FakeResp({"insurance_id": MEMBER_ID, "active": True, "status": "active"})
 
     monkeypatch.setattr(app_mod.httpx, "get", _slow_active)
-    _shrink_slow_threshold(monkeypatch)
+    # Degraded threshold parked ABOVE the response latency, so this only goes green
+    # if the definitive branch reads the verdict knob — not the degraded one.
+    _shrink_slow_thresholds(monkeypatch, slow_answer=SLOW_SECONDS / 2, degraded=SLOW_SECONDS * 4)
+    _install_breaker(threshold=3)
+
+    # The caller keeps getting the real answer while the circuit is closed — a
+    # slow verdict is still a verdict, and this must not degrade to "unknown".
+    for _ in range(3):
+        result = app_mod._verify_eligibility(_insurance())
+        assert result["active"] is True
+        assert result["status"] == "active"
+    assert calls["n"] == 3
+    assert app_mod._breaker.state == CircuitBreaker.OPEN
+
+    started = time.perf_counter()
+    result = app_mod._verify_eligibility(_insurance())
+    elapsed = time.perf_counter() - started
+
+    assert calls["n"] == 3, "circuit is open — no outbound call may be made"
+    assert elapsed < SLOW_SECONDS / 2, f"deferred verification still blocked {elapsed:.3f}s"
+    assert result == {"active": None, "status": "pending", "reason": "verification deferred"}
+
+
+def test_definitive_answer_within_one_payer_attempt_never_trips_the_breaker(monkeypatch):
+    """The other side of the r6 threshold, and the reason it is a separate knob
+    from the degraded one: a payer answering inside a single attempt's budget is
+    not degraded. Tripping there would strip coverage verification off every
+    registration for the reset window because the payer was merely not instant — a
+    self-inflicted outage.
+
+    Deliberately placed BETWEEN the two thresholds — slower than
+    ELIGIBILITY_DEGRADED_SLOW_SECONDS, faster than ELIGIBILITY_SLOW_ANSWER_SECONDS
+    — so it discriminates which knob the definitive branch actually reads. An
+    earlier version slept below BOTH thresholds and was therefore vacuous: swapping
+    `eligibility_slow_answer_seconds` for `eligibility_degraded_slow_seconds` in
+    app.py's definitive branch left the whole suite green, i.e. a wiring bug that
+    judged real verdicts at the degraded threshold (opening the circuit on a payer
+    answering in 1.2s) would have shipped. Not a regression proof of r6 — green
+    against r5 too, which is the point of a guard."""
+    calls = {"n": 0}
+
+    def _somewhat_slow_active(*a, **k):
+        calls["n"] += 1
+        # Over the degraded threshold, under the verdict one: healthy only if the
+        # definitive branch consults ELIGIBILITY_SLOW_ANSWER_SECONDS.
+        time.sleep(SLOW_SECONDS)
+        return _FakeResp({"insurance_id": MEMBER_ID, "active": True, "status": "active"})
+
+    monkeypatch.setattr(app_mod.httpx, "get", _somewhat_slow_active)
+    _shrink_slow_thresholds(monkeypatch, slow_answer=SLOW_SECONDS * 4)
     _install_breaker(threshold=2)
 
     for _ in range(5):
@@ -249,6 +308,36 @@ def test_slow_definitive_answer_never_trips_the_breaker(monkeypatch):
 
     assert app_mod._breaker.state == CircuitBreaker.CLOSED
     assert calls["n"] == 5
+
+
+def test_slow_caller_error_still_trips_the_breaker(monkeypatch):
+    """Same class, third instance ([[fix-the-class-not-the-instance]]): the 4xx
+    carve-out exists because a rejected request says nothing about the
+    dependency's HEALTH — but it says nothing about its LATENCY either. A 422 that
+    took a whole payer budget to arrive held this worker exactly as long as a slow
+    verdict, so cost has to count here too, or the carve-out becomes a second
+    bypass of the same guard.
+
+    RED against r5, where any non-408/429 4xx returned healthy=True whatever it
+    cost."""
+    calls = {"n": 0}
+
+    def _slow_rejected(*a, **k):
+        calls["n"] += 1
+        time.sleep(SLOW_SECONDS)
+        return _FakeResp({"detail": "insurance_id must not be blank"}, status_code=422)
+
+    monkeypatch.setattr(app_mod.httpx, "get", _slow_rejected)
+    # Same knob-discrimination as the definitive test: the 4xx branch must read the
+    # verdict threshold, so the degraded one is parked out of reach above.
+    _shrink_slow_thresholds(monkeypatch, slow_answer=SLOW_SECONDS / 2, degraded=SLOW_SECONDS * 4)
+    _install_breaker(threshold=2)
+
+    for _ in range(2):
+        assert app_mod._verify_eligibility(_insurance())["status"] == "unknown"
+
+    assert app_mod._breaker.state == CircuitBreaker.OPEN
+    assert calls["n"] == 2
 
 
 @pytest.mark.parametrize(
@@ -286,7 +375,7 @@ def test_slow_answer_without_a_boolean_verdict_is_degraded(monkeypatch, body):
         return _FakeResp(dict(payload))
 
     monkeypatch.setattr(app_mod.httpx, "get", _slow_other)
-    _shrink_slow_threshold(monkeypatch)
+    _shrink_slow_thresholds(monkeypatch)
     _install_breaker(threshold=2)
 
     for _ in range(2):
@@ -360,7 +449,7 @@ def test_slow_degraded_log_carries_no_member_id(monkeypatch, caplog):
         )
 
     monkeypatch.setattr(app_mod.httpx, "get", _slow_phi)
-    _shrink_slow_threshold(monkeypatch)
+    _shrink_slow_thresholds(monkeypatch)
     _install_breaker(threshold=1)
 
     caplog.clear()

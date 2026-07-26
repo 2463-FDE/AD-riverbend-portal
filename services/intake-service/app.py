@@ -18,7 +18,9 @@ Inherited shortcomings (left as-is from the handoff):
   * D4 / RIV-088 / RIV-141 — PARTLY REMEDIATED 2026-07 (ADR 0010): eligibility
     is still verified on the request thread, but the call is now bounded by a
     timeout and an intake-side circuit breaker, and the seeded time.sleep(4.2)
-    is gone. Registration is therefore slowed, never frozen, by a bad payer.
+    is gone. Registration is therefore slowed, never frozen, by a bad payer —
+    including one that keeps answering slowly, whose latency counts against the
+    breaker on its own (review r6).
     Full register-first / out-of-band re-verification (instant 201 + async
     verify) remains the complete fix and is still open — it needs a job/result
     store (see ADR 0010 and docs/debt-log.md D4).
@@ -200,25 +202,44 @@ def _query_eligibility(ins: Insurance) -> tuple[dict[str, Any], bool]:
     """
     Call eligibility-service and shape the result.
 
-    Returns (payload, healthy). `healthy` reports whether the DEPENDENCY answered
-    usably — it drives the breaker and is never a coverage verdict. A definitive
-    active/inactive is healthy whatever it cost; a timeout, a transport error, a
-    5xx, or an unparseable body is not; a 4xx is our own bad request, so it is
-    healthy too (see the non-2xx branch).
+    Returns (payload, healthy). `healthy` reports whether the DEPENDENCY is worth
+    calling again — it drives the breaker and is never a coverage verdict. Two
+    independent questions decide it, and conflating them is what earlier rounds
+    got wrong:
 
-    The subtle case is a shaped 2xx carrying eligibility-service's own degraded
-    verdict ({"active": null, "status": "unknown"}). eligibility-service emits
-    that BOTH when its payer breaker short-circuits — milliseconds, costing this
-    worker nothing — AND when it spent its entire payer budget on a hanging payer.
-    Treating all of them as healthy (review r4) meant the intake breaker never
-    tripped during the exact outage it guards against: every registration paid the
-    full payer budget while intake recorded success (review r5). So a degraded
-    answer is judged by what it COST us — the thing this breaker exists to bound:
-    at/over ELIGIBILITY_DEGRADED_SLOW_SECONDS it is a failure, under it stays
-    healthy. Cost is the whole rule, so some outage modes (a payer refusing
-    connections, a bad API key) are correctly read as healthy: they pin no worker,
-    so they are not the RIV-141 mechanism, and suppressing a free call would only
-    delay noticing the payer's recovery.
+      1. Was the answer USABLE? A definitive active/inactive is; so is a 4xx,
+         which means eligibility-service rejected THIS request rather than
+         failing (see the non-2xx branch). A timeout, a transport error, a 5xx,
+         an unparseable body, or a shaped 2xx carrying no coverage verdict is not.
+      2. Was it CHEAP? This breaker exists to bound how long a bad dependency
+         holds intake workers, so latency counts against it on its own —
+         whatever the answer was worth. A usable answer that burned the budget is
+         still returned to the caller and still records a breaker failure
+         (review r6).
+
+    Both thresholds are latency, measured intake-side, so no new cross-service
+    contract is needed and a downstream change cannot mis-signal them:
+
+      * a DEGRADED answer (no verdict) is unhealthy at/over
+        ELIGIBILITY_DEGRADED_SLOW_SECONDS (~1s). eligibility-service emits the
+        same {"active": null, "status": "unknown"} both when its payer breaker
+        short-circuits — milliseconds, costing this worker nothing — and when it
+        spent its whole payer budget on a hanging payer. Treating all of them as
+        healthy (review r4) left the breaker closed during the exact outage it
+        guards (review r5); latency is what tells the two apart.
+      * a DEFINITIVE answer gets a longer leash — ELIGIBILITY_SLOW_ANSWER_SECONDS
+        (~2s) — because a real verdict is worth waiting for. That number is the
+        FLOOR of the retried band, not the ceiling of a healthy attempt: a retry
+        only happens after the first attempt's read timeout burned in full, so
+        anchoring any higher lets the degrade-but-keep-answering payer (which
+        answers in 2-4s, every save, forever) go on reading as healthy. That is
+        RIV-088's partial-outage form and it is what this threshold exists to
+        catch (review r6).
+
+    Cost is the whole rule for the fast side too, so some outage modes (a payer
+    refusing connections, a bad API key) are correctly read as healthy: they pin
+    no worker, so they are not the RIV-141 mechanism, and suppressing a free call
+    would only delay noticing the payer's recovery.
 
     (The seeded time.sleep(4.2) that produced the RIV-088 "spin" was removed — a
     synthetic block no timeout could bound.)
@@ -259,12 +280,26 @@ def _query_eligibility(ins: Insurance) -> tuple[dict[str, Any], bool]:
     # eligibility verification from every OTHER patient for the reset window.
     # 408/429 are excluded from that carve-out and 5xx is a plain dependency
     # failure, matching check.py's transient/non-transient split.
+    #
+    # A caller-fault answer still has to have been CHEAP to read as healthy: a 422
+    # that took two seconds to arrive held this worker exactly as long as a slow
+    # verdict would have, and the breaker is about worker-hold (review r6). It is
+    # judged on the definitive answer's threshold — eligibility-service reached a
+    # conclusion about the request, it just wasn't a coverage one.
+    #
+    # `cheap` is computed BEFORE the `and`, deliberately not short-circuited: a slow
+    # 5xx/408/429 is already unhealthy on fault, but the latency line is exactly the
+    # diagnostic an on-call reader wants during a dependency incident, so it must
+    # still be emitted.
     if resp.status_code // 100 != 2:
         caller_fault = 400 <= resp.status_code < 500 and resp.status_code not in (408, 429)
         log.error("intake: eligibility returned HTTP %s", resp.status_code)
+        cheap = _answered_cheaply(
+            started, settings.eligibility_slow_answer_seconds, "with an HTTP error"
+        )
         return (
             {"active": None, "status": "unknown", "reason": "eligibility check failed"},
-            caller_fault,
+            caller_fault and cheap,
         )
     try:
         body = resp.json()
@@ -290,24 +325,39 @@ def _query_eligibility(ins: Insurance) -> tuple[dict[str, Any], bool]:
     body["status"] = ("active" if active else "inactive") if definitive else "unknown"
 
     if definitive:
-        # A real coverage verdict is a HEALTHY dependency answer regardless of
-        # latency: a denial is never a breaker failure, and a slow-but-correct
-        # answer is still worth having. LIMIT: this means a payer that is slow
-        # but still answering never trips the breaker — each such registration is
-        # bounded by the timeout, but the sustained cost is not (ADR 0010,
-        # "honest limits"; the remaining fix is true deferral).
-        return body, True
+        # A real coverage verdict is always RETURNED — a denial is never a breaker
+        # failure and a slow-but-correct answer is still worth having — but the
+        # dependency is only healthy if the answer did not hold this worker as long
+        # as a retried payer attempt costs (review r6). Past that the payer is
+        # degrading while still answering: bounded per call by the timeout,
+        # unbounded in aggregate until the circuit opens — RIV-088's partial outage.
+        return body, _answered_cheaply(
+            started, settings.eligibility_slow_answer_seconds, "with a coverage verdict"
+        )
 
     # Degraded: eligibility-service is up and shaped its reply, but gave no
-    # coverage verdict. Count it against the breaker only if it actually held this
-    # worker — see the docstring. Log the latency only: every other value here
-    # comes out of a downstream response body, and this module never echoes
-    # downstream content into a log (PHI policy rule 3).
+    # coverage verdict. Judged on the tighter threshold — a reply worth nothing
+    # has to be free, not merely fast — see the docstring.
+    return body, _answered_cheaply(started, settings.eligibility_degraded_slow_seconds, "degraded")
+
+
+def _answered_cheaply(started: float, threshold_seconds: float, kind: str) -> bool:
+    """Did eligibility answer without holding this intake worker past
+    `threshold_seconds`? Latency is half of the breaker's health signal (review
+    r6): the other half is whether the answer was usable, which the caller has
+    already decided.
+
+    Logs the latency and a call-site literal only. Every other value in scope
+    here comes out of a downstream response body, and this module never echoes
+    downstream content into a log (PHI policy rule 3) — `kind` must therefore stay
+    a constant, never anything read off the wire.
+    """
     elapsed = time.monotonic() - started
-    if elapsed >= settings.eligibility_degraded_slow_seconds:
-        log.error(
-            "intake: eligibility answered degraded after %.2fs — counting against the circuit",
-            elapsed,
-        )
-        return body, False
-    return body, True
+    if elapsed < threshold_seconds:
+        return True
+    log.error(
+        "intake: eligibility answered %s after %.2fs — counting against the circuit",
+        kind,
+        elapsed,
+    )
+    return False
