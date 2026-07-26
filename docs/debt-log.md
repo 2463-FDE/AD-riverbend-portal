@@ -30,7 +30,32 @@
   diffs/CI artifacts that displayed it) — untracking does not remove it.
   See the **Remediation runbook** below for the owned, ordered purge plan.
   Also open: fix remaining log sites
-  (see `docs/phi-logging-policy.md` §violations).
+  (see `docs/phi-logging-policy.md` §violations), and **D1b** below.
+
+### D1b — member_id in uvicorn access logs (same class as D1, different layer)
+- **Location:** `services/eligibility-service/` (uvicorn default access log);
+  the caller is `services/intake-service/app.py::_query_eligibility`
+- **What:** `/eligibility` takes the member id as a **query parameter**, so
+  uvicorn's default access log records it on every call:
+  `INFO: 172.29.0.13:39898 - "GET /eligibility?insurance_id=BCBS4471 HTTP/1.1" 200 OK`.
+  Found by the live PHI scan while verifying PR #11 (adversarial review r5).
+  **Pre-existing on `main`** — neither the query-param contract nor the access
+  log is introduced by that PR.
+- **Business risk:** an external payer member id is a PHI-adjacent identifier,
+  and `docs/phi-logging-policy.md` rule 3 exists specifically to keep it out of
+  logs. The application log paths were hardened for exactly this (typed payer
+  exceptions, class-only logging, no `str(e)`); the access log then prints the
+  id anyway on every request, into the same container output that ships to any
+  log aggregator. Same reportable-breach exposure as D1, one layer down.
+- **Ticket:** — (to file)
+- **Status:** OPEN, deliberately not fixed inside PR #11 (out of that PR's
+  scope). Two candidate fixes, both needing a decision: move the member id out
+  of the URL (`GET ?insurance_id=` → `POST` with a body — an **API contract
+  change**, and intake is the only caller today), or disable/filter uvicorn's
+  access log for this service (cheaper, but loses request-level observability
+  and does not help any other service that ever takes an id in a URL). Prefer
+  the contract change; audit the other services for id-in-URL routes at the
+  same time.
 
 ### D4 — no-timeout inline eligibility call ("spinning registration")
 - **Location:** `services/intake-service/app.py` `_verify_eligibility` (inline
@@ -43,9 +68,47 @@
   patients physically waiting, staff idle). Unbounded calls also exhaust
   worker threads, so one slow payer can take down all intake capacity.
 - **Ticket:** RIV-088 (Medium), RIV-141 (High)
-- **Status:** OPEN. Recommended fix: bounded timeout on the payer call +
-  deferred/async verification (register first, verify eligibility out-of-band).
-  The new `ai-assistant/llm_client.py` demonstrates the bounded-call pattern.
+- **Status:** PARTLY CLOSED (ADR 0010). The payer call is now bounded — a
+  `(connect, read)` timeout, a small retry budget (timeout/connection/5xx only,
+  never a 4xx), and an in-process circuit breaker in
+  `eligibility-service/check.py` + `breaker.py`. intake's call to eligibility is
+  timeout-capped, guarded by its **own** in-process breaker
+  (`intake-service/breaker.py`: after 3 consecutive unusable answers,
+  verification is skipped with no outbound call and returns status `pending`
+  until a 30s reset window elapses). "Unusable" covers a timeout, transport
+  error, 5xx, or unparseable body, **and** any answer that held the worker too
+  long — a degraded HTTP 200 (`status: unknown`) past
+  `ELIGIBILITY_DEGRADED_SLOW_SECONDS` (adversarial review r5), or a real
+  `active`/`inactive` verdict past `ELIGIBILITY_SLOW_ANSWER_SECONDS` (2s, = the
+  payer read timeout, i.e. the cheapest answer that needed a retry — adversarial
+  review r6). Latency counts on its own because the breaker bounds *worker-hold*,
+  not answer quality: the verdict is still returned to the front desk, and the
+  circuit still opens. Excluding either case left the breaker closed during the
+  exact outages it guards — a payer that hangs (r5) and a payer that degrades but
+  keeps answering after a retry (r6). A **4xx** does not count *as a fault* — that
+  is eligibility rejecting *our* request (e.g. a 422 on a blank member_id), and the
+  breaker is shared by every patient, so a run of bad rows must not strip
+  verification from everyone else — but a slow 4xx still counts on cost.
+  The seeded `time.sleep(4.2)` was
+  removed. A payer that stops answering therefore **slows** registration by at
+  most `ELIGIBILITY_TIMEOUT_SECONDS` (~0 once either circuit is open) instead of
+  freezing it indefinitely — RIV-088's spin is capped and RIV-141's freeze is
+  bounded.
+  **RIV-141 is not fully closed:** verification still runs on the `/intake`
+  request thread, and per-worker breaker state means up to `workers × 3` slow
+  calls can still land at the start of an outage. RIV-088's partial-outage form —
+  a payer that degrades but keeps *answering* (~4–6s per call) — **is** now
+  bounded (review r6: that latency opens intake's circuit, so the cost is ~one
+  payer budget per 30s reset window instead of per save), at the price of
+  reporting `pending` instead of a verdict for the rest of the window. The
+  register-first follow-up is what removes that price; see ADR 0010's honest
+  limits.
+  A cross-service **PHI leak** found on the same path was
+  also closed: `eligibility-service/app.py` no longer logs/returns `str(e)`
+  (the payer request URL embeds `member_id`). **Remaining (follow-up):** full
+  register-first / out-of-band re-verification (instant 201 + async verify),
+  and moving the gateway `proxy_intake` path off the legacy error-swallowing
+  `_post` onto `_post_checked`.
 
 ### D12 — ROI disclosures without authorization
 - **Location:** `services/roi-service/app.py:90,104,146,148`
