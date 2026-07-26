@@ -47,40 +47,62 @@ def check(insurance_id: str):
     attempts = settings.payer_max_retries + 1
     last_failure = None  # "timeout" | "unavailable"
 
-    for attempt in range(attempts):
-        try:
-            resp = requests.get(PAYER_URL, params=params, headers=headers, timeout=timeout)
-        except requests.Timeout:
-            last_failure = "timeout"
-        except requests.RequestException:
-            # Any other transport-level failure (connection, DNS, redirects, …).
-            # Caught broadly so no raw requests exception — whose message embeds
-            # the member_id-bearing URL — can escape untyped (PHI rule 3).
-            last_failure = "unavailable"
-        else:
-            # Only statuses the payer contract defines as a real coverage answer
-            # are definitive: 2xx = active, 404 = member-not-found = inactive.
-            # Everything else is a dependency/config failure, NOT a coverage
-            # denial — mapping a 401/403/429/etc to "inactive" would tell a
-            # patient they are uninsured because of our auth key or a rate limit.
-            if resp.ok:  # 2xx
-                _breaker.record_success()
-                return {"insurance_id": insurance_id, "active": True, "raw_status": resp.status_code}
-            if resp.status_code == 404:
-                _breaker.record_success()
-                return {"insurance_id": insurance_id, "active": False, "raw_status": resp.status_code}
-            if resp.status_code in (408, 429) or resp.status_code >= 500:
-                # Transient — retry within the budget, then fail as unavailable.
+    # An admitted caller MUST record an outcome, including on an unexpected
+    # exception: a half-open probe that records neither leaves `_probe_in_flight`
+    # set and wedges the breaker shut for every later caller. The same fix was
+    # made on intake's copy of this pattern in review r4 (app.py::
+    # _verify_eligibility); it belongs here too — this is the original.
+    recorded = False
+    try:
+        for attempt in range(attempts):
+            try:
+                resp = requests.get(PAYER_URL, params=params, headers=headers, timeout=timeout)
+            except requests.Timeout:
+                last_failure = "timeout"
+            except requests.RequestException:
+                # Any other transport-level failure (connection, DNS, redirects, …).
+                # Caught broadly so no raw requests exception — whose message embeds
+                # the member_id-bearing URL — can escape untyped (PHI rule 3).
                 last_failure = "unavailable"
             else:
-                # Non-definitive and non-transient (401/403/400/422/…): retrying
-                # will not help, so stop now and surface an unavailable result.
-                last_failure = "unavailable"
-                break
-        # fall through here only on a retryable failure; loop retries if budget remains
+                # Only statuses the payer contract defines as a real coverage answer
+                # are definitive: 2xx = active, 404 = member-not-found = inactive.
+                # Everything else is a dependency/config failure, NOT a coverage
+                # denial — mapping a 401/403/429/etc to "inactive" would tell a
+                # patient they are uninsured because of our auth key or a rate limit.
+                if resp.ok:  # 2xx
+                    _breaker.record_success()
+                    recorded = True
+                    return {
+                        "insurance_id": insurance_id,
+                        "active": True,
+                        "raw_status": resp.status_code,
+                    }
+                if resp.status_code == 404:
+                    _breaker.record_success()
+                    recorded = True
+                    return {
+                        "insurance_id": insurance_id,
+                        "active": False,
+                        "raw_status": resp.status_code,
+                    }
+                if resp.status_code in (408, 429) or resp.status_code >= 500:
+                    # Transient — retry within the budget, then fail as unavailable.
+                    last_failure = "unavailable"
+                else:
+                    # Non-definitive and non-transient (401/403/400/422/…): retrying
+                    # will not help, so stop now and surface an unavailable result.
+                    last_failure = "unavailable"
+                    break
+            # fall through here only on a retryable failure; loop retries if budget remains
 
-    # All attempts failed — count one failed call against the breaker and raise typed.
-    _breaker.record_failure()
-    if last_failure == "timeout":
-        raise PayerTimeout("payer timeout")
-    raise PayerUnavailable("payer unavailable")
+        # All attempts failed — count one failed call against the breaker and raise typed.
+        _breaker.record_failure()
+        recorded = True
+        if last_failure == "timeout":
+            raise PayerTimeout("payer timeout")
+        raise PayerUnavailable("payer unavailable")
+    finally:
+        if not recorded:
+            # Only reachable if something unexpected escaped the loop.
+            _breaker.record_failure()

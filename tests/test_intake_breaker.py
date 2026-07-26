@@ -77,6 +77,22 @@ def _install_breaker(threshold=3, reset=30.0, time_fn=None):
     return app_mod._breaker
 
 
+def _shrink_slow_threshold(monkeypatch):
+    """Scale ELIGIBILITY_DEGRADED_SLOW_SECONDS (1s in prod) down to SLOW_SECONDS'
+    scale so the suite stays fast.
+
+    `raising=False` on purpose: against pre-r5 code the setting does not exist,
+    and these tests must go RED on the BEHAVIOUR (the breaker never opening), not
+    on an AttributeError from the patch itself. Caveat: a typo'd attribute name
+    leaves the real 1s threshold in place, so every fake response reads as fast —
+    loud in the tests that assert the circuit OPENS, silent in the ones that
+    assert it stays CLOSED. Those are guards, not regression proofs; see
+    test_slow_definitive_answer_never_trips_the_breaker."""
+    monkeypatch.setattr(
+        app_mod.settings, "eligibility_degraded_slow_seconds", SLOW_SECONDS / 2, raising=False
+    )
+
+
 @pytest.fixture(autouse=True)
 def _fresh_breaker():
     _install_breaker()
@@ -171,6 +187,194 @@ def test_fast_degraded_answer_never_trips_the_breaker(monkeypatch):
 
     assert app_mod._breaker.state == CircuitBreaker.CLOSED
     assert calls["n"] == 5
+
+
+def test_slow_degraded_answer_trips_the_breaker(monkeypatch):
+    """The r5 no-ship: a payer outage reaches intake as a *slow* HTTP 200
+    {"active": null, "status": "unknown"} — eligibility-service burned its whole
+    payer budget and then answered gracefully. Counting that as healthy (r4) meant
+    the breaker reset on every registration and each front-desk save kept paying
+    the payer budget: the exact outage this breaker exists to bound.
+
+    RED against r4, where every shaped 2xx returned healthy=True: the breaker
+    stayed CLOSED and the post-threshold call still went out and still blocked."""
+    calls = {"n": 0}
+
+    def _slow_degraded(*a, **k):
+        calls["n"] += 1
+        time.sleep(SLOW_SECONDS)  # stands in for burning the payer budget
+        return _FakeResp({"insurance_id": MEMBER_ID, "active": None, "status": "unknown"})
+
+    monkeypatch.setattr(app_mod.httpx, "get", _slow_degraded)
+    _shrink_slow_threshold(monkeypatch)
+    _install_breaker(threshold=3)
+
+    for _ in range(3):
+        assert app_mod._verify_eligibility(_insurance())["status"] == "unknown"
+    assert calls["n"] == 3
+    assert app_mod._breaker.state == CircuitBreaker.OPEN
+
+    started = time.perf_counter()
+    result = app_mod._verify_eligibility(_insurance())
+    elapsed = time.perf_counter() - started
+
+    assert calls["n"] == 3, "circuit is open — no outbound call may be made"
+    assert elapsed < SLOW_SECONDS / 2, f"deferred verification still blocked {elapsed:.3f}s"
+    assert result == {"active": None, "status": "pending", "reason": "verification deferred"}
+
+
+def test_slow_definitive_answer_never_trips_the_breaker(monkeypatch):
+    """Latency alone is not a failure: a payer that is slow but still ANSWERING
+    gives real coverage verdicts, and the per-call timeout already caps what one
+    costs. Tripping here would throw away correct answers — only degraded
+    no-verdict replies are judged on cost.
+
+    A GUARD against over-correcting the r5 fix, not a regression proof: it is
+    green against pre-r5 code too (which treated everything as healthy). The
+    accepted cost of this rule is stated in ADR 0010's honest limits — a slow but
+    answering payer is bounded per call, not in aggregate."""
+    calls = {"n": 0}
+
+    def _slow_active(*a, **k):
+        calls["n"] += 1
+        time.sleep(SLOW_SECONDS)
+        return _FakeResp({"insurance_id": MEMBER_ID, "active": True, "status": "active"})
+
+    monkeypatch.setattr(app_mod.httpx, "get", _slow_active)
+    _shrink_slow_threshold(monkeypatch)
+    _install_breaker(threshold=2)
+
+    for _ in range(5):
+        assert app_mod._verify_eligibility(_insurance())["active"] is True
+
+    assert app_mod._breaker.state == CircuitBreaker.CLOSED
+    assert calls["n"] == 5
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # The whole class of "2xx that carries no boolean coverage verdict",
+        # not one anecdote ([[fix-the-class-not-the-instance]]). Every one of
+        # these must read as degraded and be judged on cost.
+        {"active": None, "status": "deferred"},  # a future/foreign status value
+        {"active": None, "status": "unknown"},  # eligibility's own degraded shape
+        {"active": None, "status": ""},  # empty string
+        {"active": None, "status": None},  # null status
+        {"active": None, "status": 1},  # not even a string
+        {"active": None, "status": "ACTIVE"},  # right word, wrong case
+        {"active": None, "status": "active "},  # right word, trailing space
+        {"active": "true", "status": "active"},  # stringly-typed, not a bool
+        {"status": "active"},  # THE adversarial one: verdict word, no verdict
+    ],
+)
+def test_slow_answer_without_a_boolean_verdict_is_degraded(monkeypatch, body):
+    """Adversarial: the definitive/degraded split must key on an ACTUAL verdict —
+    `active` being True or False — never on the `status` string a downstream
+    happened to send. `status` is derived detail; `active` is the authoritative
+    tri-state (ADR 0010).
+
+    Both directions of the misclassification matter. r3 stopped a dependency
+    outage reading as "inactive" (a patient wrongly told they are uninsured).
+    This is the mirror: a body carrying the WORD "active" but no boolean must not
+    be reported as covered — and since r5 it must not hold the circuit closed
+    while every registration pays full latency either."""
+    payload = dict(body, insurance_id=MEMBER_ID)
+
+    def _slow_other(*a, **k):
+        time.sleep(SLOW_SECONDS)
+        return _FakeResp(dict(payload))
+
+    monkeypatch.setattr(app_mod.httpx, "get", _slow_other)
+    _shrink_slow_threshold(monkeypatch)
+    _install_breaker(threshold=2)
+
+    for _ in range(2):
+        result = app_mod._verify_eligibility(_insurance())
+        assert result["status"] == "unknown", f"{payload} must not report a coverage verdict"
+
+    assert app_mod._breaker.state == CircuitBreaker.OPEN
+
+
+def test_caller_error_never_trips_the_shared_breaker(monkeypatch):
+    """Adversarial availability check: the breaker is shared by every patient, so
+    it must only ever be driven by the DEPENDENCY's health. eligibility-service
+    answers 422 when intake sends a blank/malformed member_id — a bad batch
+    import or a scanner emitting whitespace produces a run of them. Counting
+    those would let a few junk rows strip eligibility verification from everyone
+    else for the whole reset window."""
+    calls = {"n": 0}
+
+    def _rejected(*a, **k):
+        calls["n"] += 1
+        return _FakeResp({"detail": "insurance_id must not be blank"}, status_code=422)
+
+    monkeypatch.setattr(app_mod.httpx, "get", _rejected)
+    _install_breaker(threshold=2)
+
+    for _ in range(5):
+        assert app_mod._verify_eligibility(_insurance())["status"] == "unknown"
+
+    assert app_mod._breaker.state == CircuitBreaker.CLOSED
+    assert calls["n"] == 5, "a caller-side error must not stop us calling the dependency"
+
+
+@pytest.mark.parametrize("status_code", [500, 503, 408, 429])
+def test_dependency_side_http_errors_still_trip_the_breaker(monkeypatch, status_code):
+    """The other half of that split: a 5xx — and the two 4xx codes that mean
+    "overloaded", not "your request is wrong" — are the dependency failing, and
+    must still count. Narrowing the 4xx carve-out must not punch a hole here."""
+
+    def _failing(*a, **k):
+        return _FakeResp({"detail": "boom"}, status_code=status_code)
+
+    monkeypatch.setattr(app_mod.httpx, "get", _failing)
+    _install_breaker(threshold=2)
+
+    for _ in range(2):
+        assert app_mod._verify_eligibility(_insurance())["status"] == "unknown"
+
+    assert app_mod._breaker.state == CircuitBreaker.OPEN
+
+
+def test_slow_degraded_log_carries_no_member_id(monkeypatch, caplog):
+    """Adversarial PHI check on the NEW branch (CLAUDE.md §5): the degraded-and-slow
+    log line is the only place intake reports on a downstream *body*. Plant the
+    member id in every field of that body — including keys intake does not read,
+    and the `status` value it does — and prove none of it reaches the log. (The
+    returned payload is the downstream body itself and legitimately echoes
+    insurance_id back to the front desk that submitted it; the log is the boundary
+    under test.)"""
+
+    def _slow_phi(*a, **k):
+        time.sleep(SLOW_SECONDS)
+        return _FakeResp(
+            {
+                "insurance_id": MEMBER_ID,
+                "active": None,
+                "status": f"unknown-{MEMBER_ID}",
+                "error": f"payer rejected {MEMBER_ID}",
+                "payer": MEMBER_ID,
+                "notes": [MEMBER_ID],
+            }
+        )
+
+    monkeypatch.setattr(app_mod.httpx, "get", _slow_phi)
+    _shrink_slow_threshold(monkeypatch)
+    _install_breaker(threshold=1)
+
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG):
+        app_mod._verify_eligibility(_insurance())
+
+    assert app_mod._breaker.state == CircuitBreaker.OPEN
+    # Assert POSITIVELY that the degraded line was emitted — an all-clear over an
+    # empty caplog proves nothing, and would keep passing if the log call were
+    # deleted outright.
+    degraded = [r for r in caplog.records if "degraded" in r.getMessage()]
+    assert len(degraded) == 1, f"expected one degraded log line, got {len(degraded)}"
+    for record in caplog.records:
+        assert MEMBER_ID not in record.getMessage()
 
 
 def test_unexpected_exception_records_a_failure_and_never_wedges_the_breaker(monkeypatch):

@@ -140,3 +140,48 @@ def test_breaker_opens_and_short_circuits(monkeypatch):
         check_mod.check(MEMBER_ID)
     # Short-circuited: the payer was NOT called on the open-circuit attempt.
     assert calls["n"] == calls_before
+
+
+def test_unexpected_exception_never_wedges_the_half_open_probe(monkeypatch):
+    """Fix-the-class (PR #4 r4 lesson, applied to intake's copy in review r5 and
+    now to the original): check() admits a caller through the breaker before it
+    does any work, so an exception that is NOT a requests.RequestException —
+    escaping between admission and record_success/record_failure — used to leave
+    `_probe_in_flight` set. If that caller was the single half-open probe, the
+    breaker stays HALF_OPEN forever and rejects every later call: the payer never
+    gets retried and eligibility silently returns "unknown" for every patient
+    from then on.
+
+    RED against the pre-fix check(), whose before_call() had no try/finally."""
+    clock_state = {"now": 0.0}
+    check_mod._breaker = breaker_mod.CircuitBreaker(
+        fail_threshold=1, reset_seconds=30.0, time_fn=lambda: clock_state["now"]
+    )
+
+    monkeypatch.setattr(
+        check_mod.requests, "get", lambda *a, **k: (_ for _ in ()).throw(
+            check_mod.requests.ConnectionError("down")
+        )
+    )
+    with pytest.raises(breaker_mod.PayerUnavailable):
+        check_mod.check(MEMBER_ID)
+    assert check_mod._breaker.state == breaker_mod.CircuitBreaker.OPEN
+
+    # Reset window elapses; the next caller becomes the sole half-open probe —
+    # and blows up in a way check() does not model.
+    clock_state["now"] += 31.0
+
+    def _boom(*a, **k):
+        raise MemoryError("not a requests error")
+
+    monkeypatch.setattr(check_mod.requests, "get", _boom)
+    with pytest.raises(MemoryError):
+        check_mod.check(MEMBER_ID)
+
+    # The probe settled as a failure, so the circuit re-opened with a fresh
+    # window instead of wedging: after the next window a probe is admitted again.
+    assert check_mod._breaker.state == breaker_mod.CircuitBreaker.OPEN
+    clock_state["now"] += 31.0
+    monkeypatch.setattr(check_mod.requests, "get", lambda *a, **k: _FakeResponse(True, 200))
+    assert check_mod.check(MEMBER_ID)["active"] is True
+    assert check_mod._breaker.state == breaker_mod.CircuitBreaker.CLOSED

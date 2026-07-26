@@ -36,6 +36,24 @@ class Settings:
     eligibility_breaker_reset_seconds = float(
         os.getenv("ELIGIBILITY_BREAKER_RESET_SECONDS", "30")
     )
+    # A degraded (no coverage verdict) eligibility answer counts against the
+    # breaker only when it held this intake worker for at least this long
+    # (adversarial review r5). Rationale: eligibility-service returns HTTP 200
+    # with {"active": null, "status": "unknown"} both when its own payer breaker
+    # short-circuits — milliseconds, costs intake nothing — and when it burned
+    # its whole payer budget on a timing-out payer. Only the second is the
+    # sustained cost RIV-088 is about, and latency is what tells them apart.
+    # INVARIANT: 0.1s <= this <= eligibility-service's payer connect timeout (1s).
+    # Upper bound = the floor cost of a payer attempt that TIMES OUT, so a hanging
+    # payer lands on the slow side. Lower bound clears one local HTTP round trip,
+    # so eligibility's free short-circuit lands on the fast side. Payer failures
+    # that cost nothing (connection refused, a hard 401) also read as fast —
+    # correctly: they pin no worker, so they are not the RIV-141 mechanism.
+    # Guarded by tests/test_eligibility_budget_alignment.py against both these
+    # defaults and the .env.example values a fresh deploy seeds.
+    eligibility_degraded_slow_seconds = float(
+        os.getenv("ELIGIBILITY_DEGRADED_SLOW_SECONDS", "1")
+    )
 
     # payer settings kept for parity with the legacy module; the real X12 270/271
     # round-trip is owned by eligibility-service.

@@ -94,15 +94,91 @@ already exists in `ai-assistant/llm_client.py` and the gateway's `_post_checked`
   "reason": "verification deferred"}` with **no outbound call**, until
   `ELIGIBILITY_BREAKER_RESET_SECONDS` elapse and one half-open probe is admitted.
   What counts as a breaker failure is a **dependency** verdict, never a coverage
-  verdict: timeout, transport error, non-2xx, and unparseable bodies count; a
-  definitive `inactive` does not, and neither does a fast 2xx carrying
-  eligibility-service's own degraded `unknown` (it held no worker time, and the
-  payer-side outage is already handled by that service's breaker).
-  **Honest limits:** state is per-worker, so with *W* workers up to
-  `W × threshold` slow calls can still land before every circuit opens, and
-  concurrent in-flight calls are not retroactively cancelled — the breaker bounds
-  the steady state of an outage, not its first burst. This narrows the RIV-141
-  window; it is not a substitute for true deferral below.
+  verdict: timeout, transport error, 5xx, and unparseable bodies count; a
+  definitive `active`/`inactive` does not, whatever it cost (the per-call timeout
+  already caps that, and suppressing correct verdicts helps nobody).
+  A **4xx from eligibility-service does not count either** (adversarial review r5
+  follow-up): it means eligibility rejected *this* request — a 422 on a blank or
+  malformed `member_id`, say — which reports nothing about the dependency's
+  health. The breaker is shared by every patient, so caller-driven input must not
+  drive it: a botched batch import or a scanner emitting whitespace would
+  otherwise open the circuit and strip verification from everyone else for the
+  reset window. 408/429 are excluded from the carve-out, matching `check.py`'s
+  transient/non-transient split.
+
+- **A verdict is a boolean, not a word (adversarial review r5 follow-up).**
+  `active` is the authoritative tri-state; `status` is derived detail, so intake
+  computes `status` from `active` rather than trusting whatever string arrived.
+  r3 established the rule in one direction (a dependency outage must never read
+  as `inactive`). The mirror was still open: a body carrying `{"status":
+  "active"}` with no `active` key — a captive portal, a proxy, a future
+  responder — was reported to the front desk as covered, and after r5 it also
+  held the circuit closed while every registration paid full latency.
+
+- **A degraded eligibility answer counts against the intake breaker when it was
+  slow, not when it was free (adversarial review r5).** eligibility-service
+  returns HTTP 200 `{"active": null, "status": "unknown"}` for *both* of its
+  degraded modes: its payer breaker short-circuiting (milliseconds — costs intake
+  nothing) and a payer that hung until the whole payer budget burned (seconds —
+  the sustained cost RIV-088 is about). r4 classified every shaped 2xx as healthy,
+  so during the primary outage mode intake's breaker reset on every registration
+  and never opened: the guard was bypassed exactly when it was needed. intake
+  therefore judges a degraded answer by **what it cost this worker** — the thing
+  the breaker exists to bound — counting it as a failure at or over
+  `ELIGIBILITY_DEGRADED_SLOW_SECONDS` and as healthy under it. Latency is measured
+  intake-side, so no new cross-service contract is needed and a downstream change
+  cannot mis-signal it. Rejected alternatives: (a) count *all* degraded answers as
+  failures — simpler, but it suppresses a free call and delays noticing the payer's
+  recovery, since intake's circuit would then have to time out after
+  eligibility's; (b) have eligibility-service emit a distinct degradation signal
+  (non-2xx or metadata) — an API-contract change across two services to convey
+  something intake can already observe directly.
+  **Invariant:** `0.1s <= ELIGIBILITY_DEGRADED_SLOW_SECONDS <=
+  PAYER_CONNECT_TIMEOUT_SECONDS`. The upper bound is the floor cost of a payer
+  attempt that fails *by timing out*, so a hanging payer lands on the slow side;
+  the lower bound clears one local HTTP round trip, so eligibility's free
+  short-circuit lands on the fast side (`> 0` would be decorative — 1 ms sits
+  below the round trip itself and would make every free short-circuit a failure).
+  Guarded by `tests/test_eligibility_budget_alignment.py`, against both the
+  `config.py` defaults **and** the `.env.example` values a fresh deploy seeds.
+  **Cost is the whole rule, so some outage modes read as free — deliberately.** A
+  payer refusing connections, returning a hard 401, or 5xx-ing instantly all reach
+  intake as a *fast* `unknown` and stay healthy. They pin no worker, so they are
+  not the RIV-141 mechanism; eligibility-service's own breaker and its logs are
+  what surface them. (An earlier draft of this ADR claimed a real payer round trip
+  *always* lands on the slow side. That is false for these modes, and the true
+  rule is simpler: intake acts on cost, and only on cost.) A transport error
+  reaching intake still counts as a failure whatever its latency — that means
+  eligibility-service itself is unreachable, so there is nothing left to ask.
+  **Honest limits:**
+  - State is per-worker, so with *W* workers up to `W × threshold` slow calls can
+    still land before every circuit opens, and concurrent in-flight calls are not
+    retroactively cancelled — the breaker bounds the steady state of an outage,
+    not its first burst.
+  - **A slow-but-answering payer is never bounded in aggregate.** A clearinghouse
+    that degrades without going dark (one attempt read-times-out, the retry
+    answers) returns a definitive verdict after ~4–6s, every time, forever: the
+    circuit stays closed by design, and the sustained cost is bounded only by the
+    per-call timeout. This is the RIV-088 "4–5 second spin" in its partial-outage
+    form, and it is *not* closed by this ADR. The trade is deliberate — tripping
+    here would throw away correct coverage answers the payer is still giving —
+    but the complete fix is true deferral below, not a bigger breaker.
+  - **The breaker counts *consecutive* failures, so a mixed stream keeps resetting
+    it.** In the canonical outage's steady state — eligibility's payer breaker
+    open, answering free `unknown`s, with one slow half-open probe every
+    `PAYER_BREAKER_RESET_SECONDS` — intake's circuit essentially never opens. That
+    is the correct outcome (total cost is one payer budget per reset window, and
+    what preserves intake capacity there is *eligibility's* breaker, not intake's),
+    but it means intake's breaker earns its keep in the burst and in the
+    eligibility-unreachable case, not in the steady state.
+  - The timeouts bound each network *phase*, not total wall time: `requests`' read
+    timeout is the gap between bytes and its connect timeout does not cover
+    `getaddrinfo`, and `httpx.Timeout(8)` applies 8s to connect/read/write/pool
+    separately. A payer trickling bytes or a hanging resolver can therefore exceed
+    the nominal worst case. Classification stays correct (they land on the slow
+    side); the numbers below are the design budget, not a hard ceiling.
+
+  This narrows the RIV-141 window; it is not a substitute for true deferral below.
 
 - **Decouple intake with a bounded best-effort call now; full out-of-band
   re-verification is a follow-up.** `_verify_eligibility` gets an explicit
@@ -139,21 +215,28 @@ already exists in `ai-assistant/llm_client.py` and the gateway's `_post_checked`
   eligibility `PAYER_CONNECT_TIMEOUT_SECONDS=1`, `PAYER_READ_TIMEOUT_SECONDS=2`,
   `PAYER_MAX_RETRIES=1`, `PAYER_BREAKER_FAIL_THRESHOLD=5`,
   `PAYER_BREAKER_RESET_SECONDS=30`; intake `ELIGIBILITY_TIMEOUT_SECONDS=8`,
-  `ELIGIBILITY_BREAKER_FAIL_THRESHOLD=3`, `ELIGIBILITY_BREAKER_RESET_SECONDS=30`
-  (intake trips sooner than the payer breaker because each failed call costs it
-  8s, not 3s).
-  Worst-case closed-breaker payer latency = `(1+2) × (1+1) = 6s`, safely under
-  intake's 8s cap (the budget invariant above); the breaker collapses that to ~0
-  once open, which is what preserves intake capacity during a sustained outage.
+  `ELIGIBILITY_BREAKER_FAIL_THRESHOLD=3`, `ELIGIBILITY_BREAKER_RESET_SECONDS=30`,
+  `ELIGIBILITY_DEGRADED_SLOW_SECONDS=1` (intake's threshold of 3 is below the
+  payer breaker's 5 because a failed call costs intake the whole payer budget it
+  waited through — 6s, or 8s when eligibility itself is unreachable — where the
+  payer path pays one attempt).
+  Worst-case closed-breaker payer latency = `(1+2) × (1+1) = 6s`, under intake's
+  8s cap (the budget invariant above; a design budget, not a hard ceiling — see
+  the phase-timeout limit in the honest limits). During a sustained outage what
+  collapses the per-registration cost to ~0 is normally *eligibility's* breaker
+  short-circuiting; intake's own circuit carries the burst before that happens and
+  the case where eligibility-service is unreachable outright.
 
 ## Consequences
 
 - A payer outage no longer freezes intake: calls are bounded at both hops, both
   breakers open under sustained failure, and intake returns a bounded 201 with
   `status="pending"` instead of hanging. Worst case per registration is now
-  `ELIGIBILITY_TIMEOUT_SECONDS` while the intake circuit is closed and ~0 once it
-  opens, versus unbounded before. RIV-088's spin is capped (and the synthetic
-  4.2s block removed).
+  `ELIGIBILITY_TIMEOUT_SECONDS` while the intake circuit is closed and ~0 once
+  either circuit is open, versus unbounded before. RIV-088's spin is capped for a
+  payer that stops answering (and the synthetic 4.2s block removed); a payer that
+  keeps answering slowly still costs its latency on every save — see the honest
+  limits.
 - **What this does NOT do:** eligibility verification still runs on the `/intake`
   request thread, so registration is *delayed* by a bad payer, not immune to it.
   RIV-141's freeze mechanism is bounded rather than eliminated; closing it
@@ -168,10 +251,16 @@ already exists in `ai-assistant/llm_client.py` and the gateway's `_post_checked`
   eligibility-service stays datastore-free. Per-service `python -c "import app"`
   import smoke still passes (new env vars have defaults; nothing egresses at
   import).
-- New env vars are added to `.env.example` and `docker-compose.yml` with safe
-  defaults.
+- New env vars are added to `.env.example` with safe defaults, and reach the
+  services through compose's existing `env_file: .env` — `docker-compose.yml`
+  itself lists only per-service URLs and needs no change.
 - **Out of scope / follow-ups:** full register-first async re-verification (the
-  complete D4 fix); the gateway `proxy_intake` path still uses the legacy `_post`
-  (timeout=30, swallows errors into 200 + `str(e)`) and should move to
-  `_post_checked`; the eligibility **agent + visit memory** the COO asked for
-  lands in a second PR (ADR 0011) on top of this foundation.
+  complete D4 fix), which is also what would close the slow-but-answering-payer
+  limit above; a total-elapsed budget rather than per-phase timeouts (the
+  trickling-payer / hanging-resolver limit); normalising `member_id` at the
+  `schemas.Insurance` seam so blank/whitespace ids never reach the wire at all
+  (the 4xx carve-out already stops them driving the breaker); the gateway
+  `proxy_intake` path still uses the legacy `_post` (timeout=30, swallows errors
+  into 200 + `str(e)`) and should move to `_post_checked`; the eligibility
+  **agent + visit memory** the COO asked for lands in a second PR (ADR 0011) on
+  top of this foundation.
