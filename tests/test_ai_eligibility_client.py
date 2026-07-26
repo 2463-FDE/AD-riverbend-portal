@@ -331,14 +331,51 @@ def test_half_open_probe_recovers_the_circuit(monkeypatch):
     assert client_mod._breaker.state == "closed"
 
 
-def test_an_unexpected_exception_does_not_wedge_the_breaker(monkeypatch):
-    # The half-open wedge found in check.py during PR #11 review r5: an admitted
-    # probe that records NEITHER outcome leaves _probe_in_flight set forever.
+def test_an_unexpected_exception_inside_query_is_handled(monkeypatch):
+    # An exception raised INSIDE the http call is caught by _query's broad except
+    # and becomes a degraded answer -- no wedge risk on this path.
     fake_get, clock = _response(exc=RuntimeError("something unexpected"))
     _install(monkeypatch, fake_get, clock)
 
     for _ in range(3):
-        client_mod.check_coverage(MEMBER_ID)
+        assert client_mod.check_coverage(MEMBER_ID)["status"] == "unknown"
 
     assert client_mod._breaker.state == "open"
+
+
+def test_an_exception_escaping_query_cannot_wedge_the_breaker(monkeypatch):
+    """The half-open wedge found in check.py during PR #11 review r5.
+
+    The previous version of this test raised inside httpx.get, which _query's
+    broad `except Exception` swallows -- so nothing ever escaped and the
+    try/finally under test was never exercised (deleting it left the test green).
+    Raise from _query itself, which is what the finally actually guards.
+    """
+    def _boom(insurance_id):
+        raise RuntimeError("escaped _query")
+
+    monkeypatch.setattr(client_mod, "_query", _boom)
+
+    with pytest.raises(RuntimeError):
+        client_mod.check_coverage(MEMBER_ID)
+
+    # The admitted caller recorded an outcome on its way out, so the breaker is
+    # not stuck mid-probe and later callers are not rejected forever.
     assert client_mod._breaker._probe_in_flight is False
+    with pytest.raises(RuntimeError):
+        client_mod.check_coverage(MEMBER_ID)
+    with pytest.raises(RuntimeError):
+        client_mod.check_coverage(MEMBER_ID)
+    assert client_mod._breaker.state == "open"
+
+
+def test_degraded_answers_carry_an_observation_timestamp(monkeypatch):
+    # A degraded verdict is persisted into visit memory and re-rendered on later
+    # turns; without checked_at, a 25-minute-old failed attempt reads as if the
+    # check had just run (ADR 0011 s5 promises the opposite).
+    fake_get, clock = _response(exc=httpx.TimeoutException("timed out"))
+    _install(monkeypatch, fake_get, clock)
+
+    verdict = client_mod.check_coverage(MEMBER_ID)
+
+    assert verdict["checked_at"], "a degraded verdict must still say WHEN it was observed"

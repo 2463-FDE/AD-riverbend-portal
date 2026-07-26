@@ -446,3 +446,51 @@ def test_a_write_failure_does_not_fail_the_answered_turn(redis, fanout, monkeypa
     monkeypatch.setattr(redis, "set", _fail_visit_writes)
 
     assert _chat().status_code == 200
+
+
+# --- the no-echo boundary holds for bodies that never reach the validator ----
+# Found by the pre-push security review. _validate_visit_chat_request returns a
+# generic 422, but only for bodies that REACH it: the route is typed
+# `payload: dict`, so a body that parses as JSON but is not an object fails
+# FastAPI's own coercion first and was served by the default handler, whose error
+# dict echoes the offending value verbatim under `input`. The existing tests
+# missed it because they all posted well-formed objects — the PR #2 lesson
+# (every test asserted the intended shape; none planted the value where the code
+# does not expect it).
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Jane Doe DOB 1/2/80 SSN 123-45-6789",   # a bare JSON string
+        ["123-45-6789", "AETN1224"],             # a JSON list
+        123456789,                               # a bare number
+    ],
+)
+def test_non_object_bodies_are_rejected_without_echo(redis, fanout, body):
+    r = client.post("/ai/visit-chat", json=body)
+
+    assert r.status_code == 422
+    assert "123-45-6789" not in r.text
+    assert "Jane Doe" not in r.text
+    assert "AETN1224" not in r.text
+    assert "123456789" not in r.text
+    assert "input" not in r.json()["detail"][0]
+    assert fanout == []
+
+
+def test_the_no_echo_handler_covers_the_whole_gateway(redis):
+    # Registered app-wide, not per route: /login's body is a credential, and it
+    # has the same `input` echo in FastAPI's default handler.
+    r = client.post("/login", json={"username": "frontdesk", "password": 12345678})
+
+    assert r.status_code == 422
+    assert "12345678" not in r.text
+
+
+def test_rejected_bodies_never_reach_a_log_record(redis, fanout, caplog):
+    with caplog.at_level("DEBUG"):
+        client.post("/ai/visit-chat", json="patient Jane Doe ssn 123-45-6789")
+
+    assert "Jane Doe" not in caplog.text
+    assert "123-45-6789" not in caplog.text

@@ -136,8 +136,10 @@
   hardening is the **recommended precondition** for ADR 0011's PHI-at-rest
   decision (ADR 0011 deferred gap 2). Mitigations shipping with ADR 0011
   meanwhile: opaque `visit:{uuid4}` keys, a 1800s sliding TTL, session-owner
-  binding, a redacted transcript, and the member id never appearing in a key
-  or a log line.
+  binding, a **metadata-only turn log** (no clerk text is stored at all — the
+  earlier draft said "redacted transcript", which was withdrawn because pattern
+  redaction cannot mask a typed patient name), and the member id never appearing
+  in a key or a log line.
 
 ### D12 — ROI disclosures without authorization
 - **Location:** `services/roi-service/app.py:90,104,146,148`

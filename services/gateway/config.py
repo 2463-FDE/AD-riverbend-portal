@@ -106,12 +106,22 @@ class Settings:
     # instance this deployment has not hardened (debt-log D3b). Sliding — every
     # turn refreshes it — so 30 minutes is "30 minutes after the last turn",
     # comfortably longer than a check-in and far shorter than a shift.
-    ai_visit_ttl_seconds = int(os.getenv("AI_VISIT_TTL_SECONDS", "1800"))
+    # Clamped to a floor: 0 is what an operator would plausibly set to "turn
+    # visit memory off", and it would do something worse than that — the route
+    # still mints and returns a visit_id, but nothing is stored, so the clerk's
+    # NEXT turn gets a hard 404 "visit not found" instead of degrading to a
+    # stateless conversation. "Off" is not reachable through this knob.
+    ai_visit_ttl_seconds = max(int(os.getenv("AI_VISIT_TTL_SECONDS", "1800")), 60)
     # Hard caps on what one visit can hold. Both bound token spend AND the size of
     # a hypothetical exposure; the store truncates to these rather than trusting
     # callers (security.visit_memory_save).
-    ai_visit_max_turns = int(os.getenv("AI_VISIT_MAX_TURNS", "12"))
-    ai_visit_max_message_chars = int(os.getenv("AI_VISIT_MAX_MESSAGE_CHARS", "1000"))
+    # Floors for the same reason (and matching ai-assistant's copies): 0 turns
+    # or 0 chars silently 422s every message, and a negative value crashes
+    # ai-assistant at import via pydantic's max_length.
+    ai_visit_max_turns = max(int(os.getenv("AI_VISIT_MAX_TURNS", "12")), 2)
+    ai_visit_max_message_chars = max(
+        int(os.getenv("AI_VISIT_MAX_MESSAGE_CHARS", "1000")), 100
+    )
     # The per-visit lock reuses the single-flight lock TTL deliberately, rather
     # than adding a knob: it is already clamped to a floor above the AI read
     # timeout, which is exactly the property a lock around this fan-out needs (a

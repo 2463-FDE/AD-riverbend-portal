@@ -28,6 +28,27 @@ from conftest import load_module
 
 _elig = load_module("services/eligibility-service/config.py", "elig_config_budget").settings
 _intake = load_module("services/intake-service/config.py", "intake_config_budget").settings
+_ai = load_module("services/ai-assistant/config.py", "ai_config_budget").settings
+
+# Every CALLER of eligibility-service carries the same three knobs and owes the
+# same invariants. intake was first (ADR 0010); ai-assistant's visit-chat is the
+# second (ADR 0011). Parameterising here is the point: a third copy of the
+# pattern that inherited only the COMMENTS and not the guard would be exactly the
+# "confident docstring masking a gap" failure this suite exists to catch.
+CALLERS = {
+    "intake-service": {
+        "prefix": "",
+        "timeout": _intake.eligibility_timeout_seconds,
+        "degraded": _intake.eligibility_degraded_slow_seconds,
+        "slow_answer": _intake.eligibility_slow_answer_seconds,
+    },
+    "ai-assistant (visit-chat)": {
+        "prefix": "AI_",
+        "timeout": _ai.ai_eligibility_timeout_seconds,
+        "degraded": _ai.ai_eligibility_degraded_slow_seconds,
+        "slow_answer": _ai.ai_eligibility_slow_answer_seconds,
+    },
+}
 
 MARGIN_SECONDS = 1.0
 
@@ -79,34 +100,55 @@ def _answer_thresholds(source):
     )
 
 
-def _from_code_defaults():
+def _from_code_defaults(caller):
     return {
         "PAYER_CONNECT_TIMEOUT_SECONDS": _elig.payer_connect_timeout_seconds,
         "PAYER_READ_TIMEOUT_SECONDS": _elig.payer_read_timeout_seconds,
         "PAYER_MAX_RETRIES": _elig.payer_max_retries,
-        "ELIGIBILITY_TIMEOUT_SECONDS": _intake.eligibility_timeout_seconds,
-        "ELIGIBILITY_DEGRADED_SLOW_SECONDS": _intake.eligibility_degraded_slow_seconds,
-        "ELIGIBILITY_SLOW_ANSWER_SECONDS": _intake.eligibility_slow_answer_seconds,
+        "ELIGIBILITY_TIMEOUT_SECONDS": caller["timeout"],
+        "ELIGIBILITY_DEGRADED_SLOW_SECONDS": caller["degraded"],
+        "ELIGIBILITY_SLOW_ANSWER_SECONDS": caller["slow_answer"],
     }
 
 
-def _from_env_example():
+def _from_env_example(caller):
+    """The values `cp .env.example .env` actually seeds, for THIS caller's knobs.
+
+    ai-assistant's are the same three names under an AI_ prefix, so the template
+    is checked for both sets — a code default that satisfies an invariant proves
+    nothing if the template a fresh deploy copies overrides it (PR #5 r5).
+    """
     raw = _env_example_values()
-    missing = [
-        key
-        for key in _from_code_defaults()
-        if key not in raw
-    ]
+    prefix = caller["prefix"]
+    wanted = {
+        "PAYER_CONNECT_TIMEOUT_SECONDS": "PAYER_CONNECT_TIMEOUT_SECONDS",
+        "PAYER_READ_TIMEOUT_SECONDS": "PAYER_READ_TIMEOUT_SECONDS",
+        "PAYER_MAX_RETRIES": "PAYER_MAX_RETRIES",
+        "ELIGIBILITY_TIMEOUT_SECONDS": f"{prefix}ELIGIBILITY_TIMEOUT_SECONDS",
+        "ELIGIBILITY_DEGRADED_SLOW_SECONDS": f"{prefix}ELIGIBILITY_DEGRADED_SLOW_SECONDS",
+        "ELIGIBILITY_SLOW_ANSWER_SECONDS": f"{prefix}ELIGIBILITY_SLOW_ANSWER_SECONDS",
+    }
+    missing = [env_name for env_name in wanted.values() if env_name not in raw]
     assert not missing, f".env.example is missing {missing} — a fresh deploy would not seed them"
-    return {key: float(raw[key]) for key in _from_code_defaults()}
+    return {key: float(raw[env_name]) for key, env_name in wanted.items()}
 
 
-def _both_sources():
-    return {"config.py defaults": _from_code_defaults(), ".env.example": _from_env_example()}
+def _both_sources(caller):
+    return {
+        "config.py defaults": _from_code_defaults(caller),
+        ".env.example": _from_env_example(caller),
+    }
+
+
+def _every_caller_and_source():
+    """(label, budget source) for every caller x both sources of truth."""
+    for caller_name, caller in CALLERS.items():
+        for source_name, source in _both_sources(caller).items():
+            yield f"{caller_name} / {source_name}", source
 
 
 def test_payer_budget_fits_within_intake_timeout():
-    for label, source in _both_sources().items():
+    for label, source in _every_caller_and_source():
         inner, outer, _, _ = _budgets(source)
         assert inner < outer, (
             f"[{label}] payer worst-case {inner}s must be < intake eligibility timeout "
@@ -132,7 +174,7 @@ def test_degraded_slow_threshold_separates_short_circuit_from_payer_attempt():
     Lower: comfortably above one local HTTP round trip, so eligibility's free
     short-circuit is never mistaken for a payer round trip and does not trip the
     circuit on a dependency that is answering instantly."""
-    for label, source in _both_sources().items():
+    for label, source in _every_caller_and_source():
         _, _, threshold, connect_timeout = _budgets(source)
         assert threshold >= MIN_DEGRADED_SLOW_SECONDS, (
             f"[{label}] ELIGIBILITY_DEGRADED_SLOW_SECONDS ({threshold}s) must be >= "
@@ -169,7 +211,7 @@ def test_slow_answer_threshold_is_reachable_by_a_retried_payer_answer():
     Lower bound: the degraded threshold — a real verdict must never be judged more
     harshly than a no-verdict shrug. `config.py` also clamps this at runtime, so an
     operator override cannot invert it; the assertion pins the shipped values."""
-    for label, source in _both_sources().items():
+    for label, source in _every_caller_and_source():
         degraded, threshold, retried_floor = _answer_thresholds(source)
         assert threshold <= retried_floor, (
             f"[{label}] ELIGIBILITY_SLOW_ANSWER_SECONDS ({threshold}s) must be <= "

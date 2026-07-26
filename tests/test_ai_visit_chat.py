@@ -514,5 +514,157 @@ def test_every_verdict_line_is_clinical_term_free(status):
     instructions_tests = load_module(
         "tests/test_ai_intake_instructions.py", "instructions_tests_for_screen2"
     )
-    line = visit_templates.verdict_line({"status": status, "payer": "edi.example.com"})
+    line = visit_templates.verdict_line(status, {"payer": "edi.example.com"})
     assert not instructions_tests._CLINICAL_TERMS.search(line)
+
+
+# --- member-id recognition is a closed catalog (adversarial review) ---------
+# The first cut matched a generic [A-Z]{3,6}\d{3,9} and carried the comment "a
+# false positive is safe, the lookup returns unknown, never a denial". That was
+# false in the direction that hurts patients: eligibility-service maps a payer
+# 404 to a DEFINITIVE {"active": false}, so a mis-extracted token renders as
+# "NO ACTIVE COVERAGE" for a patient whose coverage is fine. These tests pin the
+# catalog and the ambiguity rules that replaced it.
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "SSN123456789",   # a labelled SSN
+        "DOB01021980",    # a labelled date of birth
+        "MRN0042719",     # a labelled medical record number
+        "AUTH12345",      # a prior-authorisation number
+        "GRP123456",      # a group number
+        "NPI1234567",     # a provider identifier
+        "REF00123",       # an internal reference
+    ],
+)
+def test_non_payer_tokens_are_never_looked_up(fake_llm, fake_eligibility, token):
+    r = _post(f"checking coverage for {token}")
+
+    assert r.status_code == 200
+    assert fake_eligibility == [], f"{token} must not be sent to a payer"
+    assert r.json()["facts"]["insurance_id"] is None
+    # ...and the reply asks for a real member id rather than asserting anything.
+    assert "member ID" in r.json()["reply"]
+    assert "NO ACTIVE COVERAGE" not in r.json()["reply"]
+
+
+@pytest.mark.parametrize("member_id", ["AETN1224", "BCBS4471", "UNIT8080", "AETNA9920"])
+def test_real_payer_prefixed_ids_are_recognised(fake_llm, fake_eligibility, member_id):
+    r = _post(f"member {member_id}")
+
+    assert r.status_code == 200
+    assert fake_eligibility == [member_id]
+
+
+def test_two_ids_in_one_message_are_never_guessed_between(fake_llm, fake_eligibility):
+    # A clerk reading off a card types several id-shaped tokens. Picking the
+    # leftmost is how a group number becomes the subject of a coverage verdict.
+    r = _post(f"policy BCBS4471 or maybe {MEMBER_ID}, not sure which")
+
+    assert r.status_code == 200
+    assert fake_eligibility == []
+    body = r.json()
+    assert body["intent"] == "clarify_member_id"
+    assert body["status"] == "ambiguous_id"
+    assert "Confirm which member ID" in body["reply"]
+    # Explicitly not a coverage answer of any kind.
+    assert "NO ACTIVE COVERAGE" not in body["reply"]
+    assert body["eligibility"] is None
+
+
+def test_an_id_that_contradicts_the_visits_confirmed_id_asks_first(
+    fake_llm, fake_eligibility
+):
+    # Silently switching subjects mid-visit would re-attribute every later turn.
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": dict(ACTIVE_VERDICT)}
+
+    r = _post("actually try BCBS4471", facts=facts)
+
+    assert fake_eligibility == []
+    body = r.json()
+    assert body["status"] == "ambiguous_id"
+    # The stored verdict describes a DIFFERENT subject and must not be restated.
+    verdict_sentence = body["reply"].split("\n")[0]
+    assert "ACTIVE" not in verdict_sentence.upper()
+    assert "Confirm which member ID" in body["reply"]
+    assert body["eligibility"] is None, "no check ran this turn"
+    assert body["facts"]["insurance_id"] == MEMBER_ID  # unchanged
+
+
+def test_repeating_the_same_id_is_not_ambiguous(fake_llm, fake_eligibility):
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": dict(ACTIVE_VERDICT)}
+
+    r = _post(f"re-run {MEMBER_ID}", facts=facts)
+
+    assert fake_eligibility == [MEMBER_ID]
+    assert r.json()["status"] == "active"
+
+
+def test_the_same_id_twice_in_one_message_is_not_ambiguous(fake_llm, fake_eligibility):
+    r = _post(f"{MEMBER_ID} — sorry, {MEMBER_ID}")
+
+    assert fake_eligibility == [MEMBER_ID]
+
+
+def test_no_optional_ids_are_offered_before_a_check_has_run(fake_llm, fake_eligibility):
+    # "Record the coverage result" presupposes a result. A valid model selection
+    # must not be able to say it when nothing ran.
+    fake_llm.queue(["ask_member_id", "note_coverage_result"])
+
+    r = _post("can you check coverage?")
+
+    assert "Record the coverage result" not in r.json()["reply"]
+    assert "member ID" in r.json()["reply"]
+
+
+# --- intent ordering --------------------------------------------------------
+def test_a_question_about_the_past_does_not_re_spend_a_payer_call(
+    fake_llm, fake_eligibility
+):
+    # "what was the status again?" is a question, not a retry request. During an
+    # outage a spurious re-check can flip a confirmed ACTIVE into "could not
+    # confirm", which is worse than answering from memory.
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": dict(ACTIVE_VERDICT)}
+
+    r = _post("what was the status again?", facts=facts)
+
+    assert fake_eligibility == []
+    assert r.json()["intent"] == "ask_status"
+
+
+@pytest.mark.parametrize("phrasing", ["is it active?", "is it still active?"])
+def test_status_questions_answer_from_memory_consistently(
+    fake_llm, fake_eligibility, phrasing
+):
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": dict(ACTIVE_VERDICT)}
+
+    r = _post(phrasing, facts=facts)
+
+    assert fake_eligibility == [], f"{phrasing!r} should not re-spend a payer call"
+    assert r.json()["intent"] == "ask_status"
+
+
+@pytest.mark.parametrize("phrasing", ["recheck it", "please retry", "check again"])
+def test_explicit_retry_verbs_do_re_check(fake_llm, fake_eligibility, phrasing):
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": dict(ACTIVE_VERDICT)}
+
+    r = _post(phrasing, facts=facts)
+
+    assert fake_eligibility == [MEMBER_ID]
+    assert r.json()["intent"] == "recheck_eligibility"
+
+
+# --- a reused verdict always says when it was observed ----------------------
+@pytest.mark.parametrize("status", ["unknown", "pending"])
+def test_a_reused_degraded_verdict_is_stamped(fake_llm, fake_eligibility, status):
+    stored = dict(UNKNOWN_VERDICT)
+    stored["status"] = status
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": stored}
+
+    reply = _post("is it confirmed yet?", facts=facts).json()["reply"]
+
+    assert stored["checked_at"] in reply, (
+        "a stale degraded verdict must read as a past observation, not a fresh check"
+    )

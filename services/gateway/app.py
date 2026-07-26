@@ -15,7 +15,9 @@ from enum import Enum
 from typing import Optional
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -48,6 +50,32 @@ from security import (
 
 log = configure(settings.service_name)
 app = FastAPI(title="Riverbend gateway", version="1.4.0")
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_no_echo(request: Request, exc: RequestValidationError):
+    """422 without echoing the rejected input back (mirrors ai-assistant's handler).
+
+    FastAPI's default validation response includes an ``input`` key carrying the
+    offending value verbatim. The per-route validators (_validate_ai_request,
+    _validate_visit_chat_request) already return a no-echo 422 — but only for
+    bodies that REACH them. Routes typed ``payload: dict`` fail FastAPI's own body
+    coercion first, so a body that parses as JSON but is not an object (a bare
+    string, a list) never gets that far and is served by the default handler.
+
+    That gap was found by the pre-push security review of the visit-chat work. On
+    /ai/visit-chat the body is free text a clerk typed, and on /login it is a
+    credential — neither should come back in an error payload, even to the sender.
+    Registered app-wide rather than per route: every ``payload: dict`` endpoint
+    here (/intake, /appointments, /roi/requests, /hl7/ingest, both /ai routes) has
+    the same shape. Nothing is logged — a rejected body must not reach a log
+    record either.
+    """
+    errors = [
+        {"loc": e.get("loc", ()), "type": e.get("type", ""), "msg": e.get("msg", "")}
+        for e in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 SERVICES = {
     "intake": settings.intake_url,

@@ -178,13 +178,14 @@ def _require_internal_auth(request: Request) -> None:
     secret = settings.ai_proxy_shared_secret.strip()
     if not secret or secret.lower() in _PLACEHOLDER_SECRETS:
         log.error(
-            "intake-instructions refused: AI_PROXY_SHARED_SECRET is not configured"
+            "%s refused: AI_PROXY_SHARED_SECRET is not configured",
+            request.url.path,
         )
         raise HTTPException(status_code=503, detail="assistant is not configured")
     provided = request.headers.get("x-internal-auth", "")
     if not secrets.compare_digest(provided.encode(), secret.encode()):
         log.warning(
-            "intake-instructions refused: internal auth header missing or invalid"
+            "%s refused: internal auth header missing or invalid", request.url.path
         )
         raise HTTPException(status_code=401, detail="not authorized")
 
@@ -290,39 +291,83 @@ _VISIT_DISCLAIMER = (
     "medical advice."
 )
 
-# Member ids in this estate are letters followed by digits (AETN1224, BCBS4471 —
-# db/seed/generate_seed.py). Uppercase-anchored and length-bounded so ordinary
-# words and bare numbers do not match. A miss is safe (the turn asks for the id);
-# a false positive is safe too (the lookup returns "unknown", never a denial).
-# Deliberately requires letters, so a bare 9-digit SSN can never be read as a
-# member id and sent to the payer.
-_INSURANCE_ID_RE = re.compile(r"\b[A-Z]{3,6}\d{3,9}\b")
+# Member-id recognition is a CLOSED PREFIX CATALOG (settings.ai_member_id_prefixes),
+# never a generic letters-then-digits pattern. See config.py for why: a false
+# positive is NOT safe. eligibility-service maps a payer 404 to a definitive
+# {"active": false}, so a mis-extracted token produces a confident "NO ACTIVE
+# COVERAGE" about the wrong subject — the patient-turned-away failure this whole
+# workstream exists to prevent. A MISS is safe (the reply asks for the id); a
+# WRONG MATCH is not, so the pattern only recognises ids it can attribute to a
+# known payer. Longest-first alternation so AETNA1224 is not truncated to AETN.
+_INSURANCE_ID_RE = re.compile(
+    r"\b(?:%s)\d{3,9}\b"
+    % "|".join(sorted(settings.ai_member_id_prefixes, key=len, reverse=True))
+)
 
 # Deterministic intent keywords. Lowercased substring checks, not an LLM call:
 # the message is PHI-bearing free text and must not reach the vendor while D13
 # (no BAA) is open. Shallow by design — an unmatched turn degrades to `other`,
 # which asks a clarifying question rather than guessing (ADR 0011 gap 3).
-_RECHECK_WORDS = ("again", "recheck", "re-check", "retry", "refresh", "one more time")
-_STATUS_WORDS = ("still", "status", "what did", "what was", "current", "confirmed")
+# An EXPLICIT retry verb, checked before the status words below. "what was the
+# status again?" is a question about the past, not a request to re-spend a payer
+# call — and during an outage a spurious re-check can flip a confirmed ACTIVE into
+# "could not confirm", which is worse than answering from memory.
+_RETRY_WORDS = ("recheck", "re-check", "retry", "refresh", "check again", "run it again")
+_STATUS_WORDS = (
+    "still", "status", "what did", "what was", "current", "confirmed", "active", "again"
+)
 _CHECK_WORDS = ("check", "eligib", "coverage", "covered", "insurance", "verify", "active")
+
+
+def _extract_insurance_ids(message: str) -> list[str]:
+    """Every DISTINCT member id in the message, in order of appearance.
+
+    Deliberately not ``search`` (first-match-wins). A clerk reading off a card
+    types several id-shaped tokens, and silently picking the leftmost is how a
+    group or prior-auth number becomes the subject of a coverage verdict. The
+    caller treats more than one candidate as ambiguity to resolve with the human,
+    never as a guess to act on.
+    """
+    seen: list[str] = []
+    for match in _INSURANCE_ID_RE.finditer(message or ""):
+        if match.group(0) not in seen:
+            seen.append(match.group(0))
+    return seen
 
 
 def _derive_intent(message: str, facts: VisitFacts) -> tuple[VisitIntent, str | None]:
     """Classify the turn and extract a member id, deterministically.
 
-    Returns (intent, insurance_id_found_in_this_message). No model call, so no
-    free text leaves the process for this step — that is the whole point (ADR
-    0011 §2). Order matters: an id in the message is the strongest signal there
-    is, because it is the only thing that lets a lookup run at all.
+    Returns (intent, insurance_id_to_use). No model call, so no free text leaves
+    the process for this step — that is the whole point (ADR 0011 §2).
+
+    An id in the message is the strongest signal there is, but only when it is
+    UNAMBIGUOUS. Two rules keep a wrong id from ever reaching the payer:
+
+      * more than one distinct candidate in one message → ambiguous, ask;
+      * a single candidate that CONTRADICTS the id already confirmed for this
+        visit → ambiguous, ask. Silently switching subjects mid-visit would
+        re-attribute every later turn to the new id.
+
+    Both degrade to `other` with no id, which renders the "which member id?"
+    reply — the safe direction, since the cost is one extra question and the
+    alternative is a confident answer about the wrong patient.
     """
-    found = _INSURANCE_ID_RE.search(message or "")
-    if found:
-        return VisitIntent.check_eligibility, found.group(0)
+    candidates = _extract_insurance_ids(message)
+    stored = facts.insurance_id
+    if len(candidates) > 1:
+        return VisitIntent.clarify_member_id, None
+    if candidates:
+        if stored and candidates[0] != stored:
+            return VisitIntent.clarify_member_id, None
+        return VisitIntent.check_eligibility, candidates[0]
+
     lowered = (message or "").lower()
-    has_id_on_file = bool(facts.insurance_id)
-    if has_id_on_file and any(word in lowered for word in _RECHECK_WORDS):
+    has_id_on_file = bool(stored)
+    if has_id_on_file and any(word in lowered for word in _RETRY_WORDS):
         return VisitIntent.recheck_eligibility, None
     if has_id_on_file and any(word in lowered for word in _STATUS_WORDS):
+        # Answered from stored facts — no payer call, no spend.
         return VisitIntent.ask_status, None
     if any(word in lowered for word in _CHECK_WORDS):
         # Wants a check but we have no id to run one with — the reply asks for it.
@@ -386,6 +431,9 @@ def _select_reply_items(status: str, selection: list[str]) -> list[str]:
         return visit_templates.render(required)
     items = visit_templates.render(selection)
     if not visit_templates.MIN_ITEMS <= len(items) <= visit_templates.MAX_ITEMS:
+        # Unreachable while required <= selection <= allowed forces 1-4 items for
+        # every status, but kept as a belt independent of how the sets evolve —
+        # same role as the 3-8 check in _select_items.
         log.warning(
             "visit-chat selection gate: %d ids deduplicated to %d items, outside "
             "the %d-%d contract; serving deterministic default selection",
@@ -475,6 +523,11 @@ def visit_chat(req: VisitChatRequest):
     status = (verdict or {}).get("status") or visit_templates.AWAITING_ID
     if not facts.insurance_id:
         status = visit_templates.AWAITING_ID
+    if intent is VisitIntent.clarify_member_id:
+        # Two ids in play, or one that contradicts the visit's confirmed id. The
+        # stored verdict describes a DIFFERENT subject, so rendering it here would
+        # answer a question nobody asked; say plainly that nothing ran.
+        status = visit_templates.AMBIGUOUS_ID
 
     # Allowlisted, non-PHI projection only — never the message, the transcript, or
     # the id (D1 lesson, docs/phi-logging-policy.md).
@@ -484,10 +537,13 @@ def visit_chat(req: VisitChatRequest):
     )
 
     items = _reply_items(intent, status, len(req.turns))
-    verdict_for_line = verdict if status != visit_templates.AWAITING_ID else None
     reply = "\n".join(
-        [visit_templates.verdict_line(verdict_for_line)] + [f"- {item}" for item in items]
+        [visit_templates.verdict_line(status, verdict)] + [f"- {item}" for item in items]
     )
+    # No lookup ran this turn (no id yet, or an ambiguous one), so this turn has
+    # no eligibility result to report — even when the visit holds an earlier one.
+    # `facts.last_eligibility` still carries it for the next turn that asks.
+    turn_verdict = None if status in visit_templates.NO_LOOKUP_STATUSES else verdict
     return VisitChatResponse(
         reply=reply,
         # Echoed so the caller can record a metadata-only turn without ever
@@ -495,6 +551,6 @@ def visit_chat(req: VisitChatRequest):
         intent=intent,
         status=status,
         facts=facts,
-        eligibility=verdict,
+        eligibility=turn_verdict,
         disclaimer=_VISIT_DISCLAIMER,
     )

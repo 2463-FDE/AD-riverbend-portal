@@ -140,9 +140,13 @@ class VisitIntent(str, Enum):
     A closed enum because this — not the message — is what reaches the prompt.
     """
 
-    check_eligibility = "check_eligibility"   # a member id is present in the turn
+    check_eligibility = "check_eligibility"   # one unambiguous member id in the turn
     recheck_eligibility = "recheck_eligibility"  # "check again" against stored facts
     ask_status = "ask_status"                 # "is it still active?" — answer from facts
+    # Two ids in one message, or one that contradicts the visit's confirmed id.
+    # Never guessed at: a wrong id yields a DEFINITIVE denial about the wrong
+    # subject (payer 404 -> active:false), so the turn asks the human instead.
+    clarify_member_id = "clarify_member_id"
     other = "other"                           # unrecognised; ask a clarifying question
 
 

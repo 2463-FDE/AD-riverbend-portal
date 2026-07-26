@@ -21,6 +21,7 @@ control, not tidiness: eligibility-service's body also carries `insurance_id` an
 into visit memory. Dropping both here means neither can reach Redis by accident.
 """
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -45,13 +46,20 @@ def _degraded(status: str, reason: str) -> dict[str, Any]:
     `active` is None, never False: an outage, a timeout, or an open circuit must
     never render as "this patient has no coverage" (ADR 0010's tri-state rule,
     carried into the words a clerk reads — ADR 0011 §5).
+
+    `checked_at` is stamped HERE, from this service's own clock, rather than left
+    None (adversarial review). A degraded verdict is persisted into visit memory
+    and re-rendered on later turns, and ADR 0011 §5 promises a reused verdict is
+    always visibly a past observation. Without the stamp, a 25-minute-old failed
+    attempt re-reads as if the check had just run. The observation time is known
+    at the call site and is not PHI and not downstream content.
     """
     return {
         "active": None,
         "status": status,
         "payer": None,
         "raw_status": None,
-        "checked_at": None,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
         "reason": reason,
     }
 

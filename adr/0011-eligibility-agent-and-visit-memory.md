@@ -85,10 +85,28 @@ Bedrock.
 Per turn, ai-assistant:
 
 1. **Understands deterministically.** A closed `VisitIntent` enum is derived from
-   the message by server-side code — an insurance-id pattern match plus keyword
-   classification (`check_eligibility`, `recheck_eligibility`, `ask_status`,
-   `other`). No model call, so no free text and no PHI leaves the process for this
-   step.
+   the message by server-side code — member-id recognition plus keyword
+   classification. No model call, so no free text and no PHI leaves the process
+   for this step.
+
+   Member ids are matched against a **closed payer-prefix catalog**
+   (`AI_MEMBER_ID_PREFIXES`), never a generic letters-then-digits pattern.
+   *(Amended 2026-07-26 after the pre-push adversarial review.* The first cut used
+   `[A-Z]{3,6}\d{3,9}` and claimed a false positive was safe because "the lookup
+   returns unknown, never a denial". That was wrong in the direction that hurts
+   patients: eligibility-service maps a payer **404 to a definitive
+   `{"active": false}`**, so a mis-extracted token — a prior-auth number, an
+   account ref — renders as "the payer reports NO ACTIVE COVERAGE" for a patient
+   whose coverage is fine. An outage degrades safely; a confident answer about the
+   **wrong subject** does not, and nothing downstream can detect it. Ids here are
+   payer-prefix + 4 digits, so a catalog is both possible and the rule this ADR
+   already applies to model output.)*
+
+   Two ambiguity rules follow from the same reasoning, because a wrong id is worse
+   than a question: **more than one candidate** in a message, or a candidate that
+   **contradicts the id already confirmed for this visit**, yields
+   `clarify_member_id` and asks the clerk. No lookup runs, and the stored verdict
+   is not restated — it describes a different subject.
 2. **Acts deterministically.** If an id is present in the message (or already in
    the visit facts, for a re-check), it calls eligibility — bounded, see §4. The
    decision to make an outbound call is never a function of model output.
@@ -250,6 +268,16 @@ Pre-egress refusals keep ADR-0007's contract: `LLMConfigError` and
 `LLMBudgetExceeded` → **503** (the gateway refunds the reserved slot, since no
 paid call occurred), a bad internal auth → **401**, a rejected body → **422**.
 
+There is a known asymmetry here, raised by the adversarial review and accepted
+for now: the eligibility lookup runs *before* the model call, so a pre-egress 503
+discards a verdict that was already computed and does not depend on the LLM, and
+each retry under a persistent Bedrock misconfiguration makes a fresh payer call.
+The budget accounting stays correct (503 is refunded; no Bedrock call occurred),
+and the eligibility breaker bounds the repeated payer cost. Making the turn return
+the verdict anyway would mean answering 200 for a call that never happened, which
+would keep a charge the tenant did not incur — so the fix is to persist the facts
+before raising, and it is deferred rather than bolted on here (gap 7).
+
 Post-egress failures (`LLMUnavailable`, `LLMResponseError`) **diverge** from
 `/intake-instructions`, which returns 502. `/visit-chat` returns **200 with the
 deterministic template selection**, because the thing the clerk actually needs —
@@ -352,7 +380,11 @@ follow-up, not a claim of principle.
    debt **D8**, W4/W9 — not this PR.
 5. **Post-egress behavior differs across the two AI endpoints (accepted, §7).**
    Aligning `/intake-instructions` is a follow-up.
-6. **No stale-verdict cache when the breaker is open (decided).** This answers
+6. **A pre-egress LLM refusal discards an already-computed verdict (accepted).**
+   See §7. Under a persistent Bedrock misconfiguration every retry re-runs the
+   payer call for no user-visible value. Bounded by the eligibility breaker and
+   the chat rate limit; the clean fix is to persist facts before raising the 503.
+7. **No stale-verdict cache when the breaker is open (decided).** This answers
    `docs/specs/w3.md` open question 1: when eligibility is degraded the agent
    reports *unconfirmed* rather than serving a stale-but-usable cached verdict.
    A cached coverage answer is a financial fact with an expiry we cannot see, and

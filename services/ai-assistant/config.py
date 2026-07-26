@@ -124,8 +124,39 @@ class Settings:
     # applies them again on the inbound side so the caps hold even if a future
     # caller forgets. Both are PHI bounds as much as token bounds: an unbounded
     # transcript in Redis is a PHI dump whose retention policy is "never".
-    ai_visit_max_turns = int(os.getenv("AI_VISIT_MAX_TURNS", "12"))
-    ai_visit_max_message_chars = int(os.getenv("AI_VISIT_MAX_MESSAGE_CHARS", "1000"))
+    # Clamped to floors like every other knob here: 0 turns or 0 chars would 422
+    # every message (the endpoint silently stops working), and a negative value
+    # crashes the service at import via pydantic's max_length.
+    ai_visit_max_turns = max(int(os.getenv("AI_VISIT_MAX_TURNS", "12")), 2)
+    ai_visit_max_message_chars = max(int(os.getenv("AI_VISIT_MAX_MESSAGE_CHARS", "1000")), 100)
+
+    # --- visit-chat: member-id recognition (adversarial review) -------------
+    # A CLOSED PREFIX CATALOG, not a generic letters-then-digits pattern.
+    #
+    # The first cut matched `[A-Z]{3,6}\d{3,9}` and carried the comment "a false
+    # positive is safe, the lookup returns unknown, never a denial". That was
+    # wrong in the direction that hurts patients: eligibility-service maps a payer
+    # 404 (member not found) to a DEFINITIVE {"active": false}, so a mis-extracted
+    # token — a prior-auth number, a group number, an account ref — renders as
+    # "the payer reports NO ACTIVE COVERAGE for this member ID" for a patient
+    # whose coverage is fine. An outage is safe (it degrades to unknown); a
+    # confident answer about the WRONG SUBJECT is not, and nothing downstream can
+    # detect it.
+    #
+    # Member ids in this estate are payer-prefix + 4 digits
+    # (db/seed/generate_seed.py: `payer.split()[0][:4].upper()` + 1000-9999), so
+    # the prefix set is small, knowable, and the right shape for a catalog — the
+    # same "closed catalog over regex filter" rule ADR 0011 applies to model
+    # output. Unknown payers are an ops change (add the prefix here), which is the
+    # correct failure direction: an unrecognised token asks the clerk instead of
+    # guessing at the payer's expense.
+    ai_member_id_prefixes = tuple(
+        prefix.strip().upper()
+        for prefix in os.getenv(
+            "AI_MEMBER_ID_PREFIXES", "AETN,AETNA,BCBS,BLUE,CIGN,KAIS,MEDI,UNIT"
+        ).split(",")
+        if prefix.strip()
+    )
 
 
 settings = Settings()
