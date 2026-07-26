@@ -110,6 +110,35 @@
   and moving the gateway `proxy_intake` path off the legacy error-swallowing
   `_post` onto `_post_checked`.
 
+### D3b — Redis holds PHI-adjacent state on an unauthenticated, host-published instance
+- **Location:** `docker-compose.yml` `redis:` service (`ports: 6379:6379`, no
+  `requirepass`, no named volume); consumers are `services/gateway/security.py`
+  (sessions, ADR-0007 counters/cache) and — proposed — visit memory (ADR 0011).
+- **What:** Redis is reachable from the Docker host on 6379 with **no
+  authentication**, and nothing in the topology restricts it to the compose
+  network. Today it holds session tokens (username + role). ADR 0011's
+  visit-scoped memory would add a payer **member/insurance id** plus a
+  structured coverage verdict — PHI-adjacent state at rest, in the D3
+  (plaintext-PHI-at-rest) family, in a store that any process on the host can
+  read or flush. Surfaced while designing ADR 0011, not introduced by it.
+- **Business risk:** an unauthenticated Redis is a credential-free path to live
+  session tokens (session hijack, and sessions never expire — D10) and, once
+  visit memory ships, to member ids. Reading it leaves no application audit
+  trail, so an exposure would be hard to scope for a breach assessment
+  (45 CFR 164.400+). Default RDB snapshots also write that state to the
+  container filesystem unencrypted.
+- **Ticket:** — (to file)
+- **Status:** OPEN, flagged not fixed. The engagement decision (2026-07-26) is
+  to keep PR-B scoped to the feature and land the hardening separately:
+  drop the host port publish (`expose` only) and/or set `requirepass` with
+  credentials in `REDIS_URL`. Both are infra changes that cost local
+  `redis-cli` convenience for every developer, so they need an ops call, and
+  hardening is the **recommended precondition** for ADR 0011's PHI-at-rest
+  decision (ADR 0011 deferred gap 2). Mitigations shipping with ADR 0011
+  meanwhile: opaque `visit:{uuid4}` keys, a 1800s sliding TTL, session-owner
+  binding, a redacted transcript, and the member id never appearing in a key
+  or a log line.
+
 ### D12 — ROI disclosures without authorization
 - **Location:** `services/roi-service/app.py:90,104,146,148`
 - **What:** release-of-information goes out with no recorded 45 CFR 164.508
