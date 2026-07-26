@@ -100,8 +100,10 @@ def _incr_fixed_window(key: str, window_seconds: int) -> int:
     return int(_redis().eval(_INCR_FIXED_WINDOW_LUA, 1, key, window_seconds))
 
 
-def check_ai_rate_limit(username: str, per_minute: int, per_day: int) -> int:
-    """Fixed-window per-user REQUEST quota for the AI endpoint.
+def check_ai_rate_limit(
+    username: str, per_minute: int, per_day: int, namespace: str = "ai"
+) -> int:
+    """Fixed-window per-user REQUEST quota for an AI endpoint.
 
     Increments a minute-window and a day-window counter for ``username`` in
     Redis and returns a Retry-After hint in seconds if either cap is now
@@ -113,10 +115,18 @@ def check_ai_rate_limit(username: str, per_minute: int, per_day: int) -> int:
     consume_ai_global_budget, counted only on paid fan-outs. Callers must fail
     closed if this raises (a Redis fault): the paid path must not run when the
     quota cannot be consulted. (ADR 0007.)
+
+    ``namespace`` separates each endpoint's counters (ADR 0011 §6). It defaults
+    to ``ai``, so /intake-instructions keeps byte-for-byte the same keys it has
+    always used, while visit-chat counts under ``aichat`` with its own, higher
+    caps: a conversation is many turns where a checklist is one shot, and one
+    endpoint's traffic must not exhaust the other's quota. The SPEND ceiling is
+    deliberately NOT namespaced — it bounds dollars per tenant per day, and
+    splitting it would silently raise the real ceiling.
     """
     now = int(time.time())
-    minute_count = _incr_fixed_window(f"ratelimit:ai:min:{username}:{now // 60}", 60)
-    day_count = _incr_fixed_window(f"ratelimit:ai:day:{username}:{now // 86400}", 86400)
+    minute_count = _incr_fixed_window(f"ratelimit:{namespace}:min:{username}:{now // 60}", 60)
+    day_count = _incr_fixed_window(f"ratelimit:{namespace}:day:{username}:{now // 86400}", 86400)
     # Reject BEFORE touching the shared global budget, so a user hammering past
     # their own cap cannot inflate the aggregate counter with rejected requests
     # and starve everyone else (a DoS-amplification inversion of the guard).
@@ -360,5 +370,163 @@ def ai_singleflight_release(cache_key: str, token: str | None) -> None:
         return
     try:
         _redis().eval(_SINGLEFLIGHT_RELEASE_LUA, 1, _flight_key(cache_key), token)
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------------------- #
+# visit-scoped chat memory (ADR 0011)
+# --------------------------------------------------------------------------- #
+# The gateway owns this store for the same reason it owns every other Redis
+# control: it is the choke point, it already holds the session, and ai-assistant
+# has no Redis client and stays stateless. What lands here is PHI-adjacent
+# (a payer member id plus a structured coverage verdict), so every helper below
+# is written to bound exposure: opaque keys, an owner check, a TTL on every
+# write, a hard cap on transcript size, and no identifier in a key or a log.
+#
+# Redis itself is NOT hardened in this deployment (host-published 6379, no
+# requirepass) — tracked as debt-log D3b and the recommended precondition for
+# this feature. These helpers do not paper over that; they minimise what an
+# exposure would yield.
+
+
+class VisitMemoryUnavailable(Exception):
+    """The visit store could not be consulted. Callers must fail CLOSED.
+
+    Deliberately distinct from "no such visit". A backend fault cannot tell an
+    absent visit from one owned by somebody else, so treating a fault as "start
+    fresh" would let a Redis blip wave through a turn whose ownership was never
+    verified. The route maps this to 503; only a turn that supplies NO visit id
+    (the first turn of a conversation) starts fresh, and that path reads nothing.
+    """
+
+
+def new_visit_id() -> str:
+    """Mint an opaque visit id.
+
+    128 bits of uuid4, deliberately the opposite of the walkable sequential
+    ``patient_id`` behind debt D11: a visit id cannot be guessed or enumerated,
+    and it is never derived from the member id it protects.
+    """
+    return uuid.uuid4().hex
+
+
+def _visit_key(visit_id: str) -> str:
+    return f"visit:{visit_id}"
+
+
+def _visit_lock_key(visit_id: str) -> str:
+    return f"visitlock:{visit_id}"
+
+
+def visit_memory_get(visit_id: str, owner: str) -> dict | None:
+    """Load a visit, or None if it does not exist OR is not ``owner``'s.
+
+    The two cases are collapsed on purpose: the route answers both with 404, so a
+    caller cannot use the response to learn that somebody else's visit id exists
+    (a 403 would confirm it). Owner binding is per-visit access control on a new
+    resource — it does NOT change ``require_session`` and does not make sessions
+    patient-scoped (ADR 0003 stands; the shared ``staff`` role is debt D8, so two
+    clerks sharing a login share visits).
+
+    Raises VisitMemoryUnavailable on a backend or parse fault — see that class.
+    """
+    try:
+        raw = _redis().get(_visit_key(visit_id))
+    except Exception as e:
+        raise VisitMemoryUnavailable(type(e).__name__) from None
+    if raw is None:
+        return None
+    try:
+        record = json.loads(raw)
+    except (ValueError, TypeError):
+        # A corrupt value is not "no such visit" either: silently starting fresh
+        # would drop a real conversation and, worse, skip the owner check.
+        raise VisitMemoryUnavailable("corrupt visit record") from None
+    if not isinstance(record, dict) or record.get("owner") != owner:
+        return None
+    return record
+
+
+def visit_memory_save(
+    visit_id: str,
+    owner: str,
+    facts: dict,
+    turns: list,
+    ttl_seconds: int,
+    max_turns: int,
+    created_at: float | None = None,
+) -> None:
+    """Persist a visit with a sliding TTL. Best-effort by design.
+
+    One ``SET key value EX ttl`` — atomic, so the "counter created without its
+    TTL" failure the fixed-window counters needed Lua to avoid (ADR 0007 round
+    12) cannot arise here: the value and its expiry are written together or not
+    at all. Every save refreshes the TTL, which is what makes it sliding.
+
+    ``turns`` is truncated to the last ``max_turns`` entries BEFORE the write, so
+    the stored transcript is bounded at the store rather than by the good
+    behaviour of callers. That bound is a PHI control as much as a memory one —
+    an unbounded transcript in Redis is a PHI dump whose retention policy is
+    "never".
+
+    A write failure is swallowed: the turn has already been answered, and losing
+    continuity is a far smaller harm than failing a request the clerk already
+    got value from. It is logged by the caller, never here (this module has no
+    logger, and the values in scope are PHI-adjacent).
+    """
+    if ttl_seconds <= 0:
+        return
+    now = time.time()
+    record = {
+        "owner": owner,
+        "created_at": created_at if created_at is not None else now,
+        "updated_at": now,
+        "facts": facts,
+        # Keep the tail: the most recent turns are the ones that carry context.
+        "turns": turns[-max_turns:] if max_turns > 0 else [],
+    }
+    try:
+        _redis().set(_visit_key(visit_id), json.dumps(record, default=str), ex=ttl_seconds)
+    except Exception:
+        pass
+
+
+def visit_lock_acquire(visit_id: str, lock_ttl_seconds: int) -> str | None:
+    """Serialise concurrent turns within ONE visit (ADR 0011 §3).
+
+    The ADR-0007 single-flight pattern, re-keyed from "identical body" to
+    "identical visit": identical bodies in a conversation are legitimate ("still
+    active?"), two simultaneous turns in the same visit are not — they would
+    read-modify-write the same record and silently drop a turn, and they would
+    make two paid calls for one clerk.
+
+    Returns a unique owner token to the winner and None to anyone who finds the
+    lock held. Fails OPEN on a Redis fault, matching ai_singleflight_acquire: the
+    authoritative spend guard is the fail-CLOSED budget ceiling, and a lost turn
+    is a smaller harm than turning a Redis blip into an outage.
+    """
+    token = uuid.uuid4().hex
+    try:
+        got = _redis().set(
+            _visit_lock_key(visit_id), token, nx=True, ex=max(1, lock_ttl_seconds)
+        )
+        return token if got else None
+    except Exception:
+        return token
+
+
+def visit_lock_release(visit_id: str, token: str | None) -> None:
+    """Release a visit lock (best-effort, owner-checked).
+
+    Compare-and-delete via the same Lua script the single-flight release uses: a
+    turn that outran the lock TTL must not delete the NEXT turn's valid lock
+    (ADR 0007 round 13). ``None`` (never acquired) is a no-op, and a fault is
+    harmless because the TTL clears the key regardless.
+    """
+    if not token:
+        return
+    try:
+        _redis().eval(_SINGLEFLIGHT_RELEASE_LUA, 1, _visit_lock_key(visit_id), token)
     except Exception:
         pass

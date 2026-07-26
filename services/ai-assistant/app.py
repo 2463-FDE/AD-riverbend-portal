@@ -10,8 +10,15 @@ POST /intake-instructions is the first feature endpoint: patient-friendly
 visit-prep instructions assembled from a CLOSED-VOCABULARY request (see
 schemas.py — no free text, so no PHI and no prompt-injection surface can reach
 the LLM). It is reached only through the gateway, like every other service.
+
+POST /visit-chat is the second (ADR 0011): the front-desk eligibility assistant.
+It accepts free text — the one such surface in this service — but the vendor
+boundary stays closed, because intent derivation and the eligibility lookup are
+deterministic and the LLM sees only closed vocabulary. See the schemas.py module
+docstring for the full argument and the obligations it created.
 """
 import json
+import re
 import secrets
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -20,13 +27,21 @@ from fastapi.responses import JSONResponse
 
 from config import settings
 from logging_config import configure
+import eligibility_client
 import llm_client
 import templates
+import visit_templates
 from schemas import (
     InstructionsChecklist,
     InstructionsRequest,
     InstructionsResponse,
+    VisitChatRequest,
+    VisitChatResponse,
+    VisitFacts,
+    VisitIntent,
+    VisitReplyPlan,
     log_metadata,
+    visit_chat_log_metadata,
 )
 
 log = configure(settings.service_name)
@@ -254,3 +269,232 @@ def intake_instructions(req: InstructionsRequest):
         raise HTTPException(status_code=500, detail="assistant request failed")
     items = _select_items(req, result.parsed.items)
     return InstructionsResponse(items=items, disclaimer=_DISCLAIMER)
+
+
+# --------------------------------------------------------------------------- #
+# visit-chat — the front-desk eligibility assistant (ADR 0011)
+# --------------------------------------------------------------------------- #
+_VISIT_SYSTEM_PROMPT = (
+    "You choose which follow-up actions a front-desk clerk should see alongside "
+    "an insurance eligibility result that has ALREADY been decided. You are given "
+    "the situation as fixed labels, the required action ids for that situation, "
+    "and optional extra ids. Respond with the chosen ids. Rules: include every "
+    "required id; add an optional id only when it is genuinely useful; use only "
+    "ids you were given; never write action text yourself; never state or revise "
+    "the coverage result."
+)
+
+_VISIT_DISCLAIMER = (
+    "Coverage information comes from the payer's eligibility response and can be "
+    "out of date or incomplete. It is not a guarantee of payment, and it is not "
+    "medical advice."
+)
+
+# Member ids in this estate are letters followed by digits (AETN1224, BCBS4471 —
+# db/seed/generate_seed.py). Uppercase-anchored and length-bounded so ordinary
+# words and bare numbers do not match. A miss is safe (the turn asks for the id);
+# a false positive is safe too (the lookup returns "unknown", never a denial).
+# Deliberately requires letters, so a bare 9-digit SSN can never be read as a
+# member id and sent to the payer.
+_INSURANCE_ID_RE = re.compile(r"\b[A-Z]{3,6}\d{3,9}\b")
+
+# Deterministic intent keywords. Lowercased substring checks, not an LLM call:
+# the message is PHI-bearing free text and must not reach the vendor while D13
+# (no BAA) is open. Shallow by design — an unmatched turn degrades to `other`,
+# which asks a clarifying question rather than guessing (ADR 0011 gap 3).
+_RECHECK_WORDS = ("again", "recheck", "re-check", "retry", "refresh", "one more time")
+_STATUS_WORDS = ("still", "status", "what did", "what was", "current", "confirmed")
+_CHECK_WORDS = ("check", "eligib", "coverage", "covered", "insurance", "verify", "active")
+
+
+def _derive_intent(message: str, facts: VisitFacts) -> tuple[VisitIntent, str | None]:
+    """Classify the turn and extract a member id, deterministically.
+
+    Returns (intent, insurance_id_found_in_this_message). No model call, so no
+    free text leaves the process for this step — that is the whole point (ADR
+    0011 §2). Order matters: an id in the message is the strongest signal there
+    is, because it is the only thing that lets a lookup run at all.
+    """
+    found = _INSURANCE_ID_RE.search(message or "")
+    if found:
+        return VisitIntent.check_eligibility, found.group(0)
+    lowered = (message or "").lower()
+    has_id_on_file = bool(facts.insurance_id)
+    if has_id_on_file and any(word in lowered for word in _RECHECK_WORDS):
+        return VisitIntent.recheck_eligibility, None
+    if has_id_on_file and any(word in lowered for word in _STATUS_WORDS):
+        return VisitIntent.ask_status, None
+    if any(word in lowered for word in _CHECK_WORDS):
+        # Wants a check but we have no id to run one with — the reply asks for it.
+        return VisitIntent.check_eligibility, None
+    return VisitIntent.other, None
+
+
+def _build_visit_prompt(
+    intent: VisitIntent, status: str, turn_count: int, required: list[str], allowed: set[str]
+) -> str:
+    """Render the CLOSED situation labels + candidate ids as prompt lines.
+
+    Every interpolated value is closed vocabulary: an enum value, a status string
+    this service derived from the ADR 0010 contract, an integer, and catalog keys
+    with their fixed catalog text. The clerk's message is deliberately absent —
+    it is PHI-bearing free text and never crosses the vendor boundary.
+    """
+    optional = [key for key in visit_templates.OPTIONAL_IDS if key in allowed]
+    required_lines = [f"- {key}: {visit_templates.CATALOG[key]}" for key in required]
+    optional_lines = [f"- {key}: {visit_templates.CATALOG[key]}" for key in optional]
+    return (
+        "A front-desk clerk is working through a patient's insurance eligibility "
+        "during check-in. Situation:\n"
+        f"- what the clerk's latest turn is asking for: {intent.value}\n"
+        f"- eligibility result already determined: {status}\n"
+        f"- turns so far in this visit: {turn_count}\n"
+        "\nRequired action ids (include every id):\n"
+        + "\n".join(required_lines)
+        + "\n\nOptional action ids (add one only when genuinely useful):\n"
+        + ("\n".join(optional_lines) if optional_lines else "- (none)")
+        + "\n\nSelect the action ids to show the clerk."
+    )
+
+
+def _select_reply_items(status: str, selection: list[str]) -> list[str]:
+    """Render the model's action selection, or the deterministic fallback.
+
+    Identical contract to _select_items: the selection is untrusted model output,
+    and catalog membership alone is not enough — `self_pay_options` is a real
+    catalog id and the wrong thing to say after a check that FAILED rather than
+    came back inactive. A selection renders only if it satisfies
+    ``required <= selection <= allowed``, both derived server-side from the
+    status; anything else discards the whole selection for the default. Log lines
+    carry indexes and counts only — an invalid "id" is model free text and must
+    never reach a log record.
+    """
+    required = set(visit_templates.default_selection(status))
+    allowed = visit_templates.allowed_selection(status)
+    stray = [i for i, key in enumerate(selection) if key not in allowed]
+    missing = len(required - set(selection))
+    if stray or missing:
+        log.warning(
+            "visit-chat selection gate: %d/%d ids unjustified by the eligibility "
+            "status (indexes=%s), %d required ids missing; serving deterministic "
+            "default selection",
+            len(stray),
+            len(selection),
+            stray,
+            missing,
+        )
+        return visit_templates.render(required)
+    items = visit_templates.render(selection)
+    if not visit_templates.MIN_ITEMS <= len(items) <= visit_templates.MAX_ITEMS:
+        log.warning(
+            "visit-chat selection gate: %d ids deduplicated to %d items, outside "
+            "the %d-%d contract; serving deterministic default selection",
+            len(selection),
+            len(items),
+            visit_templates.MIN_ITEMS,
+            visit_templates.MAX_ITEMS,
+        )
+        return visit_templates.render(required)
+    return items
+
+
+def _reply_items(intent: VisitIntent, status: str, turn_count: int) -> list[str]:
+    """Ask the model to choose follow-up actions; degrade deterministically.
+
+    Error mapping deliberately splits on EGRESS, matching the gateway's refund
+    rule (ADR 0007, ADR 0011 §7):
+
+      * PRE-egress refusals (`LLMConfigError`, `LLMBudgetExceeded` — the caps are
+        enforced locally before any Bedrock call) raise 503, a status the gateway
+        REFUNDS, because no paid call happened.
+      * POST-egress failures (`LLMUnavailable`, `LLMResponseError`) do NOT fail the
+        turn. The coverage verdict was computed before this call and does not
+        depend on it, so the clerk still gets the answer they need with the
+        deterministic action list. Returning 200 keeps the spend charge, exactly as
+        the 502 /intake-instructions returns would — the accounting is unchanged,
+        only the user experience differs. This divergence is deliberate and is
+        recorded in ADR 0011 §7.
+      * anything else is not a proven pre-egress refusal, so it must not be
+        refunded: 500, keeping the charge.
+    """
+    required = visit_templates.default_selection(status)
+    allowed = visit_templates.allowed_selection(status)
+    try:
+        result = llm_client.complete_structured(
+            prompt=_build_visit_prompt(intent, status, turn_count, required, allowed),
+            output_model=VisitReplyPlan,
+            system=_VISIT_SYSTEM_PROMPT,
+        )
+    except llm_client.LLMConfigError as e:
+        log.error("visit-chat config error: %s", e)
+        raise HTTPException(status_code=503, detail="assistant is not configured")
+    except llm_client.LLMBudgetExceeded as e:
+        # Must precede the LLMError catch — LLMBudgetExceeded subclasses it.
+        log.error("visit-chat local budget refusal: %s", e)
+        raise HTTPException(status_code=503, detail="assistant is not configured")
+    except (llm_client.LLMUnavailable, llm_client.LLMResponseError) as e:
+        log.error("visit-chat degrading to deterministic reply (%s): %s", type(e).__name__, e)
+        return visit_templates.render(required)
+    except llm_client.LLMError as e:
+        log.error("visit-chat llm error (%s): %s", type(e).__name__, e)
+        raise HTTPException(status_code=500, detail="assistant request failed")
+    return _select_reply_items(status, result.parsed.template_ids)
+
+
+@app.post(
+    "/visit-chat",
+    response_model=VisitChatResponse,
+    dependencies=[Depends(_require_internal_auth)],
+)
+def visit_chat(req: VisitChatRequest):
+    """One turn of the front-desk eligibility conversation.
+
+    Stateless: the caller (the gateway) owns visit memory and passes the visit's
+    turns and facts in, and gets the updated facts back. No `visit_id` crosses
+    this boundary, so the key that addresses a patient's visit memory cannot
+    appear in an ai-assistant log line.
+
+    Order is understand -> act -> ground -> phrase, and the first three steps are
+    deterministic. The model is consulted last, about follow-up actions only, and
+    never about whether the patient has coverage.
+    """
+    intent, found_id = _derive_intent(req.message, req.facts)
+
+    facts = req.facts.model_copy(deep=True)
+    if found_id:
+        facts.insurance_id = found_id
+
+    verdict = facts.last_eligibility
+    if intent in (VisitIntent.check_eligibility, VisitIntent.recheck_eligibility) and facts.insurance_id:
+        # Deterministic act step: the decision to make an outbound PHI-bearing
+        # call is never a function of model output or of what the free text told
+        # the model to do. Bounded and breakered (eligibility_client).
+        verdict = eligibility_client.check_coverage(facts.insurance_id)
+        facts.last_eligibility = verdict
+
+    status = (verdict or {}).get("status") or visit_templates.AWAITING_ID
+    if not facts.insurance_id:
+        status = visit_templates.AWAITING_ID
+
+    # Allowlisted, non-PHI projection only — never the message, the transcript, or
+    # the id (D1 lesson, docs/phi-logging-policy.md).
+    log.info(
+        "POST /visit-chat meta=%s",
+        json.dumps(visit_chat_log_metadata(intent, status, len(req.turns))),
+    )
+
+    items = _reply_items(intent, status, len(req.turns))
+    verdict_for_line = verdict if status != visit_templates.AWAITING_ID else None
+    reply = "\n".join(
+        [visit_templates.verdict_line(verdict_for_line)] + [f"- {item}" for item in items]
+    )
+    return VisitChatResponse(
+        reply=reply,
+        # Echoed so the caller can record a metadata-only turn without ever
+        # touching the clerk's text again (schemas.VisitTurn).
+        intent=intent,
+        status=status,
+        facts=facts,
+        eligibility=verdict,
+        disclaimer=_VISIT_DISCLAIMER,
+    )

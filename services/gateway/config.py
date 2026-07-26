@@ -90,6 +90,33 @@ class Settings:
         _ai_singleflight_lock_ttl_floor,
     )
 
+    # --- visit-chat (ADR 0011) ---------------------------------------------
+    # The chat endpoint gets its OWN per-user request quota, in its own Redis
+    # namespace (ratelimit:aichat:*), and higher than the one-shot endpoint's: a
+    # conversation is many turns where a checklist is one submit. Separate
+    # namespaces so neither endpoint can exhaust the other's quota. The aggregate
+    # SPEND ceiling above is shared by both on purpose — it bounds dollars per
+    # tenant per day, and splitting it would silently raise the real ceiling.
+    ai_chat_rate_limit_per_minute = int(os.getenv("AI_CHAT_RATE_LIMIT_PER_MINUTE", "20"))
+    ai_chat_rate_limit_per_day = int(os.getenv("AI_CHAT_RATE_LIMIT_PER_DAY", "400"))
+
+    # Visit-scoped memory. The TTL is a RETENTION policy for PHI-adjacent state
+    # (a payer member id + a structured coverage verdict), not just a cache
+    # setting: it is the upper bound on how long that state survives in a Redis
+    # instance this deployment has not hardened (debt-log D3b). Sliding — every
+    # turn refreshes it — so 30 minutes is "30 minutes after the last turn",
+    # comfortably longer than a check-in and far shorter than a shift.
+    ai_visit_ttl_seconds = int(os.getenv("AI_VISIT_TTL_SECONDS", "1800"))
+    # Hard caps on what one visit can hold. Both bound token spend AND the size of
+    # a hypothetical exposure; the store truncates to these rather than trusting
+    # callers (security.visit_memory_save).
+    ai_visit_max_turns = int(os.getenv("AI_VISIT_MAX_TURNS", "12"))
+    ai_visit_max_message_chars = int(os.getenv("AI_VISIT_MAX_MESSAGE_CHARS", "1000"))
+    # The per-visit lock reuses the single-flight lock TTL deliberately, rather
+    # than adding a knob: it is already clamped to a floor above the AI read
+    # timeout, which is exactly the property a lock around this fan-out needs (a
+    # TTL under the fan-out bound would let a second turn overlap the first).
+
     @property
     def db_url(self) -> str:
         return (

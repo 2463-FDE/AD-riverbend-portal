@@ -136,10 +136,19 @@ already lives): `visit_memory_get` / `visit_memory_save` / `visit_lock_acquire` 
     (`active`, `status`, `payer`, `raw_status`, `checked_at`). Structured, so a
     later turn answers "is it still active?" from typed state rather than from
     re-parsed prose.
-  - `turns` = a bounded rolling window of the conversation, **redacted before
-    write** through a copy of `redaction.py` (added to the parity test in
-    `tests/test_redaction.py`, per `docs/phi-logging-policy.md` §"How to comply").
-    The only unmasked identifier anywhere in visit memory is `facts.insurance_id`.
+  - `turns` = a bounded rolling window recording **what happened, never what was
+    said**: `{role, intent, status}` per turn, no text. *(Amended 2026-07-26,
+    during implementation. The original draft said the transcript would be stored
+    "redacted", via a copy of `redaction.py`. Writing the adversarial test made
+    two things obvious: `redact_text` matches SSN / email / phone patterns and
+    cannot mask a typed patient NAME, so "redacted transcript" would have been a
+    false claim; and nothing in this feature ever reads the text back — the
+    deterministic logic works off `facts`, and the model is told only the turn
+    COUNT. Storing it would have been unmaskable PHI at rest with no consumer.
+    Dropping the field removes the exposure by construction instead of mitigating
+    it, and takes the gateway `redaction.py` copy with it.)* The only identifier
+    anywhere in visit memory is `facts.insurance_id`. A future chat UI that wants
+    to replay prose is a NEW PHI-at-rest decision needing its own approval.
   - **Never stored:** the eligibility `error` string (ADR 0010 closed a leak in
     exactly that field), the member id inside the *key*, or anything from a
     rejected request body.
@@ -159,9 +168,15 @@ already lives): `visit_memory_get` / `visit_memory_save` / `visit_lock_acquire` 
   `Retry-After`**. Fail **open** on a Redis fault, consistent with the
   single-flight precedent: the authoritative spend guard is the fail-closed budget
   ceiling, and a lost turn is benign where an outage is not.
-- **Memory-load faults fail soft:** if the memory read errors, the turn proceeds
-  as a **fresh visit** rather than 500-ing. An owner *mismatch* is not a fault and
-  never falls through to this path — it 404s.
+- **Memory-load faults fail CLOSED (503).** *(Amended 2026-07-26 during
+  implementation; the draft said they would fail soft to a fresh visit.) A
+  backend or parse fault cannot distinguish "no such visit" from "somebody
+  else's visit", so continuing would wave through a turn whose ownership was
+  never verified — an authorization bypass reachable by making Redis flap. Only a
+  turn that supplies NO `visit_id` starts fresh, and that path reads nothing.
+  An unknown `visit_id` is a 404, not a fresh visit, so a client cannot choose
+  its own visit ids. Write faults still fail soft (the turn is already answered;
+  losing continuity beats 500-ing).*
 
 *Rejected alternative.* **Agent-local memory in ai-assistant** (in-process dict or
 a new Redis client there). Rejected: ai-assistant is horizontally scalable and
@@ -272,9 +287,11 @@ follow-up, not a claim of principle.
   domain orchestration and free-text parsing inside the auth owner (constraint 3);
   the ADR-0007 split of "gateway = auth + abuse controls + Redis, service =
   domain" is worth more than removing one outbound dependency.
-- **Store the transcript unredacted** for fidelity. Rejected: constraint 2 —
-  unhardened Redis — plus PHI minimization. Masked turns are enough for continuity
-  because the operational state the agent reasons over lives in typed `facts`.
+- **Store the transcript at all** (raw, or pattern-redacted). Rejected during
+  implementation: constraint 2 (unhardened Redis) plus PHI minimisation, and
+  decisively the fact that nothing reads it back. Pattern redaction would also
+  have been a false comfort — it cannot mask a typed patient name. Continuity
+  comes from typed `facts`; the turn log is metadata only.
 - **Do not store `insurance_id` at all** (re-ask every turn). Rejected as the
   default because "keeps track of the visit context" is the client ask, and
   re-asking a member id each turn is the friction the assistant exists to remove.
@@ -288,7 +305,7 @@ follow-up, not a claim of principle.
 |---|---|
 | Unbounded token spend across turns | turn window (12), per-message char cap (1000), the LLM sees closed vocabulary only, one paid call per turn, chat rate namespace + shared ceiling |
 | Prompt injection in free text | free text never reaches the vendor; model output is a closed id list gated server-side; the act step is deterministic; no tools exposed |
-| PHI in free text reaching logs | the message is never logged; chat logs are a metadata allowlist (intent, status, turn count) per `log_metadata` precedent; redaction on the stored transcript |
+| PHI in free text reaching logs | the message is never logged and never stored; chat logs are a metadata allowlist (intent, status, turn count) per the `log_metadata` precedent |
 | PHI at rest in Redis | minimal fields, sliding 1800s TTL, opaque key, no id in keys or logs, error strings never persisted — **plus the Redis hardening flagged below** |
 | `visit_id` IDOR / enumeration | 128-bit opaque uuid4, owner binding, 404-not-403 on mismatch, `visit_id` never crosses to ai-assistant |
 | Visit fan-out (minting many visits) | bounded by the per-user daily chat cap × TTL; every key TTL-reaped |
@@ -348,18 +365,21 @@ follow-up, not a claim of principle.
 - **New endpoints.** `POST /ai/visit-chat` on the gateway
   (`{visit_id?, message}` → `{visit_id, reply, disclaimer, eligibility?}`) and
   `POST /visit-chat` on ai-assistant (`{message, turns, facts}` →
-  `{reply, facts, eligibility?, disclaimer}`, internal-auth only, no `visit_id`).
+  `{reply, intent, status, facts, eligibility?, disclaimer}`, internal-auth only,
+  no `visit_id`; `intent`/`status` are echoed so the gateway can record a
+  metadata-only turn without handling the clerk's text again).
   Both additive; no existing contract changes.
 - **New files.** `services/ai-assistant/eligibility_client.py`,
-  `services/ai-assistant/breaker.py` (copy of the ADR-0010 pattern),
-  `services/ai-assistant/visit_templates.py`, and a `redaction.py` copy in the
-  gateway added to the `tests/test_redaction.py` parity test.
+  `services/ai-assistant/breaker.py` (copy of the ADR-0010 pattern), and
+  `services/ai-assistant/visit_templates.py`. No gateway `redaction.py` copy —
+  the metadata-only transcript left it with nothing to redact.
 - **Changed files.** `ai-assistant/app.py` (the endpoint, intent derivation,
   selection gate, catalog rendering, metadata-only chat log), `ai-assistant/schemas.py`
-  (`VisitChatRequest`/`VisitChatResponse`, the closed `VisitReplyPlan` output model,
-  a chat `log_metadata`), `ai-assistant/config.py` (eligibility URL, timeout,
-  breaker knobs, turn/char caps), `gateway/security.py` (visit-memory helpers,
-  visit lock, namespaced rate limit), `gateway/app.py` (the new route),
+  (`VisitChatRequest`/`VisitChatResponse`, the metadata-only `VisitTurn`, the closed
+  `VisitReplyPlan` output model, a chat `log_metadata`), `ai-assistant/config.py`
+  (eligibility URL, timeout, breaker knobs, latency thresholds, turn/char caps),
+  `gateway/security.py` (visit-memory helpers, visit lock, namespaced rate limit),
+  `gateway/app.py` (the new route),
   `gateway/config.py` (chat rate knobs, visit TTL/turns/char cap),
   `docker-compose.yml` (`ELIGIBILITY_URL` for ai-assistant), `.env.example`,
   `docs/phi-logging-policy.md` (chat free-text + visit-memory rules).

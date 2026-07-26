@@ -1,0 +1,518 @@
+"""Tests for the ai-assistant /visit-chat endpoint (ADR 0011).
+
+This endpoint is the one free-text surface in the service, so the boundary tests
+are the load-bearing ones (CLAUDE.md §5). The invariants, in order of harm if
+they regressed:
+
+  * the LLM decides NOTHING that matters. It never sees the clerk's message, it
+    cannot cause an outbound PHI-bearing call, and it cannot author or revise a
+    coverage verdict — its whole output is a list of catalog ids, gated
+    server-side against the ids the status justifies;
+  * an unconfirmed check never renders as a denial (ADR 0010's tri-state, carried
+    into the words a clerk reads);
+  * the error mapping splits on EGRESS, because the gateway's spend-refund rule
+    keys on the status: pre-egress refusals 503 (refundable), post-egress
+    failures degrade to a deterministic 200 that keeps the charge.
+
+The LLM is faked at the complete_structured seam (no network, no key), mirroring
+the real seam's parse step. The eligibility client is faked at the module seam.
+"""
+import json
+import sys
+from types import SimpleNamespace
+
+import pytest
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+
+from conftest import load_module
+
+_PINNED = (
+    "config",
+    "logging_config",
+    "schemas",
+    "llm_client",
+    "templates",
+    "visit_templates",
+    "breaker",
+    "eligibility_client",
+)
+_saved = {name: sys.modules.pop(name, None) for name in _PINNED}
+sys.modules["config"] = load_module("services/ai-assistant/config.py", "vc_config")
+sys.modules["logging_config"] = load_module(
+    "services/ai-assistant/logging_config.py", "vc_logging_config"
+)
+schemas = sys.modules["schemas"] = load_module(
+    "services/ai-assistant/schemas.py", "vc_schemas"
+)
+sys.modules["llm_client"] = load_module("services/ai-assistant/llm_client.py", "vc_llm_client")
+sys.modules["templates"] = load_module("services/ai-assistant/templates.py", "vc_templates")
+visit_templates = sys.modules["visit_templates"] = load_module(
+    "services/ai-assistant/visit_templates.py", "vc_visit_templates"
+)
+sys.modules["breaker"] = load_module("services/ai-assistant/breaker.py", "vc_breaker")
+sys.modules["eligibility_client"] = load_module(
+    "services/ai-assistant/eligibility_client.py", "vc_eligibility_client"
+)
+app_mod = load_module("services/ai-assistant/app.py", "visit_chat_app")
+for _name, _module in _saved.items():
+    if _module is not None:
+        sys.modules[_name] = _module
+    else:
+        sys.modules.pop(_name, None)
+
+TEST_INTERNAL_SECRET = "test-internal-secret"
+app_mod.settings.ai_proxy_shared_secret = TEST_INTERNAL_SECRET
+client = TestClient(
+    app_mod.app,
+    raise_server_exceptions=False,
+    headers={"X-Internal-Auth": TEST_INTERNAL_SECRET},
+)
+
+MEMBER_ID = "AETN1224"
+ACTIVE_VERDICT = {
+    "active": True,
+    "status": "active",
+    "payer": "edi.example.com",
+    "raw_status": "1",
+    "checked_at": "2026-07-26T10:00:00Z",
+    "reason": None,
+}
+UNKNOWN_VERDICT = {
+    "active": None,
+    "status": "unknown",
+    "payer": "edi.example.com",
+    "raw_status": None,
+    "checked_at": "2026-07-26T10:00:00Z",
+    "reason": "eligibility check failed",
+}
+
+
+class _Recorder(list):
+    """A list that also carries the test's control handles (a bare list cannot
+    take attributes)."""
+
+
+def _seam_parse(ids):
+    """Mirror complete_structured's parse step exactly (llm_client.py):
+    model_validate_json on the wire JSON, ValidationError → LLMResponseError."""
+    try:
+        parsed = schemas.VisitReplyPlan.model_validate_json(
+            json.dumps({"template_ids": ids})
+        )
+    except ValidationError:
+        raise app_mod.llm_client.LLMResponseError(
+            "response failed VisitReplyPlan validation (request_id=fake)"
+        ) from None
+    return SimpleNamespace(parsed=parsed)
+
+
+@pytest.fixture()
+def fake_llm(monkeypatch):
+    """Capture prompts and return whatever the test queues as model output.
+
+    Default output is the deterministic required set for the status, so a test
+    that cares about routing does not also have to care about selection.
+    """
+    calls = _Recorder()
+    queued = {"ids": None}
+
+    def _fake(prompt, output_model, system=None, max_tokens=None):
+        calls.append({"prompt": prompt, "system": system, "output_model": output_model})
+        if queued["ids"] is not None:
+            return _seam_parse(queued["ids"])
+        # Echo the required ids named in the prompt back as a valid selection.
+        required = [
+            key for key in visit_templates.CATALOG if f"- {key}:" in prompt.split("Optional")[0]
+        ]
+        return _seam_parse(required)
+
+    monkeypatch.setattr(app_mod.llm_client, "complete_structured", _fake)
+    calls.queue = lambda ids: queued.update(ids=ids)
+    return calls
+
+
+@pytest.fixture()
+def fake_eligibility(monkeypatch):
+    """Capture eligibility lookups; return a queued verdict."""
+    calls = _Recorder()
+    verdict = {"value": dict(ACTIVE_VERDICT)}
+
+    def _fake(insurance_id):
+        calls.append(insurance_id)
+        return dict(verdict["value"])
+
+    monkeypatch.setattr(app_mod.eligibility_client, "check_coverage", _fake)
+    calls.set_verdict = lambda v: verdict.update(value=v)
+    return calls
+
+
+def _post(message, turns=None, facts=None, **kwargs):
+    body = {"message": message}
+    if turns is not None:
+        body["turns"] = turns
+    if facts is not None:
+        body["facts"] = facts
+    return client.post("/visit-chat", json=body, **kwargs)
+
+
+# --- intent derivation is deterministic ------------------------------------
+def test_member_id_in_the_message_triggers_a_lookup(fake_llm, fake_eligibility):
+    r = _post(f"can you check {MEMBER_ID} please")
+
+    assert r.status_code == 200
+    assert fake_eligibility == [MEMBER_ID]
+    body = r.json()
+    assert body["eligibility"]["status"] == "active"
+    assert body["facts"]["insurance_id"] == MEMBER_ID
+    assert body["facts"]["last_eligibility"]["status"] == "active"
+    assert "ACTIVE" in body["reply"]
+    assert body["disclaimer"]
+
+
+def test_asking_for_a_check_with_no_id_on_file_asks_for_one(fake_llm, fake_eligibility):
+    r = _post("can you check this patient's coverage?")
+
+    assert r.status_code == 200
+    assert fake_eligibility == []  # nothing to look up with
+    assert "member ID" in r.json()["reply"]
+
+
+def test_status_question_answers_from_stored_facts_without_a_new_lookup(
+    fake_llm, fake_eligibility
+):
+    # The second turn of a visit: "is it still active?" must not re-ask for the id
+    # and must not spend another payer call.
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": dict(ACTIVE_VERDICT)}
+
+    r = _post(
+        "is it still active?",
+        turns=[{"role": "user", "intent": "check_eligibility"}],
+        facts=facts,
+    )
+
+    assert r.status_code == 200
+    assert fake_eligibility == []
+    reply = r.json()["reply"]
+    assert "ACTIVE" in reply
+    # A reused verdict is stamped with when it was observed, never restated as if
+    # it were fresh.
+    assert ACTIVE_VERDICT["checked_at"] in reply
+
+
+def test_recheck_uses_the_stored_id(fake_llm, fake_eligibility):
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": dict(ACTIVE_VERDICT)}
+
+    r = _post("can you check again?", facts=facts)
+
+    assert r.status_code == 200
+    assert fake_eligibility == [MEMBER_ID]
+
+
+def test_unrecognised_turn_does_not_call_the_payer(fake_llm, fake_eligibility):
+    r = _post("thanks, that's all for now")
+
+    assert r.status_code == 200
+    assert fake_eligibility == []
+
+
+# --- the vendor never sees the message -------------------------------------
+def test_the_prompt_contains_no_free_text_from_the_clerk(fake_llm, fake_eligibility):
+    message = f"patient Jane Doe, dob 1985-03-12, ssn 123-45-6789, member {MEMBER_ID}"
+
+    _post(message)
+
+    prompt = fake_llm[0]["prompt"]
+    for fragment in ("Jane Doe", "1985-03-12", "123-45-6789", MEMBER_ID, "patient Jane"):
+        assert fragment not in prompt
+    # What it DOES contain is closed vocabulary only.
+    assert "check_eligibility" in prompt
+    assert "active" in prompt
+
+
+def test_prompt_carries_only_the_ids_the_status_justifies(fake_llm, fake_eligibility):
+    fake_eligibility.set_verdict(dict(UNKNOWN_VERDICT))
+
+    _post(f"check {MEMBER_ID}")
+
+    prompt = fake_llm[0]["prompt"]
+    assert "retry_shortly" in prompt
+    # self_pay_options belongs to a definitive `inactive`, never to a failed check.
+    assert "self_pay_options" not in prompt
+
+
+# --- the selection gate ----------------------------------------------------
+def test_off_catalog_selection_falls_back_deterministically(fake_llm, fake_eligibility):
+    fake_llm.queue(["definitely not a template id", "call the patient's doctor"])
+
+    r = _post(f"check {MEMBER_ID}")
+
+    assert r.status_code == 200
+    expected = visit_templates.render(visit_templates.default_selection("active"))
+    for item in expected:
+        assert item in r.json()["reply"]
+    assert "doctor" not in r.json()["reply"]
+
+
+def test_status_unjustified_id_is_rejected_whole(fake_llm, fake_eligibility):
+    # self_pay_options is a REAL catalog id and the wrong thing to say after a
+    # check that failed — catalog membership alone is not enough.
+    fake_eligibility.set_verdict(dict(UNKNOWN_VERDICT))
+    fake_llm.queue(["retry_shortly", "proceed_per_policy", "self_pay_options"])
+
+    r = _post(f"check {MEMBER_ID}")
+
+    reply = r.json()["reply"]
+    assert "self-pay" not in reply.lower()
+    assert "Try the check again" in reply
+
+
+def test_missing_required_id_is_rejected_whole(fake_llm, fake_eligibility):
+    fake_eligibility.set_verdict(dict(UNKNOWN_VERDICT))
+    fake_llm.queue(["retry_shortly"])  # proceed_per_policy missing
+
+    r = _post(f"check {MEMBER_ID}")
+
+    assert "Follow the clinic's policy" in r.json()["reply"]
+
+
+def test_empty_selection_falls_back(fake_llm, fake_eligibility):
+    fake_llm.queue([])
+
+    r = _post(f"check {MEMBER_ID}")
+
+    assert r.status_code == 200
+    assert r.json()["reply"].count("- ") >= visit_templates.MIN_ITEMS
+
+
+def test_a_valid_optional_id_is_allowed_through(fake_llm, fake_eligibility):
+    fake_llm.queue(["note_coverage_result", "collect_secondary"])
+
+    r = _post(f"check {MEMBER_ID}")
+
+    assert "secondary coverage" in r.json()["reply"]
+
+
+def test_invalid_ids_never_reach_a_log_record(fake_llm, fake_eligibility, caplog):
+    # An invalid "id" is model free text; only indexes and counts may be logged.
+    fake_llm.queue(["Jane Doe has no coverage, tell her to pay cash"])
+
+    with caplog.at_level("DEBUG"):
+        _post(f"check {MEMBER_ID}")
+
+    assert "Jane Doe" not in caplog.text
+    assert "pay cash" not in caplog.text
+    assert "selection gate" in caplog.text
+
+
+# --- an unconfirmed check is never a denial --------------------------------
+@pytest.mark.parametrize("status", ["unknown", "pending"])
+def test_degraded_status_never_renders_as_no_coverage(fake_llm, fake_eligibility, status):
+    verdict = dict(UNKNOWN_VERDICT)
+    verdict["status"] = status
+    fake_eligibility.set_verdict(verdict)
+
+    reply = _post(f"check {MEMBER_ID}").json()["reply"]
+
+    assert "NO ACTIVE COVERAGE" not in reply
+    assert "not a denial" in reply
+    assert "uninsured" not in reply.split("Do not tell")[0]
+
+
+def test_definitive_inactive_does_say_no_coverage(fake_llm, fake_eligibility):
+    # The other side of the same rule: a real verdict must not be softened into
+    # mush, or the feature is useless at the front desk.
+    verdict = dict(ACTIVE_VERDICT)
+    verdict.update(active=False, status="inactive")
+    fake_eligibility.set_verdict(verdict)
+
+    reply = _post(f"check {MEMBER_ID}").json()["reply"]
+
+    assert "NO ACTIVE COVERAGE" in reply
+
+
+# --- nothing free-text comes back out --------------------------------------
+def test_the_response_echoes_no_free_text(fake_llm, fake_eligibility):
+    # The caller persists what it gets back, so the response must carry no prose
+    # the clerk typed — only the closed values needed to record a turn.
+    message = f"please check {MEMBER_ID} for Jane Doe"
+
+    body = _post(message).json()
+
+    # No prose the clerk typed comes back in any field...
+    for fragment in ("Jane Doe", "please check", "for Jane"):
+        assert fragment not in json.dumps(body)
+    # ...and the member id appears ONLY as the structured fact the gateway is
+    # approved to persist, never inside reply text.
+    assert MEMBER_ID not in body["reply"]
+    assert body["facts"]["insurance_id"] == MEMBER_ID
+
+
+def test_the_response_echoes_the_turn_metadata_to_be_stored(fake_llm, fake_eligibility):
+    body = _post(f"check {MEMBER_ID}").json()
+
+    assert body["intent"] == "check_eligibility"
+    assert body["status"] == "active"
+
+
+# --- error mapping splits on egress ---------------------------------------
+def test_pre_egress_config_refusal_is_a_refundable_503(monkeypatch, fake_eligibility):
+    def _raise(**kwargs):
+        raise app_mod.llm_client.LLMConfigError("no credentials")
+
+    monkeypatch.setattr(app_mod.llm_client, "complete_structured", _raise)
+
+    r = _post(f"check {MEMBER_ID}")
+
+    assert r.status_code == 503
+
+
+def test_pre_egress_budget_refusal_is_a_refundable_503(monkeypatch, fake_eligibility):
+    # Must precede the LLMError catch — LLMBudgetExceeded subclasses it. A 500
+    # here would make the gateway KEEP a charge for a call that never happened.
+    def _raise(**kwargs):
+        raise app_mod.llm_client.LLMBudgetExceeded("cap too low")
+
+    monkeypatch.setattr(app_mod.llm_client, "complete_structured", _raise)
+
+    r = _post(f"check {MEMBER_ID}")
+
+    assert r.status_code == 503
+
+
+@pytest.mark.parametrize("error_name", ["LLMUnavailable", "LLMResponseError"])
+def test_post_egress_failure_degrades_to_a_deterministic_200(
+    monkeypatch, fake_eligibility, error_name
+):
+    # The verdict was computed BEFORE the model call and does not depend on it, so
+    # the clerk still gets the answer. 200 keeps the spend charge, exactly as the
+    # 502 /intake-instructions returns would (ADR 0011 §7).
+    def _raise(**kwargs):
+        raise getattr(app_mod.llm_client, error_name)("provider down")
+
+    monkeypatch.setattr(app_mod.llm_client, "complete_structured", _raise)
+
+    r = _post(f"check {MEMBER_ID}")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["eligibility"]["status"] == "active"
+    for item in visit_templates.render(visit_templates.default_selection("active")):
+        assert item in body["reply"]
+
+
+def test_unexpected_llm_error_keeps_the_charge_with_a_500(monkeypatch, fake_eligibility):
+    def _raise(**kwargs):
+        raise app_mod.llm_client.LLMError("something new")
+
+    monkeypatch.setattr(app_mod.llm_client, "complete_structured", _raise)
+
+    assert _post(f"check {MEMBER_ID}").status_code == 500
+
+
+# --- service-to-service auth ----------------------------------------------
+def test_missing_internal_auth_is_rejected_before_any_work(fake_llm, fake_eligibility):
+    bare = TestClient(app_mod.app, raise_server_exceptions=False)
+
+    r = bare.post("/visit-chat", json={"message": f"check {MEMBER_ID}"})
+
+    assert r.status_code == 401
+    assert fake_llm == []
+    assert fake_eligibility == []
+
+
+def test_blank_shared_secret_refuses_every_call(monkeypatch, fake_llm, fake_eligibility):
+    # Fail-closed configuration: an unset secret must refuse, never disable the
+    # check (the PR #5 round-5 lesson about the default deploy state).
+    monkeypatch.setattr(app_mod.settings, "ai_proxy_shared_secret", "")
+
+    r = _post(f"check {MEMBER_ID}")
+
+    assert r.status_code == 503
+    assert fake_llm == []
+
+
+def test_placeholder_shared_secret_refuses_every_call(monkeypatch, fake_llm):
+    monkeypatch.setattr(app_mod.settings, "ai_proxy_shared_secret", "changeme")
+
+    assert _post(f"check {MEMBER_ID}").status_code == 503
+
+
+# --- request bounds -------------------------------------------------------
+def test_over_long_message_is_rejected_without_echo(fake_llm, fake_eligibility):
+    huge = "x" * (app_mod.settings.ai_visit_max_message_chars + 1)
+
+    r = _post(huge)
+
+    assert r.status_code == 422
+    assert huge not in r.text
+    assert fake_llm == []
+
+
+def test_empty_message_is_rejected(fake_llm):
+    assert _post("").status_code == 422
+
+
+def test_unknown_field_is_rejected(fake_llm):
+    r = client.post(
+        "/visit-chat", json={"message": "hello", "patient_ssn": "123-45-6789"}
+    )
+
+    assert r.status_code == 422
+    assert "123-45-6789" not in r.text
+
+
+def test_over_long_transcript_is_rejected(fake_llm):
+    turns = [{"role": "user"} for _ in range(app_mod.settings.ai_visit_max_turns + 1)]
+
+    assert _post("hello", turns=turns).status_code == 422
+
+
+def test_turns_cannot_carry_text(fake_llm):
+    # The store is metadata-only by construction (schemas.VisitTurn). A caller
+    # that tries to park prose in the transcript is rejected at the edge rather
+    # than quietly persisting PHI at rest.
+    r = _post("hello", turns=[{"role": "user", "text": "patient Jane Doe, ssn 123-45-6789"}])
+
+    assert r.status_code == 422
+    assert "Jane Doe" not in r.text
+
+
+def test_facts_cannot_smuggle_extra_state(fake_llm):
+    # facts is what the gateway persists into Redis, so its shape is closed: a
+    # smuggled name or note must be rejected rather than parked in visit memory.
+    r = _post("hello", facts={"insurance_id": MEMBER_ID, "patient_name": "Jane Doe"})
+
+    assert r.status_code == 422
+    assert "Jane Doe" not in r.text
+
+
+# --- logging --------------------------------------------------------------
+def test_chat_log_is_metadata_only(fake_llm, fake_eligibility, caplog):
+    with caplog.at_level("INFO"):
+        _post(f"check {MEMBER_ID} for Jane Doe")
+
+    assert MEMBER_ID not in caplog.text
+    assert "Jane Doe" not in caplog.text
+    assert "intent" in caplog.text
+    assert "eligibility_status" in caplog.text
+
+
+# --- the catalog stays administrative ------------------------------------
+@pytest.mark.parametrize("key", list(visit_templates.CATALOG))
+def test_catalog_copy_is_clinical_term_free(key):
+    # Same screen the intake-instructions catalog is linted against: a future edit
+    # must not smuggle clinical guidance into administrative copy.
+    instructions_tests = load_module(
+        "tests/test_ai_intake_instructions.py", "instructions_tests_for_screen"
+    )
+    assert not instructions_tests._CLINICAL_TERMS.search(visit_templates.CATALOG[key])
+
+
+@pytest.mark.parametrize("status", ["active", "inactive", "unknown", "pending"])
+def test_every_verdict_line_is_clinical_term_free(status):
+    instructions_tests = load_module(
+        "tests/test_ai_intake_instructions.py", "instructions_tests_for_screen2"
+    )
+    line = visit_templates.verdict_line({"status": status, "payer": "edi.example.com"})
+    assert not instructions_tests._CLINICAL_TERMS.search(line)

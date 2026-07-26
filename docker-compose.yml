@@ -156,6 +156,11 @@ services:
     env_file:
       - .env
       - .env.ai-proxy
+    environment:
+      # visit-chat calls eligibility-service directly (ADR 0011 §4), the same
+      # service-to-service topology intake has always used. Bounded by a timeout
+      # and an in-process breaker on the ai-assistant side.
+      ELIGIBILITY_URL: http://eligibility-service:8072
     # Deliberately NOT published to the host (expose = compose-network only):
     # the endpoint has no auth of its own — the gateway session check is the
     # auth boundary, and every request spends paid Bedrock capacity. Other

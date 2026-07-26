@@ -16,7 +16,7 @@ from typing import Optional
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
@@ -26,6 +26,7 @@ from db import get_db
 from logging_config import configure
 from models import User
 from security import (
+    VisitMemoryUnavailable,
     ai_cache_get,
     ai_cache_key,
     ai_cache_set,
@@ -36,8 +37,13 @@ from security import (
     create_session,
     destroy_session,
     get_session,
+    new_visit_id,
     release_ai_global_budget,
     verify_password,
+    visit_lock_acquire,
+    visit_lock_release,
+    visit_memory_get,
+    visit_memory_save,
 )
 
 log = configure(settings.service_name)
@@ -484,6 +490,163 @@ def proxy_intake_instructions(payload: dict, session: dict = Depends(_ai_rate_li
         # winner already holds the key, this release is a no-op (Codex PR #7
         # round 13).
         ai_singleflight_release(cache_key, flight_token)
+
+
+# --------------------------------------------------------------------------- #
+# ai assistant — visit chat (ADR 0011)
+# --------------------------------------------------------------------------- #
+def _ai_chat_rate_limited(session: dict = Depends(require_session)) -> dict:
+    """Per-user REQUEST quota for the chat endpoint, in its own namespace.
+
+    Same control and same fail-closed rule as _ai_rate_limited, with separate
+    counters and higher caps: a conversation is many turns where an intake
+    checklist is one submit, and neither endpoint may exhaust the other's quota
+    (ADR 0011 §6). The shared aggregate SPEND ceiling still bounds dollars.
+    """
+    username = session.get("username") or "unknown"
+    try:
+        retry_after = check_ai_rate_limit(
+            username,
+            settings.ai_chat_rate_limit_per_minute,
+            settings.ai_chat_rate_limit_per_day,
+            namespace="aichat",
+        )
+    except Exception as e:  # Redis fault: do not let the request proceed.
+        log.error("ai chat rate-limit check unavailable: %s", type(e).__name__)
+        raise HTTPException(status_code=503, detail="assistant is temporarily unavailable")
+    if retry_after:
+        log.warning("ai chat rate limit reached user=%s", username)
+        raise HTTPException(
+            status_code=429,
+            detail="assistant request limit reached; please try again later",
+            headers={"Retry-After": str(retry_after)},
+        )
+    return session
+
+
+class _VisitChatRequest(BaseModel):
+    """Gateway-side validation of a chat turn.
+
+    Unlike the intake-instructions mirror this is not only a budget pre-filter —
+    it is the edge that bounds a free-text field. ``visit_id`` is pinned to the
+    exact shape ``new_visit_id`` mints (32 lowercase hex chars): the value is
+    interpolated into a Redis key, so anything else — a colon, a glob, a path —
+    is rejected here rather than reaching the keyspace.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    visit_id: Optional[str] = Field(default=None, pattern="^[0-9a-f]{32}$")
+    message: str = Field(min_length=1, max_length=settings.ai_visit_max_message_chars)
+
+
+def _validate_visit_chat_request(payload: dict) -> dict:
+    """Validate a chat body, no-echo on failure.
+
+    Mirrors ai-assistant's ``validation_error_no_echo`` and the intake-instructions
+    pre-filter: a rejected value is exactly where PHI could sit — here it is
+    GUARANTEED to be free text a human typed — so neither the value nor the parse
+    error is logged or echoed. Rejecting before the spend ceiling also keeps an
+    over-long or malformed body from charging the tenant budget.
+    """
+    try:
+        model = _VisitChatRequest.model_validate(payload)
+    except ValidationError:
+        raise HTTPException(status_code=422, detail="invalid visit-chat request")
+    return model.model_dump(mode="json")
+
+
+@app.post("/ai/visit-chat")
+def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limited)):
+    """One turn of the front-desk eligibility chat.
+
+    The gateway owns everything stateful here — auth, abuse controls, and the
+    visit memory — while ai-assistant stays a pure function of the turn (ADR
+    0011 §1). Note what is deliberately ABSENT compared with
+    /ai/intake-instructions: there is no response cache on this path. A reply
+    depends on a live coverage verdict and on this visit's memory, so it is
+    neither idempotent nor safely shareable, and its key would have to derive
+    from PHI-bearing free text (ADR 0011 §6).
+    """
+    body = _validate_visit_chat_request(payload)
+    owner = session.get("username") or "unknown"
+    visit_id = body.get("visit_id")
+    record = None
+
+    if visit_id:
+        try:
+            record = visit_memory_get(visit_id, owner)
+        except VisitMemoryUnavailable as e:
+            # Fail CLOSED: a fault cannot tell "absent" from "someone else's", so
+            # continuing would wave through a turn whose ownership was never
+            # verified. Only a first turn (no visit_id) starts fresh, and it reads
+            # nothing.
+            log.error("visit memory unavailable: %s", e)
+            raise HTTPException(status_code=503, detail="assistant is temporarily unavailable")
+        if record is None:
+            # Unknown id and not-your-id answer identically: a 403 would confirm
+            # that somebody else's visit exists.
+            raise HTTPException(status_code=404, detail="visit not found")
+    else:
+        visit_id = new_visit_id()
+
+    # Serialise turns within this visit: two concurrent turns would read-modify-
+    # write the same record (dropping one) and make two paid calls for one clerk.
+    lock_token = visit_lock_acquire(visit_id, settings.ai_singleflight_lock_ttl_seconds)
+    if not lock_token:
+        raise HTTPException(
+            status_code=429,
+            detail="this visit is already processing a message; please retry shortly",
+            headers={"Retry-After": "1"},
+        )
+    try:
+        turns = (record or {}).get("turns") or []
+        facts = (record or {}).get("facts") or {}
+        budget_reservation = _reserve_ai_budget()
+        try:
+            # _post_checked, never _post: the legacy helper swallows failures into
+            # a 200-OK {"error": str(e)} body, and str(e) on an httpx error embeds
+            # the request URL — the leak class PR #11 closed.
+            result = _post_checked(
+                "ai",
+                "/visit-chat",
+                {"message": body["message"], "turns": turns, "facts": facts},
+                timeout=settings.ai_read_timeout_seconds,
+                headers={"X-Internal-Auth": settings.ai_proxy_shared_secret},
+            )
+        except HTTPException as e:
+            if e.status_code in _NON_PAID_DOWNSTREAM_STATUS:
+                _refund_ai_budget(budget_reservation)
+            raise
+
+        # The transcript is METADATA ONLY — what happened, never what was said
+        # (ADR 0011 §3). The clerk's prose is not persisted anywhere: nothing in
+        # this feature reads it back (the model only learns the turn COUNT), so
+        # storing it would be PHI at rest with no consumer, and unmaskable PHI at
+        # that — a typed patient name defeats any pattern filter. Both values
+        # below are closed vocabulary ai-assistant derived server-side.
+        reply = str(result.get("reply") or "")
+        new_turns = turns + [
+            {"role": "user", "intent": result.get("intent"), "status": None},
+            {"role": "assistant", "intent": None, "status": result.get("status")},
+        ]
+        visit_memory_save(
+            visit_id,
+            owner,
+            result.get("facts") or {},
+            new_turns,
+            settings.ai_visit_ttl_seconds,
+            settings.ai_visit_max_turns,
+            created_at=(record or {}).get("created_at"),
+        )
+        return {
+            "visit_id": visit_id,
+            "reply": reply,
+            "disclaimer": result.get("disclaimer"),
+            "eligibility": result.get("eligibility"),
+        }
+    finally:
+        visit_lock_release(visit_id, lock_token)
 
 
 # --------------------------------------------------------------------------- #

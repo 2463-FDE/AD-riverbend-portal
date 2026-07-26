@@ -74,5 +74,58 @@ class Settings:
     # Independent gross-size backstop (defense-in-depth), also local.
     llm_max_input_chars = int(os.getenv("LLM_MAX_INPUT_CHARS", str(llm_max_input_tokens * 4)))
 
+    # --- visit-chat: the eligibility dependency (ADR 0011) -------------------
+    # ai-assistant's own hop to eligibility-service. Bounded and breakered from
+    # the start: the D4 lesson (RIV-088/RIV-141) is about the CALLER's worker
+    # thread, so a new caller inherits the problem, not the fix.
+    eligibility_url = os.getenv("ELIGIBILITY_URL", "http://eligibility-service:8072")
+    # Hard cap on how long one chat turn can be held by the dependency. Matches
+    # intake's ELIGIBILITY_TIMEOUT_SECONDS: it must exceed eligibility-service's
+    # own worst-case payer budget ((connect + read) * (1 + retries) = 6s with the
+    # shipped defaults), or this client would time out while the downstream is
+    # still doing bounded, useful work — the inner-budget-inside-outer rule from
+    # ADR 0010.
+    ai_eligibility_timeout_seconds = float(os.getenv("AI_ELIGIBILITY_TIMEOUT_SECONDS", "8"))
+    ai_eligibility_breaker_fail_threshold = int(
+        os.getenv("AI_ELIGIBILITY_BREAKER_FAIL_THRESHOLD", "3")
+    )
+    ai_eligibility_breaker_reset_seconds = float(
+        os.getenv("AI_ELIGIBILITY_BREAKER_RESET_SECONDS", "30")
+    )
+    # Breaker health is "usable AND cheap", on two separate latency thresholds —
+    # the same rule intake landed on across adversarial rounds r5/r6 (see
+    # services/intake-service/config.py for the full derivation; it is not
+    # restated here). Short version: eligibility-service returns the identical
+    # shaped 200 {"active": null, "status": "unknown"} when its payer breaker
+    # short-circuits (free) and when it burned its whole payer budget on a hanging
+    # payer (expensive), so only LATENCY separates them. Counting every shaped 2xx
+    # as healthy leaves this breaker closed during the exact outage it guards.
+    #
+    # INVARIANT: 0.1 <= degraded <= slow_answer <= eligibility-service's
+    # PAYER_READ_TIMEOUT_SECONDS (2s). The upper bound is the FLOOR of the retried
+    # band, not the ceiling of a healthy attempt — anchoring higher makes the check
+    # dead code for a payer that degrades but keeps answering (the r6 no-op).
+    # Both are clamped rather than validated at startup, mirroring intake and the
+    # gateway's singleflight lock TTL: 0 is what an operator would plausibly set to
+    # "turn this off", and it would do the opposite (every answer unhealthy, so the
+    # circuit never closes). "Off" here is a large number, never zero.
+    _ai_degraded_slow_floor = 0.1
+    ai_eligibility_degraded_slow_seconds = max(
+        float(os.getenv("AI_ELIGIBILITY_DEGRADED_SLOW_SECONDS", "1")),
+        _ai_degraded_slow_floor,
+    )
+    ai_eligibility_slow_answer_seconds = max(
+        float(os.getenv("AI_ELIGIBILITY_SLOW_ANSWER_SECONDS", "2")),
+        ai_eligibility_degraded_slow_seconds,
+    )
+
+    # --- visit-chat: transcript bounds (ADR 0011 §3) ------------------------
+    # The gateway owns visit memory and enforces these at the edge; ai-assistant
+    # applies them again on the inbound side so the caps hold even if a future
+    # caller forgets. Both are PHI bounds as much as token bounds: an unbounded
+    # transcript in Redis is a PHI dump whose retention policy is "never".
+    ai_visit_max_turns = int(os.getenv("AI_VISIT_MAX_TURNS", "12"))
+    ai_visit_max_message_chars = int(os.getenv("AI_VISIT_MAX_MESSAGE_CHARS", "1000"))
+
 
 settings = Settings()
