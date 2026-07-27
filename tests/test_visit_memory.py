@@ -154,8 +154,27 @@ def test_ttl_is_sliding_and_created_at_is_preserved(redis, monkeypatch):
 def test_zero_ttl_writes_nothing(redis):
     # A retention policy of "forever" must not be reachable by setting 0.
     visit_id = security.new_visit_id()
-    security.visit_memory_save(visit_id, OWNER, FACTS, [], 0, 12)
+    stored = security.visit_memory_save(visit_id, OWNER, FACTS, [], 0, 12)
 
+    assert redis.store == {}
+    assert stored is False, "nothing was written, so nothing is reusable"
+
+
+# --- a lost write is reported, not swallowed (review round 2) ----------------
+# The route hands the client a visit id only when the record behind it exists.
+# Reporting the failure rather than raising keeps the original policy — a turn
+# that has already been answered and paid for is not failed over a lost write —
+# while removing the silent half: a returned id that resolves to nothing makes
+# the NEXT turn answer 404 "visit not found" with nothing logged anywhere.
+def test_a_stored_write_reports_success(redis):
+    assert security.visit_memory_save(security.new_visit_id(), OWNER, FACTS, [], 1800, 12) is True
+
+
+def test_a_failed_write_reports_failure_instead_of_raising(redis):
+    redis.fail = True
+    visit_id = security.new_visit_id()
+
+    assert security.visit_memory_save(visit_id, OWNER, FACTS, [], 1800, 12) is False
     assert redis.store == {}
 
 

@@ -434,8 +434,8 @@ def test_the_transcript_stays_bounded_across_many_turns(redis, fanout):
     assert len(record["turns"]) == gw.settings.ai_visit_max_turns
 
 
-def test_a_write_failure_does_not_fail_the_answered_turn(redis, fanout, monkeypatch):
-    # The clerk already has their answer; losing continuity beats 500-ing.
+def _break_visit_writes(redis, monkeypatch):
+    """Fail only the visit record write; the lock and the quota keys still work."""
     original_set = redis.set
 
     def _fail_visit_writes(key, value, nx=False, ex=None):
@@ -445,7 +445,79 @@ def test_a_write_failure_does_not_fail_the_answered_turn(redis, fanout, monkeypa
 
     monkeypatch.setattr(redis, "set", _fail_visit_writes)
 
+
+def test_a_write_failure_does_not_fail_the_answered_turn(redis, fanout, monkeypatch):
+    # The clerk already has their answer; losing continuity beats 500-ing.
+    _break_visit_writes(redis, monkeypatch)
+
     assert _chat().status_code == 200
+
+
+def test_a_failed_first_write_hands_back_no_visit_id(redis, fanout, monkeypatch):
+    # Round 2: the 200 above was correct and, on its own, was the defect. The
+    # response still carried a visit_id for a record that was never written, so
+    # the clerk's NEXT message answered 404 "visit not found" after the payer
+    # call and the model call had already been paid for. Continuity is lost
+    # either way; what this asserts is that the client is told.
+    _break_visit_writes(redis, monkeypatch)
+
+    body = _chat().json()
+
+    assert body["visit_id"] is None, "an unstored visit id must not be handed out"
+    assert body["visit_memory"] == "unavailable"
+    assert body["reply"], "the answered turn is still delivered"
+
+
+def test_a_failed_later_write_keeps_the_visit_that_still_resolves(redis, fanout, monkeypatch):
+    # The mirror case, and the one a blanket "null the id on any failed write"
+    # gets wrong: the record was loaded at the top of this request, so it is
+    # still in Redis and still loadable — only this turn's append was lost.
+    # Discarding the id here would throw away retrievable context, and under a
+    # PERSISTENT write fault (Redis at maxmemory with noeviction) it would do so
+    # on every turn, resetting the conversation per message.
+    visit_id = _start_visit(fanout)
+    _break_visit_writes(redis, monkeypatch)
+
+    body = _chat("is it still active?", visit_id=visit_id).json()
+
+    assert body["visit_id"] == visit_id
+    assert body["visit_memory"] == "stale", "memory is available; this turn is missing from it"
+    assert security.visit_memory_get(visit_id, OWNER) is not None
+
+
+def test_a_persisted_turn_reports_its_memory_as_ok(redis, fanout):
+    body = _chat().json()
+
+    assert body["visit_memory"] == "ok"
+    assert f"visit:{body['visit_id']}" in redis.store
+
+
+@pytest.mark.parametrize("broken_at", [None, "first", "second"])
+def test_a_returned_visit_id_always_resolves(redis, fanout, monkeypatch, broken_at):
+    # The invariant behind the cases above, over both turn shapes rather than the
+    # one failure mode that is easiest to reproduce: whatever the store does, the
+    # response never names a visit a follow-up turn cannot load — and a turn that
+    # DID persist always names one, so the invariant cannot be satisfied by
+    # returning null forever.
+    if broken_at == "first":
+        _break_visit_writes(redis, monkeypatch)
+
+    first = _chat().json()
+    if broken_at == "first":
+        assert first["visit_id"] is None and first["visit_memory"] == "unavailable"
+        return
+    assert first["visit_id"] and first["visit_memory"] == "ok"
+
+    if broken_at == "second":
+        _break_visit_writes(redis, monkeypatch)
+    second = _chat("is it still active?", visit_id=first["visit_id"]).json()
+
+    for body in (first, second):
+        assert body["visit_id"] is not None
+        assert body["visit_memory"] in ("ok", "stale")
+        assert security.visit_memory_get(body["visit_id"], OWNER) is not None, (
+            "a visit id in a response must be loadable by the next turn"
+        )
 
 
 # --- the no-echo boundary holds for bodies that never reach the validator ----

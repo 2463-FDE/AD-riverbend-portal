@@ -12,6 +12,7 @@ where the guard does not expect it (inside the URL), given values that LOOK set
 but are not (placeholders, whitespace, case variants), and the refusal itself is
 checked for the failure it must not cause — a cached half-built client.
 """
+import logging
 import pathlib
 import sys
 from types import SimpleNamespace
@@ -34,6 +35,7 @@ REAL_PASSWORD = "unit-test-redis-credential"
 def clean_client(monkeypatch):
     """Reset the module singleton and capture what the client is built with."""
     monkeypatch.setattr(security, "_redis_client", None)
+    monkeypatch.setattr(security, "_redis_probe_client", None)
     monkeypatch.setattr(security.settings, "redis_url", "redis://redis:6379/0")
     monkeypatch.setattr(security.settings, "redis_password", "")
     calls = []
@@ -266,6 +268,7 @@ def refusing_gateway(monkeypatch):
     monkeypatch.setattr(gw_security.settings, "redis_password", "")
     monkeypatch.setattr(gw_security.settings, "redis_url", "redis://redis:6379/0")
     monkeypatch.setattr(gw_security, "_redis_client", None)
+    monkeypatch.setattr(gw_security, "_redis_probe_client", None)
 
 
 def test_healthz_goes_red_when_the_store_is_refused(refusing_gateway):
@@ -323,3 +326,305 @@ def test_login_answers_503_not_500_when_the_store_is_refused(refusing_gateway):
     assert r.status_code == 503
     assert r.json() == {"detail": "auth backend unavailable"}
     assert "traceback" not in r.text.lower()
+
+
+# --- the probe must PROVE the store answers (review round 2) -------------------
+# Round 1's check built the client and sent no command, so it caught only the
+# failure it was written for. A credential Redis rejects, a store that died after
+# boot, or a stale connection all left /healthz at 200 with every session-backed
+# route failing — the same green-dashboard-dead-service shape the check exists to
+# prevent, one layer in. These tests therefore assert on the COMMAND, not just
+# the status code, and cover both "not configured" and "configured but refused".
+
+
+class _FakeProbe:
+    def __init__(self, exc=None):
+        self.exc = exc            # settable: a store can recover mid-test
+        self.pings = 0
+
+    def ping(self):
+        self.pings += 1
+        if self.exc is not None:
+            raise self.exc
+        return True
+
+
+@pytest.fixture()
+def clock(monkeypatch):
+    """Drive the probe memo's clock, so a "burst" and a "poll" are distinguishable."""
+    holder = {"now": 0.0}
+    monkeypatch.setattr(gw_security.time, "monotonic", lambda: holder["now"])
+    return SimpleNamespace(set=lambda t: holder.update(now=t))
+
+
+@pytest.fixture()
+def probing_gateway(monkeypatch):
+    """A properly-credentialed gateway whose probe client is under our control."""
+    monkeypatch.setattr(gw_security.settings, "redis_password", REAL_PASSWORD)
+    monkeypatch.setattr(gw_security.settings, "redis_url", "redis://redis:6379/0")
+    monkeypatch.setattr(gw_security, "_redis_client", None)
+    monkeypatch.setattr(gw_security, "_redis_probe_client", None)
+    monkeypatch.setattr(gw_security, "_probe_verdict", None)
+    built = []
+
+    def _install(exc=None):
+        probe = _FakeProbe(exc)
+
+        def _fake_from_url(url, **kwargs):
+            built.append(kwargs)
+            return probe
+
+        monkeypatch.setattr(gw_security.redis_lib, "from_url", _fake_from_url)
+        return probe
+
+    return SimpleNamespace(install=_install, built=built)
+
+
+def _logged(caplog):
+    return "\n".join(record.getMessage() for record in caplog.records)
+
+
+def test_healthz_is_green_only_after_the_store_answers(probing_gateway):
+    probe = probing_gateway.install()
+
+    r = gw_client.get("/healthz")
+
+    assert r.status_code == 200
+    assert probe.pings == 1, (
+        "a health check that issues no command cannot tell a usable store from an "
+        "unreachable one — that was the round-1 gap"
+    )
+
+
+def test_healthz_goes_red_when_the_store_does_not_answer(probing_gateway):
+    probing_gateway.install(ConnectionError("connection refused"))
+
+    r = gw_client.get("/healthz")
+
+    assert r.status_code == 503
+    assert r.json() == {"detail": "session store unavailable"}
+
+
+def test_healthz_goes_red_when_the_credential_is_rejected(probing_gateway, caplog):
+    # The failure the config-only probe structurally could not see: the value is
+    # present and not a placeholder, and the server rejects it (the gateway's
+    # REDIS_PASSWORD drifting from the server's --requirepass). Redis answers
+    # this at command time, so only a command finds it.
+    rejected = gw_security.redis_lib.exceptions.AuthenticationError(
+        f"WRONGPASS invalid username-password pair, sent {REAL_PASSWORD}"
+    )
+    probing_gateway.install(rejected)
+
+    with caplog.at_level(logging.ERROR):
+        r = gw_client.get("/healthz")
+
+    assert r.status_code == 503
+    assert r.json() == {"detail": "session store unavailable"}
+    # The LOG is the half that matters here: the body is a fixed literal, so
+    # asserting on it cannot catch a regression to raising str(exc) — the
+    # server's message is free to quote what was sent, and this one does.
+    logged = _logged(caplog)
+    assert "AuthenticationError WRONGPASS" in logged, "the operator needs the cause"
+    assert REAL_PASSWORD not in logged, "but never the credential"
+    assert "username-password pair" not in logged, "nor the rest of the message"
+
+
+def test_an_open_store_is_distinguishable_from_a_down_one(probing_gateway, caplog):
+    # A store started WITHOUT --requirepass answers AUTH with a plain
+    # ResponseError. Reported as just the class name it reads as "Redis is
+    # down", and the runbook sends the operator to check whether Redis is up —
+    # while the actual finding is that sessions and visit memory are on an open
+    # store. Redis error codes are a closed vocabulary, so the code is kept.
+    open_store = gw_security.redis_lib.exceptions.ResponseError(
+        "ERR Client sent AUTH, but no password is set"
+    )
+    probing_gateway.install(open_store)
+
+    with caplog.at_level(logging.ERROR):
+        r = gw_client.get("/healthz")
+
+    assert r.status_code == 503
+    logged = _logged(caplog)
+    assert "ResponseError ERR" in logged
+    assert "no password is set" not in logged, "the code, not the message"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        f"{REAL_PASSWORD} was rejected",          # the credential in first position
+        "Custom-Error the credential was X",      # a token that is not a Redis code
+        "wrongpass lower case is not a code",
+        f"{REAL_PASSWORD.upper()} SHOUTED",       # uppercase, still not a code
+    ],
+)
+def test_only_known_redis_error_codes_reach_the_log(probing_gateway, caplog, message):
+    # The quantifier behind the two tests above. A shape test ("first token, if it
+    # looks like a code") would admit any of these; the catalog admits none. The
+    # first case is the one that matters: a server whose error text begins with
+    # the value we sent.
+    probing_gateway.install(gw_security.redis_lib.exceptions.ResponseError(message))
+
+    with caplog.at_level(logging.ERROR):
+        gw_client.get("/healthz")
+
+    logged = _logged(caplog)
+    assert "ResponseError" in logged
+    assert logged.strip().endswith("ResponseError"), (
+        f"nothing from {message!r} may be appended — it carries no known error code"
+    )
+
+
+def test_the_probe_client_carries_the_configured_timeouts(probing_gateway, monkeypatch):
+    # A distinct value, not the default: the connect and read bounds are two
+    # knobs fed from one setting, so asserting the default would pass even if one
+    # of them were never wired up.
+    monkeypatch.setattr(gw_security.settings, "redis_probe_timeout_seconds", 0.37)
+    probing_gateway.install()
+
+    gw_client.get("/healthz")
+
+    kwargs = probing_gateway.built[0]
+    assert kwargs["socket_timeout"] == 0.37
+    assert kwargs["socket_connect_timeout"] == 0.37
+
+
+def test_the_probe_client_bounds_its_pool_and_skips_the_setinfo_handshake(probing_gateway):
+    # Both are cost bounds on a public, session-less endpoint: one connection per
+    # in-flight request against a slow store, and two extra blocking round trips
+    # per connect (redis-py registers its own lib name/version by default) that
+    # the probe's budget arithmetic cannot afford.
+    probing_gateway.install()
+
+    gw_client.get("/healthz")
+
+    kwargs = probing_gateway.built[0]
+    assert kwargs["max_connections"] == 1
+    assert kwargs["lib_name"] is None and kwargs["lib_version"] is None
+
+
+def test_the_probe_client_is_built_once_across_polls(probing_gateway, clock):
+    probe = probing_gateway.install()
+
+    for tick in (0.0, 10.0, 20.0):   # the healthcheck's own interval
+        clock.set(tick)
+        gw_client.get("/healthz")
+
+    assert len(probing_gateway.built) == 1, "a 10s poll must not open a pool per call"
+    assert probe.pings == 3, "but every poll must still send a command"
+
+
+# --- the verdict memo: collapse a burst, never soften the signal ---------------
+# /healthz takes no session and is published on the host port, and it now does
+# Redis I/O on a sync (threadpool) handler. Without a memo, N concurrent callers
+# hold N threadpool workers for the full probe budget each — with a slow store
+# that queues every other sync route, including /login. The memo must therefore
+# cover the FAILURE case too, and must expire well inside the poll interval or it
+# turns a recovered store into a stale red (and a dead one into a stale green).
+
+
+def test_a_burst_of_polls_collapses_to_one_command(probing_gateway, clock):
+    probe = probing_gateway.install()
+    clock.set(0.0)
+
+    for _ in range(5):
+        assert gw_client.get("/healthz").status_code == 200
+
+    assert probe.pings == 1
+
+
+def test_a_burst_against_a_failing_store_also_collapses(probing_gateway, clock):
+    probe = probing_gateway.install(ConnectionError("connection refused"))
+    clock.set(0.0)
+
+    for _ in range(5):
+        assert gw_client.get("/healthz").status_code == 503
+
+    assert probe.pings == 1, (
+        "the slow/failing store is exactly the case a burst must not repeat — "
+        "memoizing only successes leaves the expensive path unbounded"
+    )
+
+
+def test_the_memo_expires_before_the_next_poll(probing_gateway, clock):
+    probe = probing_gateway.install()
+    clock.set(0.0)
+    gw_client.get("/healthz")
+
+    clock.set(gw_security._PROBE_MEMO_SECONDS)
+
+    gw_client.get("/healthz")
+    assert probe.pings == 2
+
+
+def test_a_recovered_store_is_seen_on_the_next_poll(probing_gateway, clock):
+    probe = probing_gateway.install(ConnectionError("connection refused"))
+    clock.set(0.0)
+    assert gw_client.get("/healthz").status_code == 503
+
+    probe.exc = None
+    clock.set(gw_security._PROBE_MEMO_SECONDS)
+
+    assert gw_client.get("/healthz").status_code == 200, (
+        "a memo that outlives the outage is the stale-green failure this PR closed"
+    )
+
+
+def test_a_config_refusal_is_not_stored_in_the_memo(probing_gateway, clock, monkeypatch):
+    # The refusal itself does no I/O, so there is nothing to amortise: it is
+    # re-evaluated on every miss and never written to the memo. (A memoized
+    # SUCCESS does suppress it for the window — harmless, because the credential
+    # cannot change inside a running process; it comes from the environment.)
+    probe = probing_gateway.install()
+    clock.set(0.0)
+    assert gw_client.get("/healthz").status_code == 200
+
+    monkeypatch.setattr(gw_security.settings, "redis_password", "")
+    monkeypatch.setattr(gw_security, "_redis_probe_client", None)
+    clock.set(gw_security._PROBE_MEMO_SECONDS)
+
+    for _ in range(3):
+        assert gw_client.get("/healthz").json() == {"detail": "session store not configured"}
+    assert probe.pings == 1, "no command is needed to refuse an unconfigured store"
+
+
+def test_a_refused_credential_leaves_no_cached_probe_behind(monkeypatch):
+    # Same property the session client has: a half-built client cached during a
+    # refusal would answer later polls without ever having authenticated.
+    monkeypatch.setattr(gw_security.settings, "redis_password", "")
+    monkeypatch.setattr(gw_security, "_redis_probe_client", None)
+
+    with pytest.raises(gw_security.RedisUnauthenticated):
+        gw_security.check_redis_usable()
+
+    assert gw_security._redis_probe_client is None
+
+
+@pytest.mark.parametrize(
+    "configured,expected",
+    [("0.5", 0.5), ("0", 0.1), ("-5", 0.1), ("0.01", 0.1), ("99", 0.7)],
+)
+def test_the_probe_timeout_is_clamped_to_a_usable_band(monkeypatch, configured, expected):
+    # Both ends of the band are reachable by hand and both defeat the probe: 0
+    # means "wait forever" to redis-py (the hang this bound exists to prevent),
+    # and too large means docker kills the healthcheck request before the endpoint
+    # answers, so neither the 503 nor the log line that names the cause appears.
+    # The ceiling is NOT the healthcheck timeout: the value bounds each socket
+    # operation separately and a cold connect makes several before PING —
+    # tests/test_compose_topology.py asserts that arithmetic.
+    monkeypatch.setenv("REDIS_PROBE_TIMEOUT_SECONDS", configured)
+
+    fresh = load_module("services/gateway/config.py", f"gw_probe_clamp_{configured}")
+
+    assert fresh.settings.redis_probe_timeout_seconds == expected
+
+
+def test_the_session_client_is_not_given_the_probe_timeouts(clean_client, monkeypatch):
+    # The probe needs to give up fast; the auth path must keep the blocking
+    # behaviour it shipped with (CLAUDE.md §6 — session reads are not a place to
+    # change failure timing as a side effect of a health check).
+    monkeypatch.setattr(security.settings, "redis_password", REAL_PASSWORD)
+
+    security._redis()
+
+    assert clean_client[0].keys() == {"url", "decode_responses", "password"}

@@ -256,3 +256,75 @@ def test_ci_seeds_every_env_file_the_topology_requires():
         assert f"cp {path}.example {path}" in ci, (
             f"CI must seed {path} from its template before `docker compose build`"
         )
+
+
+# --- the health probe's budget fits inside the healthcheck's (round 2) --------
+# /healthz sends a real Redis PING, and the container healthcheck that polls it
+# has its own timeout. If the probe can outlast that, docker gives up on the
+# request before the endpoint gives up on Redis: the container still goes red,
+# but by timeout, so neither the 503 nor the log line that says WHICH failure
+# happened is ever produced — and the runbook tells the operator to tell those
+# two causes apart by that log line.
+#
+# The comparison is NOT knob-vs-timeout. REDIS_PROBE_TIMEOUT_SECONDS bounds each
+# blocking socket operation separately, and a cold connection makes several
+# before PING is answered:
+#
+#   1. TCP connect                       (socket_connect_timeout)
+#   2. AUTH — send + read                (socket_timeout)
+#   3. SELECT, when REDIS_URL names a non-zero db
+#   4. PING — send + read
+#
+# (`security._redis_probe` passes lib_name/lib_version=None, which switches off
+# redis-py's two CLIENT SETINFO round trips; without that this would be 6.)
+# So the ceiling of the reachable band times the op count must stay under the
+# healthcheck timeout. Asserted at the CEILING, not the default, so raising the
+# knob cannot quietly cross the line.
+_PROBE_SOCKET_OPS = 4
+
+
+def _healthcheck_timeout_seconds(service):
+    raw = _service(service)["healthcheck"]["timeout"]
+    return float(re.fullmatch(r"([0-9.]+)s", str(raw)).group(1))
+
+
+def _healthcheck_interval_seconds(service):
+    raw = _service(service)["healthcheck"]["interval"]
+    return float(re.fullmatch(r"([0-9.]+)s", str(raw)).group(1))
+
+
+def test_the_gateway_healthcheck_polls_the_endpoint_that_probes_redis():
+    test_cmd = " ".join(str(part) for part in _service("gateway")["healthcheck"]["test"])
+    assert "/healthz" in test_cmd, (
+        "the Redis probe is only a health signal if the healthcheck polls it"
+    )
+
+
+def test_the_whole_redis_probe_stays_inside_the_healthcheck_timeout(monkeypatch):
+    monkeypatch.setenv("REDIS_PROBE_TIMEOUT_SECONDS", "9999")
+    ceiling = load_module(
+        "services/gateway/config.py", "gw_probe_ceiling_config"
+    ).settings.redis_probe_timeout_seconds
+    outer = _healthcheck_timeout_seconds("gateway")
+
+    assert _PROBE_SOCKET_OPS * ceiling < outer, (
+        f"a cold probe makes up to {_PROBE_SOCKET_OPS} blocking socket calls, each "
+        f"bounded separately by REDIS_PROBE_TIMEOUT_SECONDS, so its worst case is "
+        f"{_PROBE_SOCKET_OPS} x {ceiling}s = {_PROBE_SOCKET_OPS * ceiling}s against a "
+        f"{outer}s healthcheck timeout — inner budget < outer budget (ADR 0010 "
+        "discipline). Comparing the knob alone to the timeout certifies the bad "
+        "value instead of forbidding it."
+    )
+
+
+def test_the_probe_memo_expires_well_inside_the_poll_interval(monkeypatch):
+    # The memo exists to collapse a burst against a public endpoint, not to soften
+    # the signal: if it could outlive the poll interval, a recovered store would
+    # keep reporting red — or worse, a dead one would keep reporting green.
+    security = load_module("services/gateway/security.py", "gw_probe_memo_security")
+    interval = _healthcheck_interval_seconds("gateway")
+
+    assert security._PROBE_MEMO_SECONDS < interval / 2, (
+        f"the probe memo ({security._PROBE_MEMO_SECONDS}s) must expire well inside "
+        f"the healthcheck interval ({interval}s) so every poll gets a fresh verdict"
+    )

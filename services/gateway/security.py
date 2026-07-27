@@ -92,34 +92,184 @@ def _redis():
     topology is not ours.
 
     The raise propagates: callers of the session/quota/cache helpers do not
-    swallow it into a success, and the visit-memory helpers that DO swallow
-    failures are best-effort by design — a misconfigured deploy fails at login
-    long before it reaches them.
+    swallow it into a success, and the visit-memory helpers that catch a
+    transient fault report it to their caller rather than raising — a
+    misconfigured deploy fails at login long before it reaches them.
     """
     global _redis_client
     if _redis_client is None:
-        password = _redis_credential()
-        probe = password.strip().lower()
-        if not probe or probe in _PLACEHOLDER_REDIS_PASSWORDS:
-            raise RedisUnauthenticated(
-                "REDIS_PASSWORD is unset or a placeholder — refusing to use an "
-                "unauthenticated Redis for sessions and visit memory "
-                "(docs/debt-log.md D3b)"
-            )
         _redis_client = redis_lib.from_url(
-            settings.redis_url, decode_responses=True, password=password
+            settings.redis_url, decode_responses=True, password=_usable_credential()
         )
     return _redis_client
 
 
-def check_redis_credentials() -> None:
-    """Raise RedisUnauthenticated unless a usable credential is configured.
+def _usable_credential() -> str:
+    """The credential to connect with, or RedisUnauthenticated if there is none.
 
-    The credential check without a command: lazy client construction issues no
-    I/O, so /healthz can use this as a CONFIG probe that cannot flap on a Redis
-    blip while still turning a refused store into a red container health status.
+    One source of truth for the refusal policy, shared by the session client and
+    the health probe's client. If each applied its own test they could disagree,
+    and the disagreement that matters is silent: a probe more permissive than
+    the session path reports green on a store every login refuses.
     """
-    _redis()
+    password = _redis_credential()
+    probe = password.strip().lower()
+    if not probe or probe in _PLACEHOLDER_REDIS_PASSWORDS:
+        raise RedisUnauthenticated(
+            "REDIS_PASSWORD is unset or a placeholder — refusing to use an "
+            "unauthenticated Redis for sessions and visit memory "
+            "(docs/debt-log.md D3b)"
+        )
+    return password
+
+
+class RedisUnreachable(RuntimeError):
+    """A credential is configured, but the store did not answer it."""
+
+
+_redis_probe_client = None
+
+
+def _redis_probe():
+    """A second client, used ONLY by the health probe, with bounded timeouts.
+
+    The shared session client is deliberately built without socket timeouts: it
+    is on the auth path, and changing how a session read blocks changes auth
+    behaviour, which is a §6 zone. The probe needs the opposite property — it
+    must give up quickly — so it gets its own client rather than retuning that
+    one.
+
+    Two settings beyond the timeouts, both about bounding this endpoint's cost:
+
+    * ``max_connections=1``. /healthz takes no session and is published on the
+      host port, so concurrent callers are not a hypothetical; without a cap the
+      pool grows one connection per in-flight request against a slow store.
+    * ``lib_name``/``lib_version`` off. redis-py sends CLIENT SETINFO twice per
+      new connection to register its own name and version. Neither is useful to
+      a health probe and each is a blocking round trip inside the connect path,
+      which is where the probe's budget arithmetic is tightest (see config).
+    """
+    global _redis_probe_client
+    if _redis_probe_client is None:
+        timeout = settings.redis_probe_timeout_seconds
+        _redis_probe_client = redis_lib.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            password=_usable_credential(),
+            socket_timeout=timeout,
+            socket_connect_timeout=timeout,
+            max_connections=1,
+            lib_name=None,
+            lib_version=None,
+        )
+    return _redis_probe_client
+
+
+# How long a probe verdict is reused. Must stay well under the healthcheck's
+# `interval: 10s` so every poll gets a fresh answer — the memo exists to collapse
+# a BURST (see _redis_probe: the endpoint is public and takes no session), not to
+# soften the signal. Asserted against compose in tests/test_compose_topology.py.
+_PROBE_MEMO_SECONDS = 2.0
+
+# (monotonic expiry, fault detail or None) — module-global, like both clients.
+_probe_verdict = None
+
+
+# Redis's server-side error prefixes, as an allowlist. A CATALOG, not a shape
+# test ("first token, if it looks uppercase"): the string being inspected is an
+# error message that can quote the credential we just sent, and a heuristic that
+# admits anything matching a pattern eventually admits the thing it should not
+# (the PR #7 member-id lesson — recognise a closed vocabulary, never "whatever
+# looks like one"). Anything outside this set is dropped rather than logged.
+_REDIS_ERROR_CODES = frozenset(
+    {
+        "ERR",          # generic — includes "Client sent AUTH, but no password is set"
+        "WRONGPASS",    # the credential is wrong
+        "NOAUTH",       # authentication required, none sent
+        "NOPERM",       # ACL user lacks the command
+        "OOM",          # maxmemory reached, writes rejected
+        "MISCONF",      # persistence failing; writes rejected
+        "LOADING",      # dataset still loading from disk
+        "BUSY",         # a script is monopolising the server
+        "READONLY",     # a replica was handed a write
+        "MASTERDOWN",
+        "CLUSTERDOWN",
+        "NOPROTO",
+    }
+)
+
+
+def _probe_fault_detail(exc: Exception) -> str:
+    """What to log about a failed PING: the class, plus a Redis error code.
+
+    Never ``str(exc)``: a rejected credential arrives as AuthenticationError
+    whose message can quote what was sent. But the class alone is too coarse in
+    one case that matters — a store started WITHOUT ``--requirepass`` answers
+    AUTH with ``ERR Client sent AUTH, but no password is set``, and reporting
+    only the class sends the operator to check whether Redis is up when the
+    actual finding is that the store is open. So the class is joined by the error
+    code, and only if it is one Redis is known to send.
+
+    The exception class is NOT what decides this: redis-py raises
+    AuthenticationError from ConnectionError, not from ResponseError, so gating
+    on ResponseError silently drops the WRONGPASS case this exists to surface.
+    """
+    name = type(exc).__name__
+    code = str(exc).split(" ", 1)[0]
+    return f"{name} {code}" if code in _REDIS_ERROR_CODES else name
+
+
+def check_redis_usable(max_age_seconds: float = _PROBE_MEMO_SECONDS) -> None:
+    """Prove the store is usable: credential configured AND answering (round 2).
+
+    Superseded the round-1 config-only probe, which built the client and issued
+    no command. That caught the one failure it was written for — a placeholder
+    or missing credential — and missed every other way this instance can be
+    unable to serve while reporting healthy: a credential Redis rejects (the
+    gateway's value drifting from the server's `--requirepass`), a store that
+    died after boot, a cached client whose connection no longer works. Each of
+    those returns 200 from /healthz while every session-backed route fails,
+    which is precisely the green-dashboard-dead-service shape the guard exists
+    to prevent.
+
+    The PING can now go red on a genuine Redis blip. That is the intended
+    trade: `docker compose ps` telling the truth during an outage is the point,
+    nothing in the topology drains or restarts on this signal (the portal's
+    depends_on carries no health condition), and the check self-heals on the
+    next 10s poll.
+
+    The verdict — failure as well as success — is reused for ``max_age_seconds``.
+    Caching only successes would leave the expensive case unbounded, which is
+    backwards: the slow store is exactly when a burst of health polls must not
+    each occupy a threadpool worker for the full probe budget.
+
+    Raises RedisUnauthenticated when no credential is configured — kept distinct
+    from RedisUnreachable so the log says which of "misconfigured" and "down"
+    happened, and the operator does not go looking at the wrong one. The refusal
+    is never written to the memo (it does no I/O, so there is nothing to
+    amortise); a memoized success can suppress re-evaluating it for the window,
+    which is harmless because the credential comes from the environment and
+    cannot change inside a running process.
+    """
+    global _probe_verdict
+    now = time.monotonic()
+    if _probe_verdict is not None and now < _probe_verdict[0]:
+        if _probe_verdict[1] is not None:
+            raise RedisUnreachable(_probe_verdict[1])
+        return
+    try:
+        # Inside the try on purpose: from_url can also fail (a malformed
+        # REDIS_URL), and that is a 503 for the same reason an unanswered PING
+        # is. The RedisUnauthenticated re-raise below keeps a configuration
+        # refusal from being reshaped into "the store did not answer".
+        _redis_probe().ping()
+    except RedisUnauthenticated:
+        raise
+    except Exception as e:
+        detail = _probe_fault_detail(e)
+        _probe_verdict = (now + max_age_seconds, detail)
+        raise RedisUnreachable(detail) from None
+    _probe_verdict = (now + max_age_seconds, None)
 
 
 def create_session(username: str, role: str) -> str:
@@ -543,8 +693,8 @@ def visit_memory_save(
     ttl_seconds: int,
     max_turns: int,
     created_at: float | None = None,
-) -> None:
-    """Persist a visit with a sliding TTL. Best-effort by design.
+) -> bool:
+    """Persist a visit with a sliding TTL. Best-effort, but never silent.
 
     One ``SET key value EX ttl`` — atomic, so the "counter created without its
     TTL" failure the fixed-window counters needed Lua to avoid (ADR 0007 round
@@ -557,13 +707,22 @@ def visit_memory_save(
     an unbounded transcript in Redis is a PHI dump whose retention policy is
     "never".
 
-    A write failure is swallowed: the turn has already been answered, and losing
-    continuity is a far smaller harm than failing a request the clerk already
-    got value from. It is logged by the caller, never here (this module has no
-    logger, and the values in scope are PHI-adjacent).
+    Returns True when the record is stored and False when it is not, so a caller
+    can decline to hand back a visit id that resolves to nothing (Codex PR #14
+    round 2). A write failure still does not fail the turn — the answer has been
+    produced and the payer call already paid for, and discarding that is the
+    larger harm — but the previous version returned None either way, so the
+    route handed the client a usable-looking visit id whose next turn answered
+    404 "visit not found". Continuity was lost either way; the difference is
+    whether the client is told.
+
+    Logging stays with the caller, never here: this module has no logger, and
+    the values in scope are PHI-adjacent.
     """
     if ttl_seconds <= 0:
-        return
+        # Memory disabled by config (the setting clamps to >= 60, so this is the
+        # explicit-override path). Nothing is stored, so nothing is reusable.
+        return False
     now = time.time()
     record = {
         "owner": owner,
@@ -578,7 +737,8 @@ def visit_memory_save(
     except RedisUnauthenticated:
         raise
     except Exception:
-        pass
+        return False
+    return True
 
 
 def visit_lock_acquire(visit_id: str, lock_ttl_seconds: int) -> str | None:

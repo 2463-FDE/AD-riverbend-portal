@@ -401,10 +401,89 @@ follow-up, not a claim of principle.
    latency win. Within a visit, `last_eligibility` is reused only with its
    `checked_at`, never restated as current.
 
+## Round 2 corrections (2026-07-27)
+
+Adversarial review round 2 on PR #14 found both of round 1's Redis-hardening
+mechanisms reporting success they had not earned. Neither is a change to auth
+behaviour; both are changes to how a failure is *reported*.
+
+1. **`/healthz` sends a real authenticated PING, bounded by
+   `REDIS_PROBE_TIMEOUT_SECONDS` (default 0.5s, clamped to 0.1–0.7s).** Round 1
+   made the check a *config* probe on the argument that issuing no command could
+   not flap on a Redis blip. True, and the cost of that property was too high: a
+   credential the server rejects (the gateway's `REDIS_PASSWORD` drifting from
+   the server's `--requirepass`), a store that died after boot, and a stale
+   client all left the endpoint at 200 while every session-backed route failed —
+   the same green-dashboard-dead-service shape the check was added to prevent,
+   one layer in. An accurate red beats a stable lie here: nothing in the topology
+   drains or restarts on this signal (the portal's `depends_on` carries no health
+   condition), so the cost of flapping is a red status during a real outage,
+   which is the intended reading. The probe gets its **own** client, because the
+   shared session client is deliberately built with no socket timeouts and
+   retuning it would change how every session read fails — a §6 change made as a
+   side effect of a health check.
+
+   Four properties make the probe affordable on a public, session-less endpoint
+   that now does I/O (all four came out of the pre-push review of this change):
+
+   - **The budget is per socket operation, not per probe.** redis-py applies the
+     timeout to each blocking call separately, and a cold connection makes
+     several before PING (connect, AUTH, an optional SELECT for a non-zero db).
+     So the *ceiling* is the healthcheck timeout divided by that op count, not
+     the timeout itself: a 2.5s clamp against `timeout: 3s` could spend ~10s and
+     be killed by docker, which reports red *by timeout* — no 503, no log line,
+     nothing for the runbook's two-cause table to read.
+     `tests/test_compose_topology.py` asserts `ops × ceiling < timeout`, because
+     comparing one knob to the timeout certifies the bad value instead of
+     forbidding it.
+   - **`lib_name`/`lib_version` off**, which switches off redis-py's two
+     `CLIENT SETINFO` round trips per connect — pure overhead for a probe, and
+     two more timed operations inside the tightest part of the budget.
+   - **`max_connections=1`**, so a burst cannot grow the pool one connection per
+     in-flight request.
+   - **The verdict, success *and* failure, is memoized for 2s** (`<` the
+     healthcheck's `interval: 10s`, asserted against compose). Without it, N
+     concurrent callers each hold an anyio threadpool worker for the full probe
+     budget against a slow store, and sync routes — `/login` included — queue
+     behind them. Memoizing only successes would leave exactly the expensive case
+     unbounded. Verified live: 10 rapid `/healthz` calls produce **1** Redis PING.
+   - **What is logged is the exception class plus a Redis error code from a closed
+     allowlist** (`ERR`, `WRONGPASS`, `NOAUTH`, `OOM`…), never `str(exc)` — an
+     AuthenticationError message can quote the credential that was sent. A
+     catalog rather than a "looks like a code" shape test, for the reason PR #7's
+     member-id prefix catalog exists. The code is what distinguishes a store that
+     is *down* from one started **without** `--requirepass` (`ERR Client sent
+     AUTH, but no password is set`) — a green-to-the-eye Redis holding sessions
+     on an open port.
+2. **`visit_memory_save()` reports whether the write landed, and the route stops
+   handing out visit ids that resolve to nothing.** The swallow itself was right
+   — a turn that has been answered and paid for is not failed over a lost write —
+   but returning `None` either way meant the response still carried a `visit_id`
+   for a record that was never stored, so the clerk's next message answered 404
+   "visit not found" with nothing logged. The helper now returns a bool and the
+   route reports one of three states, because whether the id is still usable
+   depends on which turn this is:
+
+   | state | when | `visit_id` |
+   |-------|------|-----------|
+   | `ok` | the write landed | the visit |
+   | `stale` | the write failed on a **later** turn — the record was loaded at the top of this request, so it is still in Redis and still loadable; only this turn's append was lost | the visit |
+   | `unavailable` | the write failed on the **first** turn — the id was minted here and nothing was stored, so it resolves to nothing | `null` |
+
+   The `stale` case is the one a blanket "null the id on any failed write" gets
+   wrong: it would discard retrievable context, and under a *persistent* write
+   fault (Redis at `maxmemory` with `noeviction`) it would do so on every turn,
+   resetting the conversation per message rather than degrading once. Both failure
+   states log (no identifier — visit ids are opaque, the facts behind them are
+   not). The field is additive on a contract with no client yet (`frontend/` does
+   not call this endpoint), so nothing downstream breaks.
+
 ## Consequences
 
 - **New endpoints.** `POST /ai/visit-chat` on the gateway
-  (`{visit_id?, message}` → `{visit_id, reply, disclaimer, eligibility?}`) and
+  (`{visit_id?, message}` → `{visit_id, visit_memory, reply, disclaimer,
+  eligibility?}`, where `visit_memory` is `ok` / `stale` / `unavailable` and
+  `visit_id` is null in the last of those — see Round 2 corrections) and
   `POST /visit-chat` on ai-assistant (`{message, turns, facts}` →
   `{reply, intent, status, facts, eligibility?, disclaimer}`, internal-auth only,
   no `visit_id`; `intent`/`status` are echoed so the gateway can record a

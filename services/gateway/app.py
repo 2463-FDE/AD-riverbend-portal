@@ -29,6 +29,7 @@ from logging_config import configure
 from models import User
 from security import (
     RedisUnauthenticated,
+    RedisUnreachable,
     VisitMemoryUnavailable,
     ai_cache_get,
     ai_cache_key,
@@ -36,7 +37,7 @@ from security import (
     ai_singleflight_acquire,
     ai_singleflight_release,
     check_ai_rate_limit,
-    check_redis_credentials,
+    check_redis_usable,
     consume_ai_global_budget,
     create_session,
     destroy_session,
@@ -130,21 +131,30 @@ async def redis_unauthenticated(request: Request, exc: RedisUnauthenticated):
 
 @app.get("/healthz")
 def healthz():
-    """Liveness + "can this instance serve at all".
+    """Liveness + "can this instance actually serve".
 
-    The Redis credential check is deliberately included. It is a CONFIG probe,
-    not a connectivity probe: it builds the client lazily and issues no
-    command, so this costs nothing per poll and cannot flap on a Redis blip —
-    but it does turn the one failure the D3b guard exists to make loud (a
-    gateway refusing an unauthenticated store) into a RED container health
-    status. Before this, `docker compose ps` reported the whole stack healthy
-    while every login returned an error.
+    The Redis check is a real authenticated PING, bounded by
+    REDIS_PROBE_TIMEOUT_SECONDS (Codex PR #14 round 2). Round 1 shipped a
+    config-only probe that built the client and sent no command, on the argument
+    that a command could flap on a Redis blip. It could not flap, but it also
+    could not see a wrong password, a store that died after boot, or a stale
+    client — all of which return 200 here while every session-backed route
+    fails, which is the exact green-dashboard-dead-service failure this endpoint
+    was added to prevent. An accurate red beats a stable lie: nothing in the
+    topology drains or restarts on this signal, and the next poll clears it.
+
+    Both failures answer 503 and differ only in the log line: a missing
+    credential is a deploy that was never configured, an unanswered PING is a
+    dependency that is down or rejecting us.
     """
     try:
-        check_redis_credentials()
+        check_redis_usable()
     except RedisUnauthenticated as e:
         log.error("healthz: session store refused: %s", e)
         raise HTTPException(status_code=503, detail="session store not configured")
+    except RedisUnreachable as e:
+        log.error("healthz: session store did not answer: %s", e)
+        raise HTTPException(status_code=503, detail="session store unavailable")
     return {"status": "ok", "service": settings.service_name}
 
 
@@ -691,7 +701,7 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
             {"role": "user", "intent": result.get("intent"), "status": None},
             {"role": "assistant", "intent": None, "status": result.get("status")},
         ]
-        visit_memory_save(
+        persisted = visit_memory_save(
             visit_id,
             owner,
             result.get("facts") or {},
@@ -700,8 +710,34 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
             settings.ai_visit_max_turns,
             created_at=(record or {}).get("created_at"),
         )
+        # A lost write is not worth failing a turn that has already been answered
+        # and paid for. What the id says about the visit still has to be true:
+        #
+        #  * first turn (record is None): the id was minted here and nothing was
+        #    stored, so it resolves to nothing. Handing it back would make the
+        #    clerk's NEXT message answer 404 "visit not found" with no indication
+        #    of why, so send none and let that message open a fresh visit.
+        #  * later turn: the record was loaded at the top of this function, so it
+        #    is still in Redis, still owner-bound, and still loadable. Only THIS
+        #    turn's append was lost. Nulling the id here would discard a visit
+        #    that works — and under a persistent write fault (Redis at
+        #    `maxmemory` with `noeviction`) it would do that on every turn, so a
+        #    conversation would reset per message instead of degrading once.
+        #
+        # `stale` is the honest middle: memory is available, this turn is missing
+        # from it. The log line carries no identifier — visit ids are opaque, but
+        # the record's facts are not.
+        resolvable = persisted or record is not None
+        if not persisted:
+            log.error(
+                "visit memory write failed; answering with memory=%s",
+                "stale" if resolvable else "unavailable",
+            )
         return {
-            "visit_id": visit_id,
+            # None, not omitted: a client that echoes it back sends no visit_id
+            # and starts fresh, which is the honest outcome of a lost first write.
+            "visit_id": visit_id if resolvable else None,
+            "visit_memory": "ok" if persisted else ("stale" if resolvable else "unavailable"),
             "reply": reply,
             "disclaimer": result.get("disclaimer"),
             "eligibility": result.get("eligibility"),

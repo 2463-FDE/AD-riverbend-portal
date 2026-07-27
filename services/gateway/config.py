@@ -16,6 +16,29 @@ class Settings:
     # and visit memory are not allowed onto an open Redis.
     redis_password = os.getenv("REDIS_PASSWORD", "")
 
+    # Budget for the /healthz PING only — never for a session read (Codex PR #14
+    # round 2). The probe must answer inside the container healthcheck's own
+    # `timeout: 3s` (docker-compose.yml, gateway.healthcheck) or docker kills the
+    # request first: the container still goes red, but by timeout, so neither the
+    # 503 nor the log line that says WHICH failure happened is ever produced.
+    #
+    # This is a PER-SOCKET-OPERATION budget, not a budget for the probe. redis-py
+    # applies it to each blocking call separately, and a cold connection makes
+    # several before PING is even sent: TCP connect, AUTH, an optional SELECT
+    # when REDIS_URL names a non-zero db, then PING. (`_redis_probe` also turns
+    # OFF redis-py's CLIENT SETINFO handshake, which would otherwise add two
+    # more.) So the ceiling is the healthcheck timeout divided by that op count,
+    # not the timeout itself — the round-2 first cut clamped at 2.5s and could
+    # spend ~10s. tests/test_compose_topology.py enforces the arithmetic against
+    # compose so neither side can drift.
+    #
+    # Both ends are clamped because both are reachable by hand and both defeat
+    # the probe: 0 means "wait forever" to redis-py, and too large means docker
+    # gives up before the endpoint does.
+    redis_probe_timeout_seconds = min(
+        max(float(os.getenv("REDIS_PROBE_TIMEOUT_SECONDS", "0.5")), 0.1), 0.7
+    )
+
     db_host = os.getenv("DB_HOST", "postgres")
     db_port = os.getenv("DB_PORT", "5432")
     db_name = os.getenv("DB_NAME", "riverbend")
@@ -114,10 +137,11 @@ class Settings:
     # turn refreshes it — so 30 minutes is "30 minutes after the last turn",
     # comfortably longer than a check-in and far shorter than a shift.
     # Clamped to a floor: 0 is what an operator would plausibly set to "turn
-    # visit memory off", and it would do something worse than that — the route
-    # still mints and returns a visit_id, but nothing is stored, so the clerk's
-    # NEXT turn gets a hard 404 "visit not found" instead of degrading to a
-    # stateless conversation. "Off" is not reachable through this knob.
+    # visit memory off", and it is not a supported mode — every turn would open a
+    # visit that is never stored. Since round 2 that at least degrades honestly
+    # (the route reports `visit_memory: unavailable` and returns no visit id
+    # rather than one that 404s on the next turn), but "off" still is not
+    # reachable through this knob.
     ai_visit_ttl_seconds = max(int(os.getenv("AI_VISIT_TTL_SECONDS", "1800")), 60)
     # Hard caps on what one visit can hold. Both bound token spend AND the size of
     # a hypothetical exposure; the store truncates to these rather than trusting
