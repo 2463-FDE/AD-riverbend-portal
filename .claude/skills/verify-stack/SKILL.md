@@ -271,6 +271,7 @@ Measurements so far:
 | PR #14 r3 fixes (2026-07-27) | `general-purpose` + briefing pack | 105k | 13 | 4 (2 high), all real, all fixed |
 | PR #14 r3 security lens (2026-07-27) | `/security-review` + pack | 153k | 27 | 0 |
 | PR #14 r4 fixes (2026-07-27) | `general-purpose` + pack, BOTH lenses | 73k | 7 | 6 (2 high + 1 high pre-existing), all real, all fixed |
+| PR #14 r5 fixes (2026-07-27) | `general-purpose` + pack | 66k | 8 | 4 (3 medium + 1 low), all real, 3 fixed + 1 accepted-and-documented |
 
 Two things that table settles.
 
@@ -287,6 +288,17 @@ written and self-reviewed — one of them a fix that was wrong in the unsafe
 direction, which is exactly the blind spot an isolated reviewer exists to catch
 and exactly what self-review cannot. Keep it every round. Gate the security lens
 on the new-surface rule above.
+
+**A round-5 addition: point the pass at the fix's own tests, not only its code.**
+On a ~4KB diff the pass cost 66k for 8 calls and its highest-value finding was
+in the *test*, not the implementation — the new invariant test computed its
+expected value from the production predicate, so it was an identity and would
+have survived a mutation that deleted the whole model-selection step. Self-review
+does not catch that: the same reasoning that wrote the predicate writes the
+expectation. Include the new tests verbatim in the pack and name "does each new
+assertion discriminate the fix, or restate it?" as a lens. Step 4's stash-proof
+answers this for a *missing* implementation, not for an expectation derived from
+the implementation that is present.
 
 The pack run read 9 files in 12 calls with **zero** orientation greps — the
 budget went into tracing rather than searching, and it found a class of defect
