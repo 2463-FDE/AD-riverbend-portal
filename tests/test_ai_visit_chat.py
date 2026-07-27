@@ -26,13 +26,16 @@ The LLM is faked at the complete_structured seam (no network, no key), mirroring
 the real seam's parse step. The eligibility client is faked at the module seam.
 """
 import json
+import os
 import sys
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+import conftest
 from conftest import load_module
 
 _PINNED = (
@@ -94,6 +97,17 @@ UNKNOWN_VERDICT = {
     "checked_at": "2026-07-26T10:00:00Z",
     "reason": "eligibility check failed",
 }
+# NOTE neither constant above carries `observed_at`. That is deliberate and load
+# bearing: a verdict with no observation stamp of OUR OWN is not reusable (an
+# older ai-assistant wrote it, or a caller hand-built the facts), so every test
+# that expects a lookup keeps expecting one. Reuse is opted into per test with
+# `_observed`, which is the only thing that makes a verdict fresh.
+
+
+def _observed(verdict, age_seconds=0.0):
+    """A copy of `verdict` stamped as observed `age_seconds` ago by this service."""
+    stamp = datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
+    return {**verdict, "observed_at": stamp.isoformat()}
 
 
 class _Recorder(list):
@@ -971,6 +985,478 @@ def test_explicit_retry_verbs_do_re_check(fake_llm, fake_eligibility, phrasing):
 
     assert fake_eligibility == [MEMBER_ID]
     assert r.json()["intent"] == "recheck_eligibility"
+
+
+# --- a repeat of the same id does not re-spend a payer call ------------------
+# Codex PR #14 round 4. `_derive_intent` routed EVERY message containing a member
+# id to check_eligibility, so a clerk restating or re-pasting the id they just
+# gave — normal front-desk behaviour — spent another PHI-bearing payer call each
+# turn while the answer sat unread in `last_eligibility`. The breaker and the
+# per-user chat quota bounded that; they did not stop it, because the expensive
+# path was the DEFAULT for a common input.
+#
+# What makes a repeat reusable is narrow, and each clause below is a test: a
+# DEFINITIVE verdict, for the id ON FILE, observed by THIS service, inside the
+# window. Everything else still calls the payer, because a wrong reuse hands a
+# clerk a coverage fact that may no longer hold.
+REUSE_WINDOW = app_mod.settings.ai_eligibility_reuse_seconds
+
+
+def test_repeating_a_fresh_verdicts_own_id_spends_no_payer_call(
+    fake_llm, fake_eligibility
+):
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": _observed(ACTIVE_VERDICT)}
+
+    # No retry verb and no status word — the ID ITSELF has to be what routes this
+    # turn, or the assertion passes through a path that never consulted freshness.
+    r = _post(f"member {MEMBER_ID}", facts=facts)
+
+    assert r.status_code == 200
+    assert fake_eligibility == [], "a repeat of a fresh verdict's own id must not re-check"
+    body = r.json()
+    assert body["intent"] == "ask_status"
+    assert body["status"] == "active"
+    # Answered from memory, and visibly a past observation (ADR 0011 §5).
+    assert "ACTIVE" in body["reply"]
+    assert ACTIVE_VERDICT["checked_at"] in body["reply"]
+
+
+def test_a_reused_verdict_is_handed_back_unchanged_for_the_gateway_to_persist(
+    fake_llm, fake_eligibility
+):
+    # The turn answers from facts, so it must not quietly rewrite them: the
+    # gateway persists whatever comes back, and a re-stamped verdict would slide
+    # the reuse window forward on every repeat and never expire.
+    stored = _observed(ACTIVE_VERDICT)
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": stored}
+
+    body = _post(f"member {MEMBER_ID}", facts=facts).json()
+
+    assert fake_eligibility == []
+    assert body["facts"]["insurance_id"] == MEMBER_ID
+    assert body["facts"]["last_eligibility"] == stored
+    assert body["eligibility"]["status"] == "active"
+
+
+def test_a_fresh_definitive_inactive_is_reused_too(fake_llm, fake_eligibility):
+    # Both definitive statuses are reusable, and reuse must not soften the answer
+    # into mush — an `inactive` still reads as no active coverage.
+    inactive = dict(ACTIVE_VERDICT, active=False, status="inactive")
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": _observed(inactive)}
+
+    body = _post(f"member {MEMBER_ID}", facts=facts).json()
+
+    assert fake_eligibility == []
+    assert "NO ACTIVE COVERAGE" in body["reply"]
+
+
+def test_a_repeat_outside_the_reuse_window_is_re_checked(fake_llm, fake_eligibility):
+    facts = {
+        "insurance_id": MEMBER_ID,
+        "last_eligibility": _observed(ACTIVE_VERDICT, age_seconds=REUSE_WINDOW + 1),
+    }
+
+    body = _post(f"member {MEMBER_ID}", facts=facts).json()
+
+    assert fake_eligibility == [MEMBER_ID], "an expired verdict must not answer a repeat"
+    assert body["intent"] == "check_eligibility"
+
+
+def test_a_zero_reuse_window_always_calls_the_payer(
+    monkeypatch, fake_llm, fake_eligibility
+):
+    # 0 is the strictest setting for this knob (config.py), so it must mean "never
+    # reuse" — not "reuse forever", which is what an unclamped comparison against
+    # a zero window would do for a stamp from the same instant.
+    monkeypatch.setattr(app_mod.settings, "ai_eligibility_reuse_seconds", 0)
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": _observed(ACTIVE_VERDICT)}
+
+    _post(f"member {MEMBER_ID}", facts=facts)
+
+    assert fake_eligibility == [MEMBER_ID]
+
+
+@pytest.mark.parametrize(
+    "phrasing",
+    [
+        "recheck {id}",
+        "please retry {id}",
+        "refresh {id}",
+        # The id lands BETWEEN the verb and the adverb, which no substring in
+        # _RETRY_WORDS can match. Harmless before the reuse window existed (any id
+        # re-checked); with it, these are exactly the turns that would be answered
+        # from memory while the clerk waits for a lookup that never runs.
+        "check {id} again",
+        "run {id} again",
+        "verify {id} again please",
+        "re-run {id}",
+        "check\n{id}\nagain",
+    ],
+)
+def test_an_explicit_retry_request_re_checks_even_a_fresh_verdict(
+    fake_llm, fake_eligibility, phrasing
+):
+    # Freshness is a default, not a lock. An explicit retry asks for a NEW
+    # observation, so it is tested BEFORE the window — otherwise the clerk has no
+    # way to force a check and the feature ships a dead control.
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": _observed(ACTIVE_VERDICT)}
+
+    body = _post(phrasing.format(id=MEMBER_ID), facts=facts).json()
+
+    assert fake_eligibility == [MEMBER_ID], f"{phrasing!r} is a retry request"
+    assert body["intent"] == "recheck_eligibility"
+
+
+@pytest.mark.parametrize(
+    "phrasing",
+    [
+        "what was the status of {id} again?",
+        "is {id} still active?",
+        "{id} — that's confirmed active, right?",
+    ],
+)
+def test_a_question_that_repeats_the_id_is_still_answered_from_memory(
+    fake_llm, fake_eligibility, phrasing
+):
+    # The other side of the retry pattern: "again" inside a QUESTION about the past
+    # must not spend a payer call. Widening retry detection to the bare adverb
+    # would flip every one of these into a lookup — and during an outage a spurious
+    # re-check can turn a confirmed ACTIVE into "could not confirm".
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": _observed(ACTIVE_VERDICT)}
+
+    body = _post(phrasing.format(id=MEMBER_ID), facts=facts).json()
+
+    assert fake_eligibility == [], f"{phrasing!r} is a question, not a retry"
+    assert body["intent"] == "ask_status"
+    assert "ACTIVE" in body["reply"]
+
+
+@pytest.mark.parametrize("status", ["unknown", "pending"])
+def test_a_fresh_degraded_verdict_is_never_reused(fake_llm, fake_eligibility, status):
+    # ADR 0011 gap 7 stands: an unconfirmed check is re-attempted, never served in
+    # place of a real attempt. Reusing a fresh `pending` would answer "still
+    # pending" forever and the visit could never reach a verdict.
+    stored = dict(UNKNOWN_VERDICT, status=status)
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": _observed(stored)}
+
+    _post(f"member {MEMBER_ID}", facts=facts)
+
+    assert fake_eligibility == [MEMBER_ID], f"a fresh {status} verdict must still re-check"
+
+
+# The adversarial half (CLAUDE.md §5): the stamp arrives inside `facts`, which is
+# caller-supplied and open by design, so every unusable shape has to fail toward
+# a real lookup rather than toward reuse.
+@pytest.mark.parametrize(
+    "observed_at,why",
+    [
+        (None, "explicit null"),
+        ("", "empty string"),
+        ("not a timestamp", "unparseable"),
+        ("2026-07-26T10:00:00", "NAIVE — no offset, so its instant is a guess"),
+        (1_800_000_000, "an epoch int, not the ISO string this service writes"),
+        (["2026-07-26T10:00:00Z"], "a list smuggled where a string belongs"),
+    ],
+)
+def test_an_unusable_observation_stamp_is_not_freshness(
+    fake_llm, fake_eligibility, observed_at, why
+):
+    stored = dict(ACTIVE_VERDICT, observed_at=observed_at)
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": stored}
+
+    r = _post(f"member {MEMBER_ID}", facts=facts)
+
+    assert r.status_code == 200, why
+    assert fake_eligibility == [MEMBER_ID], f"{why}: must not be treated as fresh"
+
+
+def test_a_missing_observation_stamp_is_not_freshness(fake_llm, fake_eligibility):
+    # The rolling-deploy case: a verdict written by the previous version of this
+    # service carries `checked_at` but no `observed_at`. Absent must mean "cannot
+    # prove freshness", never "assume fresh".
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": dict(ACTIVE_VERDICT)}
+    assert "observed_at" not in facts["last_eligibility"]
+
+    _post(f"member {MEMBER_ID}", facts=facts)
+
+    assert fake_eligibility == [MEMBER_ID]
+
+
+def test_a_future_observation_stamp_is_not_freshness(fake_llm, fake_eligibility):
+    # A stamp ahead of now is a broken clock or a crafted value, not a recent
+    # observation — and treating it as fresh would keep one verdict alive for as
+    # long as the skew lasts.
+    facts = {
+        "insurance_id": MEMBER_ID,
+        "last_eligibility": _observed(ACTIVE_VERDICT, age_seconds=-3600),
+    }
+
+    _post(f"member {MEMBER_ID}", facts=facts)
+
+    assert fake_eligibility == [MEMBER_ID]
+
+
+@pytest.mark.parametrize(
+    "active,why",
+    [
+        (None, "the r5 covered-by-mistake shape, arriving through the facts door"),
+        (1, "an int that == True but is not a boolean verdict"),
+        ("true", "the string a JS caller would send"),
+    ],
+)
+def test_a_verdict_claiming_active_without_a_boolean_is_not_reused(
+    fake_llm, fake_eligibility, active, why
+):
+    # `status` alone never establishes coverage (eligibility_client r5). The same
+    # rule has to hold when the dict comes back IN through facts, or the guard is
+    # bypassable by anything that can write visit memory.
+    stored = _observed(dict(ACTIVE_VERDICT, active=active))
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": stored}
+
+    _post(f"member {MEMBER_ID}", facts=facts)
+
+    assert fake_eligibility == [MEMBER_ID], f"{why}: must not answer from memory"
+
+
+def test_a_status_that_disagrees_with_active_is_not_reused(fake_llm, fake_eligibility):
+    # The cross-check in the other direction: active=True with status="unknown" is
+    # an incoherent dict, and reuse is not the place to decide which half is right.
+    stored = _observed(dict(ACTIVE_VERDICT, status="unknown"))
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": stored}
+
+    _post(f"member {MEMBER_ID}", facts=facts)
+
+    assert fake_eligibility == [MEMBER_ID]
+
+
+def test_a_fresh_verdict_with_no_id_on_file_does_not_suppress_the_first_lookup(
+    fake_llm, fake_eligibility
+):
+    # A verdict with no `insurance_id` beside it cannot be attributed to a
+    # subject, so it must not answer for the id the clerk just typed.
+    facts = {"insurance_id": None, "last_eligibility": _observed(ACTIVE_VERDICT)}
+
+    body = _post(f"member {MEMBER_ID}", facts=facts).json()
+
+    assert fake_eligibility == [MEMBER_ID]
+    assert body["facts"]["insurance_id"] == MEMBER_ID
+
+
+def test_freshness_does_not_soften_the_contradiction_rule(fake_llm, fake_eligibility):
+    # A DIFFERENT id is still ambiguous however fresh the stored verdict is —
+    # reuse must not become a path that answers about the wrong subject.
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": _observed(ACTIVE_VERDICT)}
+
+    body = _post("actually try BCBS4471", facts=facts).json()
+
+    assert fake_eligibility == []
+    assert body["status"] == "ambiguous_id"
+    assert "ACTIVE" not in body["reply"].split("\n")[0].upper()
+    assert body["eligibility"] is None
+
+
+# --- the reuse window is not a cache the clerk cannot get past ---------------
+# Pre-push adversarial review of the round-4 fix. Deciding an id-bearing turn on
+# FRESHNESS alone made the freshness check outrank what the clerk actually asked
+# for: an imperative check verb was swallowed, and a question about the past
+# started paying whenever the stored verdict was degraded. A repeat now runs the
+# same keyword ladder as a turn with no id in it; freshness decides only the bare
+# restatement.
+@pytest.mark.parametrize(
+    "phrasing",
+    [
+        "verify {id}",
+        "coverage changed — check {id}",
+        "run eligibility for {id}",
+        "new card, {id}, check her insurance",
+    ],
+)
+def test_an_imperative_check_verb_is_honoured_against_a_fresh_verdict(
+    fake_llm, fake_eligibility, phrasing
+):
+    # The concrete harm of swallowing it: the patient hands over a new card for the
+    # same member id two minutes after the first check. Serving the stamped older
+    # verdict makes the clerk record coverage nobody re-verified, and the reply then
+    # tells them to "record the coverage result".
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": _observed(ACTIVE_VERDICT)}
+
+    body = _post(phrasing.format(id=MEMBER_ID), facts=facts).json()
+
+    assert fake_eligibility == [MEMBER_ID], f"{phrasing!r} asks for a check"
+    assert body["intent"] == "check_eligibility"
+
+
+@pytest.mark.parametrize(
+    "phrasing", ["what did {id} come back as?", "what was {id}'s status?"]
+)
+def test_a_past_tense_question_with_the_id_never_pays_even_when_nothing_is_reusable(
+    fake_llm, fake_eligibility, phrasing
+):
+    # The stored verdict is DEGRADED, so freshness cannot answer — but the turn is
+    # still a question, and the identical question without the id has always been
+    # free. Pasting the id must not make a question expensive, least of all during
+    # the outage that produced the degraded verdict in the first place.
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": _observed(UNKNOWN_VERDICT)}
+
+    body = _post(phrasing.format(id=MEMBER_ID), facts=facts).json()
+
+    assert fake_eligibility == [], f"{phrasing!r} is a question about the past"
+    assert body["intent"] == "ask_status"
+    # And it renders as the failed check it was — never as a denial.
+    assert "not a denial" in body["reply"]
+
+
+@pytest.mark.parametrize(
+    "phrasing",
+    [
+        "can you check what her status was again?",
+        "she'll try again tomorrow",
+        "tell the patient to check with HR, then ask us again next week",
+        "run the wait-list report\nfollow up with billing\nnothing else again",
+    ],
+)
+def test_a_bounded_retry_pattern_does_not_capture_incidental_agains(
+    fake_llm, fake_eligibility, phrasing
+):
+    # An unbounded verb-to-adverb gap (and DOTALL) read all of these as retries. The
+    # cost is not cosmetic: a spurious re-check during a payer outage overwrites a
+    # confirmed ACTIVE with "could not confirm".
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": _observed(ACTIVE_VERDICT)}
+
+    body = _post(phrasing.format(id=MEMBER_ID), facts=facts).json()
+
+    assert fake_eligibility == [], f"{phrasing!r} is not a retry request"
+    assert body["intent"] != "recheck_eligibility"
+
+
+def test_a_failed_recheck_does_not_destroy_the_confirmed_verdict(
+    fake_llm, fake_eligibility
+):
+    # `facts.last_eligibility` is the ONLY place a payer's answer lives — the gateway
+    # persists exactly what comes back. Overwriting a definitive verdict with a
+    # degraded one lost it permanently: the visit then had no verdict at all, and
+    # every later turn re-paid for a lookup that could not succeed.
+    stored = _observed(ACTIVE_VERDICT)
+    fake_eligibility.set_verdict(dict(UNKNOWN_VERDICT, status="pending"))
+
+    body = _post(f"recheck {MEMBER_ID}", facts={
+        "insurance_id": MEMBER_ID, "last_eligibility": stored
+    }).json()
+
+    assert fake_eligibility == [MEMBER_ID]
+    # THIS turn reports the failed attempt honestly...
+    assert body["status"] == "pending"
+    assert "not a denial" in body["reply"]
+    # ...and the visit still remembers the observation the payer really gave us.
+    assert body["facts"]["last_eligibility"] == stored
+
+
+def test_a_definitive_recheck_does_replace_the_stored_verdict(
+    fake_llm, fake_eligibility
+):
+    # The other direction: preserving a definitive verdict must not become "ignore
+    # the payer". A new definitive answer always wins, including a change of answer.
+    fake_eligibility.set_verdict(dict(ACTIVE_VERDICT, active=False, status="inactive"))
+
+    body = _post(f"recheck {MEMBER_ID}", facts={
+        "insurance_id": MEMBER_ID, "last_eligibility": _observed(ACTIVE_VERDICT)
+    }).json()
+
+    assert body["facts"]["last_eligibility"]["status"] == "inactive"
+    assert "NO ACTIVE COVERAGE" in body["reply"]
+
+
+def test_a_degraded_answer_for_a_new_subject_does_not_inherit_the_old_verdict(
+    fake_llm, fake_eligibility
+):
+    # A verdict is only worth remembering for the subject it describes. Here the
+    # visit had a verdict with no id beside it and the clerk supplies one, so the
+    # failed lookup's degraded answer is what the visit keeps — inheriting the
+    # orphan would attribute someone else's ACTIVE to this member id.
+    fake_eligibility.set_verdict(dict(UNKNOWN_VERDICT))
+
+    body = _post(f"check {MEMBER_ID}", facts={
+        "insurance_id": None, "last_eligibility": _observed(ACTIVE_VERDICT)
+    }).json()
+
+    assert body["facts"]["insurance_id"] == MEMBER_ID
+    assert body["facts"]["last_eligibility"]["status"] == "unknown"
+
+
+def test_a_reused_verdict_with_no_downstream_timestamp_still_says_when(
+    fake_llm, fake_eligibility
+):
+    # `checked_at` is downstream CONTENT and `_query` accepts any shaped 2xx, so a
+    # verdict can arrive with none. Dropping the parenthetical then turns a reused
+    # five-minute-old observation into an unqualified present-tense claim — the ADR
+    # 0011 §5 promise, broken on the path reuse makes common.
+    stored = _observed(dict(ACTIVE_VERDICT, checked_at=None), age_seconds=290)
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": stored}
+
+    body = _post(f"member {MEMBER_ID}", facts=facts).json()
+
+    assert fake_eligibility == []
+    assert "(checked " in body["reply"], "a reused verdict must say when it was observed"
+    assert stored["observed_at"] in body["reply"]
+
+
+def test_the_log_says_whether_a_payer_was_asked_on_this_turn(
+    fake_llm, fake_eligibility, caplog
+):
+    # `ask_status` now covers two different events — a question answered from
+    # memory, and a re-verification declined because the stored verdict was fresh.
+    # Neither the reply nor the response shape distinguishes them, so the log has to
+    # (D2/D12: there is no tamper-evident accounting behind this yet).
+    facts = {"insurance_id": MEMBER_ID, "last_eligibility": _observed(ACTIVE_VERDICT)}
+
+    def _turn_meta():
+        lines = [r.getMessage() for r in caplog.records if "meta=" in r.getMessage()]
+        return json.loads(lines[-1].split("meta=")[1])
+
+    with caplog.at_level("INFO"):
+        _post(f"member {MEMBER_ID}", facts=facts)
+        reused = _turn_meta()
+        caplog.clear()
+        _post(f"recheck {MEMBER_ID}", facts=facts)
+        rechecked = _turn_meta()
+
+    assert reused == {
+        "intent": "ask_status", "eligibility_status": "active", "turn_count": 0, "checked": False
+    }
+    assert rechecked["checked"] is True
+    # Still metadata only.
+    assert MEMBER_ID not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "configured,expected", [("300", 300.0), ("0", 0.0), ("-5", 0.0), ("999999", 1800.0)]
+)
+def test_the_reuse_window_is_clamped_at_both_ends(monkeypatch, configured, expected):
+    # 0 is a legitimate operator choice here (never reuse), so the floor only has
+    # to stop a negative — which would make every stamp "in the future". The
+    # ceiling stops the opposite mistake: reuse must not outlive the visit that
+    # holds the verdict (AI_VISIT_TTL_SECONDS, 1800s).
+    monkeypatch.setenv("AI_ELIGIBILITY_REUSE_SECONDS", configured)
+
+    fresh = load_module("services/ai-assistant/config.py", f"vc_reuse_clamp_{configured}")
+
+    assert fresh.settings.ai_eligibility_reuse_seconds == expected
+
+
+def test_a_fresh_deploy_has_reuse_switched_on():
+    # The fix has to be live in the state `cp .env.example .env` actually seeds,
+    # not just in the code default (the PR #5 round-5 lesson). A template value of
+    # 0 would ship the finding back unfixed with every test above still green.
+    template = os.path.join(conftest.REPO_ROOT, ".env.example")
+    with open(template, encoding="utf-8") as f:
+        seeded = dict(
+            line.split("=", 1)
+            for line in f.read().splitlines()
+            if "=" in line and not line.startswith("#")
+        )
+
+    configured = float(seeded["AI_ELIGIBILITY_REUSE_SECONDS"])
+    assert 0 < configured <= 1800
 
 
 # --- a reused verdict always says when it was observed ----------------------

@@ -129,6 +129,17 @@ def verdict_line(status: str, verdict: dict[str, Any] | None = None) -> str:
     A verdict is always stamped with when it was observed, so a reply that reuses
     `last_eligibility` from earlier in the visit reads as a past observation
     rather than a fresh claim (ADR 0011 §5).
+
+    The stamp falls back to `observed_at` when `checked_at` is missing (adversarial
+    review, round 4). `checked_at` on a definitive verdict is DOWNSTREAM content —
+    `eligibility_client._query` accepts any shaped 2xx, so a body from a shim, an
+    intermediary, or a mid-rolling-deploy eligibility-service can carry a verdict
+    with no timestamp at all. That used to drop the parenthetical entirely, and a
+    reused five-minute-old verdict then read as an unqualified present-tense
+    coverage assertion — the exact promise this docstring makes, broken on the path
+    the reuse window makes common. `observed_at` is stamped by this service on every
+    verdict it produces, so "no stamp renderable" now means the dict did not come
+    from us at all.
     """
     line = _VERDICT_LINES.get(status, _VERDICT_LINES["unknown"])
     if status in NO_LOOKUP_STATUSES:
@@ -138,7 +149,7 @@ def verdict_line(status: str, verdict: dict[str, Any] | None = None) -> str:
     verdict = verdict or {}
     payer = verdict.get("payer")
     line = line.format(payer=f" with {payer}" if payer else "")
-    checked_at = verdict.get("checked_at")
+    checked_at = verdict.get("checked_at") or verdict.get("observed_at")
     if checked_at:
         line = f"{line} (checked {checked_at})"
     return line

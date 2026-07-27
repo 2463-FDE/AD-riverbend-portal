@@ -422,22 +422,25 @@ follow-up, not a claim of principle.
 6. **A pre-egress LLM refusal discards an already-computed verdict — CLOSED in
    this PR (round 3), was "accepted".** The gap was accepted on a false
    constraint (that answering would mean keeping an unearned charge). See
-   "Round 3 corrections". **Its second symptom is only PARTLY closed:** a turn
-   no longer throws away a verdict, and a clerk who follows up by *asking*
-   ("what was the status again?") is answered from `last_eligibility` with no
-   payer call. A clerk who follows up by *re-typing the member id* still routes
-   to `check_eligibility` and spends another payer call, every turn. That is
-   bounded by the eligibility breaker and by the per-user chat rate limit, and
-   closing it needs a per-visit freshness window on `last_eligibility` — a
-   caching decision this ADR deliberately declined (gap 7), so it is not a
-   one-line follow-on.
-7. **No stale-verdict cache when the breaker is open (decided).** This answers
-   `docs/specs/w3.md` open question 1: when eligibility is degraded the agent
-   reports *unconfirmed* rather than serving a stale-but-usable cached verdict.
-   A cached coverage answer is a financial fact with an expiry we cannot see, and
-   caching it would put PHI-derived state in a shared keyspace for a marginal
-   latency win. Within a visit, `last_eligibility` is reused only with its
-   `checked_at`, never restated as current.
+   "Round 3 corrections". **Its second symptom is now closed too (round 4)** —
+   a repeat of the member id no longer spends another payer call while the visit
+   holds a fresh definitive verdict for that id. See "Round 4 corrections".
+7. **No stale-verdict cache when the breaker is open (decided; scope narrowed in
+   round 4).** This answers `docs/specs/w3.md` open question 1: when eligibility
+   is degraded the agent reports *unconfirmed* rather than serving a
+   stale-but-usable cached verdict. A cached coverage answer is a financial fact
+   with an expiry we cannot see, and caching it would put PHI-derived state in a
+   shared keyspace for a marginal latency win. Within a visit,
+   `last_eligibility` is reused only with its `checked_at`, never restated as
+   current.
+
+   What this decision rules out is a **shared, cross-visit** verdict cache, and
+   in particular serving a stale verdict *in place of* an attempt that failed.
+   Both still hold: a degraded `unknown`/`pending` verdict is never reusable
+   however fresh it is, so an outage still reports unconfirmed and still
+   re-attempts. Round 4's per-visit freshness window is not that cache — it
+   reuses only state the visit already carries, in the visit's own owner-bound
+   record, for definitive verdicts only.
 
 ## Round 2 corrections (2026-07-27)
 
@@ -564,6 +567,118 @@ that implemented it, and it was right to.
    prefixes, case-folded. The round-1 property still holds — a miss is safe, a
    wrong match is not — and `test_case_folding_does_not_widen_the_catalog` pins
    it.
+
+## Round 4 corrections (2026-07-27)
+
+Adversarial review round 4 on PR #14 found one finding, and — like round 3 — it
+was a rejection of a *deferred gap* rather than of the code implementing it. The
+ADR's own text (gap 6) was cited as the evidence, which is the argument for
+writing these gaps down honestly.
+
+1. **A repeat of the member id no longer re-spends a payer call (gap 6's second
+   symptom, CLOSED).** `_derive_intent` routed *every* message containing a
+   member id to `check_eligibility`, so a clerk restating or re-pasting the id
+   they had just supplied — ordinary front-desk behaviour — spent another
+   PHI-bearing payer lookup each turn, while the answer sat unread in
+   `facts.last_eligibility`. The breaker and the per-user chat quota *bounded*
+   that; they did not stop it, because the expensive path was the **default** for
+   a common input. Both bounds are also global, so the cost showed up as everyone
+   else's degraded service rather than as anything attributable to the repeat.
+
+   A repeat of the id **on file** now routes to `ask_status` — answered from the
+   stored verdict, stamped with its `checked_at`, no egress — while that verdict
+   is *reusable*. `AI_ELIGIBILITY_REUSE_SECONDS` (default 300s, clamped to
+   0–1800s) is the window; 0 disables reuse and restores "always call the payer",
+   and the ceiling is the visit's own retention window, because reuse must never
+   outlive the record holding the verdict.
+
+   Reusable is deliberately narrow, and each clause is a test
+   (`tests/test_ai_visit_chat.py`):
+
+   - **definitive only.** `active` is exactly `True`/`False` *and* `status`
+     agrees. A degraded `unknown`/`pending` is re-checked however fresh it is —
+     that is what keeps gap 7 intact — and `{"status": "active", "active": null}`
+     is the r5 covered-by-mistake shape arriving through the `facts` door instead
+     of off the wire, so it is not reusable either.
+   - **for the id on file.** A candidate that contradicts the visit's confirmed
+     id is still ambiguous, however fresh the stored verdict is, and a verdict
+     with no id beside it cannot answer for an id the clerk just typed.
+   - **observed by us.** Freshness is measured against a new `observed_at` field
+     stamped by `eligibility_client` from *this* service's clock, never against
+     `checked_at`. `checked_at` is downstream **content** — from another host's
+     clock, and a value this module otherwise refuses to trust for anything that
+     controls behaviour — so skew or a crafted body could silently extend the
+     window. `checked_at` remains what a clerk reads. Absent, non-string,
+     unparseable, timezone-naive, and future stamps are all "not fresh", which
+     costs one payer call rather than a stale answer; that is also what makes a
+     rolling deploy safe, since verdicts written before this change simply are
+     not reusable.
+   - **overridable.** An explicit retry request re-checks regardless of
+     freshness, tested *before* the window.
+
+   A repeat runs the **same keyword ladder** as a turn with no id in it — retry,
+   then question-about-the-past, then request-a-check — so repeating the id cannot
+   change what a turn *means*, and freshness decides only the turn the ladder does
+   not classify: the bare restatement ("member AETN1224"), which is what "clerks
+   restate or re-paste the id" actually looks like. Two consequences are
+   deliberate. A question about the past never pays, even when the stored verdict
+   is degraded and freshness cannot answer — the same question without the id has
+   always been free, and pasting the id must not make it expensive during the very
+   outage that produced the degraded verdict. And an imperative check verb
+   ("verify AETN1224", "coverage changed — check AETN1224") *is* honoured against a
+   fresh verdict: this is the one place the design spends rather than saves,
+   because a clerk asking for a check has a reason we cannot see (a new card for
+   the same member id being the concrete one), and freshness must not become a
+   cache they cannot get past.
+
+3. **A failed re-check no longer destroys a confirmed verdict.** Found by the
+   pre-push adversarial pass on the round-4 fix, and pre-existing rather than new:
+   the lookup's result was written into `facts.last_eligibility` unconditionally,
+   and the gateway persists exactly that. So one degraded re-check during a payer
+   outage erased the only copy of a definitive ACTIVE — the reply flipped to
+   "could not confirm" for a patient the payer had confirmed, and because a
+   degraded verdict is not reusable, every later turn re-paid for a lookup that
+   could not succeed while the circuit was open. `_remembered_verdict` now keeps
+   the definitive observation when a re-check for the *same* member id comes back
+   degraded. The turn still reports the degraded outcome — the reply is rendered
+   from the fresh dict — so nothing restates the old answer as current; what
+   survives is the visit's memory of the last real observation, with its own
+   stamp. A new *definitive* answer always wins, including a change of answer, and
+   a verdict with no id beside it is not inherited by a newly supplied id.
+
+4. **The reply's timestamp no longer depends on downstream supplying one.**
+   `verdict_line` rendered `(checked …)` only from `checked_at`, which is
+   downstream content — and `_query` accepts any shaped 2xx, so a verdict can
+   arrive with no timestamp at all. That dropped the parenthetical entirely, and a
+   reused five-minute-old verdict then read as an unqualified present-tense
+   coverage assertion, breaking §5's promise on exactly the path reuse makes
+   common. The stamp now falls back to `observed_at`, which this service always
+   writes.
+
+5. **Two accounting/pinning gaps closed with it.** `visit_chat_log_metadata`
+   gained a non-PHI `checked` boolean, because `ask_status` stopped implying
+   "no payer call" once a fresh verdict could answer a repeated id — two
+   materially different turns (a question answered from memory, a re-verification
+   declined as unnecessary) otherwise logged identically, which is not good enough
+   while D2/D12 are open. And `tests/test_eligibility_budget_alignment.py` now
+   pins ai-assistant's reuse ceiling against the gateway's
+   `AI_VISIT_TTL_SECONDS`, for both code defaults and `.env.example`: the ceiling
+   is a hardcoded mirror of another service's default, and an unpinned mirror is
+   the stale-copy failure that file exists to prevent.
+
+2. **The retry keyword list became a control, so it had to cover the phrasing.**
+   Before the window existed, a retry phrasing the keyword list missed was
+   harmless: the id in the message re-checked anyway. With reuse in place, a
+   missed phrasing is *absorbed* by the window and the clerk has no way to force
+   a lookup — the same dead-control failure PR #11 r6 shipped in latency-threshold
+   form (a bound the values could never reach). The
+   substring list missed exactly the forms where the id sits between the verb and
+   the adverb ("check AETN1224 again", "run that again"), so it is now a list
+   *plus* a `\b(check|run|verify|try)\b.*\bagain\b` pattern. A question about the
+   past ("what was the status of AETN1224 again?") deliberately does **not**
+   match: widening to the bare adverb would flip every status question into a
+   lookup, and during an outage a spurious re-check can turn a confirmed ACTIVE
+   into "could not confirm".
 
 ## Consequences
 

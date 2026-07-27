@@ -40,6 +40,30 @@ _breaker = CircuitBreaker(
 )
 
 
+def _observed_now() -> str:
+    """This service's own observation time, ISO-8601 and timezone-aware.
+
+    Every verdict this module returns carries it as `observed_at`, and that field
+    is the ONLY input to the caller's per-visit reuse decision
+    (`app._verdict_is_reusable`). It is deliberately not `checked_at`:
+
+      * `checked_at` on a definitive verdict is downstream CONTENT — it comes off
+        eligibility-service's body, which this module otherwise refuses to trust
+        for anything that controls behaviour (see `_query` on deriving the status
+        from `active` rather than reading the body's string). It is also measured
+        on another host's clock, so skew in the wrong direction would silently
+        extend a reuse window that exists to bound staleness;
+      * a verdict with no `observed_at` therefore did not come from this code
+        path (an older ai-assistant mid-rolling-deploy, or a hand-built facts
+        dict), and the caller treats that as "not reusable" — the fail-closed
+        direction costs one payer call, while guessing costs a stale answer.
+
+    A timestamp is not PHI and not downstream content, so it is safe to stamp and
+    safe to persist into visit memory.
+    """
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _degraded(status: str, reason: str) -> dict[str, Any]:
     """A no-verdict answer, in the projected shape.
 
@@ -53,13 +77,20 @@ def _degraded(status: str, reason: str) -> dict[str, Any]:
     always visibly a past observation. Without the stamp, a 25-minute-old failed
     attempt re-reads as if the check had just run. The observation time is known
     at the call site and is not PHI and not downstream content.
+
+    `observed_at` is the same instant under a separate key on purpose — see
+    `_observed_now`. A degraded verdict is never reused in place of a lookup
+    (only a DEFINITIVE one is), but the field is stamped uniformly so "absent"
+    means exactly one thing: the verdict did not come from this module.
     """
+    now = _observed_now()
     return {
         "active": None,
         "status": status,
         "payer": None,
         "raw_status": None,
-        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "checked_at": now,
+        "observed_at": now,
         "reason": reason,
     }
 
@@ -162,6 +193,10 @@ def _query(insurance_id: str) -> tuple[dict[str, Any], bool]:
         "payer": body.get("payer"),
         "raw_status": body.get("raw_status"),
         "checked_at": body.get("checked_at"),
+        # OUR clock, not the body's — the reuse window is measured against when
+        # this service observed the answer (see `_observed_now`). `checked_at`
+        # stays downstream's, because that is the value a clerk reads.
+        "observed_at": _observed_now(),
         # Never the downstream `error` string, and never `insurance_id` — see the
         # module docstring. A caller persists this dict into visit memory.
         "reason": None if definitive else "eligibility check failed",

@@ -119,6 +119,40 @@ class Settings:
         ai_eligibility_degraded_slow_seconds,
     )
 
+    # --- visit-chat: per-visit verdict reuse (Codex PR #14 round 4) ---------
+    # How long a DEFINITIVE verdict a visit already holds answers a repeat of the
+    # SAME member id, instead of spending another PHI-bearing payer call. A clerk
+    # restating or re-pasting the id is normal front-desk behaviour, and before
+    # this knob every repeat routed to `check_eligibility` and paid again (ADR
+    # 0011 gap 6). The breaker and the per-user chat rate limit bounded that; they
+    # did not stop it, because the expensive path was the DEFAULT for a common
+    # input.
+    #
+    # This is per-VISIT reuse of state the visit already carries — not the shared
+    # stale-verdict cache ADR 0011 gap 7 declined. Nothing new is stored, no new
+    # keyspace is involved, the verdict is already reused verbatim by `ask_status`
+    # turns, and it is always rendered with its `checked_at` stamp, so it reads as
+    # a past observation rather than a fresh claim.
+    #
+    # Only definitive (`active`/`inactive`) verdicts are reusable — a degraded
+    # `unknown`/`pending` is re-checked however fresh it is, which is what keeps
+    # gap 7's decision intact: an unconfirmed check is never served in place of a
+    # real attempt.
+    #
+    # Clamped at BOTH ends, and 0 is meaningful here (unlike the breaker latency
+    # knobs, where 0 is the trap): 0 disables reuse and restores "always call the
+    # payer", which is the strictest-freshness direction, so an operator setting
+    # it gets what they expect. The ceiling is what stops the opposite mistake: a
+    # typo'd 300000 would make a verdict reusable for as long as the visit lives,
+    # and reuse must never outlive the visit's own retention window (the
+    # gateway's AI_VISIT_TTL_SECONDS, 1800s by default — a different service's
+    # config, so it is mirrored here as a constant rather than imported).
+    _ai_reuse_ceiling_seconds = 1800.0
+    ai_eligibility_reuse_seconds = min(
+        max(float(os.getenv("AI_ELIGIBILITY_REUSE_SECONDS", "300")), 0.0),
+        _ai_reuse_ceiling_seconds,
+    )
+
     # --- visit-chat: transcript bounds (ADR 0011 §3) ------------------------
     # The gateway owns visit memory and enforces these at the edge; ai-assistant
     # applies them again on the inbound side so the caps hold even if a future

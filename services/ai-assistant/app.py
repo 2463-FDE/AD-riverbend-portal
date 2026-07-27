@@ -20,7 +20,8 @@ docstring for the full argument and the obligations it created.
 import json
 import re
 import secrets
-from typing import NamedTuple
+from datetime import datetime, timezone
+from typing import Any, NamedTuple
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -375,7 +376,32 @@ def _require_member_id_catalog() -> None:
 # status again?" is a question about the past, not a request to re-spend a payer
 # call — and during an outage a spurious re-check can flip a confirmed ACTIVE into
 # "could not confirm", which is worse than answering from memory.
-_RETRY_WORDS = ("recheck", "re-check", "retry", "refresh", "check again", "run it again")
+#
+# Round 4 promoted this list from a convenience to a CONTROL. Before the per-visit
+# freshness rule below, a message carrying a member id always re-checked, so a
+# retry phrasing this list missed still got the clerk a fresh lookup. Now a missed
+# phrasing is absorbed by the reuse window instead, and the clerk has no way to
+# force a check — so the phrasings that put the id BETWEEN the verb and the adverb
+# ("check AETN1224 again", "run that again") have to match too. Hence the pattern
+# alongside the substrings; the substrings stay because they catch the
+# no-verb-adverb forms ("recheck", "refresh").
+_RETRY_WORDS = (
+    "recheck", "re-check", "retry", "refresh", "check again", "run it again", "re-run", "rerun"
+)
+# The GAP IS BOUNDED, and that bound is the whole design (pre-push adversarial
+# review, round 4). An unbounded `.*` between the verb and the adverb reads
+# "can you check what her status was again?" — a question about the past — as a
+# retry, and `\s` spans newlines, so in a pasted multi-line note any `run` on the
+# first line pairs with any `again` thirty words later. That is not a cosmetic
+# false positive: a spurious re-check during a payer outage replaces a confirmed
+# ACTIVE with "could not confirm". Three intervening tokens covers the forms this
+# has to catch ("check AETN1224 again", "run that again", "verify AETN1224 again
+# please") and excludes the past-tense question, which then falls through to
+# _STATUS_WORDS and is answered from memory.
+#
+# `try` is deliberately NOT one of the verbs: "she'll try again tomorrow" is not a
+# request to spend a payer call. "retry" is still matched, as a substring above.
+_RETRY_RE = re.compile(r"\b(?:check|run|verify)\b(?:\s+\S+){0,3}\s+again\b")
 _STATUS_WORDS = (
     "still", "status", "what did", "what was", "current", "confirmed", "active", "again"
 )
@@ -422,6 +448,97 @@ def _extract_insurance_ids(message: str) -> list[str]:
     return seen
 
 
+def _verdict_is_definitive(verdict: dict[str, Any] | None) -> bool:
+    """Does this dict carry a real payer verdict (`active` / `inactive`)?
+
+    `facts.last_eligibility` is an open dict on the wire (schemas.VisitFacts keeps
+    it open deliberately, so a projection change cannot 422 a live visit), so it is
+    treated here as untrusted input rather than as something this service is sure
+    it wrote:
+
+      * definitiveness is read from `active` being exactly True or False — never
+        truthiness, since None is falsy and means unknown — AND cross-checked
+        against `status`. `{"status": "active", "active": null}` is the r5
+        covered-by-mistake defect arriving through the facts door rather than off
+        the wire, and it is not a verdict.
+      * a degraded `unknown`/`pending` is not definitive, which is what keeps ADR
+        0011 gap 7's decision intact wherever this predicate is consulted: an
+        unconfirmed check is reported as unconfirmed and re-attempted, never served
+        in place of a real attempt.
+    """
+    if not isinstance(verdict, dict):
+        return False
+    active = verdict.get("active")
+    if not (active is True or active is False):
+        return False
+    return verdict.get("status") == ("active" if active else "inactive")
+
+
+def _verdict_is_reusable(verdict: dict[str, Any] | None) -> bool:
+    """Can a verdict this visit already holds answer a repeat of its own id?
+
+    True only for a DEFINITIVE verdict that THIS service observed inside
+    `settings.ai_eligibility_reuse_seconds`. Every other shape is False, because
+    the two errors are not symmetric: a wrong False costs one payer call, and a
+    wrong True hands a clerk a coverage fact that may no longer hold.
+
+    On top of `_verdict_is_definitive`:
+
+      * `observed_at` must be present, a string, ISO-parseable, and TIMEZONE-AWARE
+        (`eligibility_client._observed_now` always writes one; a naive stamp did
+        not come from there, and assuming an offset for it can be hours wrong in
+        the direction the window exists to bound).
+      * a stamp in the FUTURE is not freshness, it is an unusable clock or a
+        crafted value, so the age has to be non-negative to count.
+
+    A zero window disables reuse entirely — see config.py on why 0 is the
+    strictest setting for this knob and not the trap it is for the breaker ones.
+    """
+    window = settings.ai_eligibility_reuse_seconds
+    if window <= 0 or not _verdict_is_definitive(verdict):
+        return False
+    observed_at = verdict.get("observed_at")
+    if not isinstance(observed_at, str):
+        return False
+    try:
+        observed = datetime.fromisoformat(observed_at)
+    except ValueError:
+        return False
+    if observed.tzinfo is None:
+        return False
+    age_seconds = (datetime.now(timezone.utc) - observed).total_seconds()
+    return 0 <= age_seconds < window
+
+
+def _remembered_verdict(
+    stored: dict[str, Any] | None, fresh: dict[str, Any]
+) -> dict[str, Any]:
+    """Which verdict the VISIT keeps after an attempt — not what this turn reports.
+
+    A failed re-check does not un-observe a payer's definitive answer, and
+    `facts.last_eligibility` is the only place that answer exists: the gateway
+    persists exactly what comes back from here. Overwriting it unconditionally
+    destroyed a confirmed verdict permanently (pre-push adversarial review, round
+    4). The trace: a definitive ACTIVE is stored, the payer degrades, one re-check
+    returns `pending`, and from then on the visit has no verdict at all — the
+    reply flips to "could not confirm" for a patient the payer confirmed, and every
+    later turn re-pays for a lookup that cannot succeed while the circuit is open.
+
+    So a DEGRADED result never replaces a DEFINITIVE one for the same subject. This
+    turn still reports the degraded outcome — the caller renders `verdict`, the
+    fresh dict — so nothing restates the old answer as current (ADR 0011 §5, gap 7).
+    What survives is the visit's memory of the last real observation, carrying its
+    own `checked_at`/`observed_at`, which is exactly what makes it visibly past.
+
+    `stored` must be the verdict for the SAME member id; the caller passes None when
+    the id changed this turn, since a verdict for another subject is not a memory
+    worth keeping.
+    """
+    if _verdict_is_definitive(stored) and not _verdict_is_definitive(fresh):
+        return stored
+    return fresh
+
+
 def _derive_intent(message: str, facts: VisitFacts) -> tuple[VisitIntent, str | None]:
     """Classify the turn and extract a member id, deterministically.
 
@@ -439,24 +556,67 @@ def _derive_intent(message: str, facts: VisitFacts) -> tuple[VisitIntent, str | 
     Both degrade to `other` with no id, which renders the "which member id?"
     reply — the safe direction, since the cost is one extra question and the
     alternative is a confident answer about the wrong patient.
+
+    A candidate that MATCHES the visit's confirmed id is a REPEAT, and a repeat
+    does not automatically buy another payer call (Codex PR #14 round 4). Clerks
+    restate and re-paste the id constantly, and each repeat used to spend another
+    PHI-bearing lookup while the answer sat in `last_eligibility`.
+
+    A repeat runs the SAME keyword ladder as a turn with no id in it — retry, then
+    question-about-the-past, then request-a-check — so repeating the id cannot
+    change what a turn MEANS (pre-push adversarial review, round 4). Freshness
+    decides only the turn the ladder does not classify: the bare restatement
+    ("member AETN1224"), which is answered from memory while the visit holds a
+    reusable verdict for that id.
+
+    Two orderings inside that ladder are load-bearing:
+
+      * an explicit retry ("recheck AETN1224") outranks everything, because it asks
+        for a NEW observation rather than about the old one;
+      * a question about the past ("what did AETN1224 come back as?") outranks the
+        check verbs, because `_STATUS_WORDS` and `_CHECK_WORDS` overlap on "active"
+        and a question must not spend a payer call. Reversing these two turns
+        "is AETN1224 still active?" into a lookup.
+
+    An imperative check verb ("verify AETN1224", "coverage changed — check
+    AETN1224") is honoured against a fresh verdict, which is the one place this
+    deliberately spends over saving: freshness must not become a cache the clerk
+    cannot get past, and a clerk asking for a check has a reason we cannot see (a
+    new card for the same member id being the concrete one). The saving comes from
+    the bare repeat, which is what "restate or re-paste the id" actually looks like.
     """
     candidates = _extract_insurance_ids(message)
     stored = facts.insurance_id
+    lowered = (message or "").lower()
+    wants_retry = any(word in lowered for word in _RETRY_WORDS) or bool(_RETRY_RE.search(lowered))
+    asks_status = any(word in lowered for word in _STATUS_WORDS)
+    wants_check = any(word in lowered for word in _CHECK_WORDS)
     if len(candidates) > 1:
         return VisitIntent.clarify_member_id, None
     if candidates:
         if stored and candidates[0] != stored:
             return VisitIntent.clarify_member_id, None
+        if stored:
+            if wants_retry:
+                return VisitIntent.recheck_eligibility, candidates[0]
+            if asks_status:
+                # A question about the past, answered from stored facts. No egress,
+                # whatever the stored verdict says — including a degraded one, which
+                # renders as the failed check it was.
+                return VisitIntent.ask_status, None
+            if not wants_check and _verdict_is_reusable(facts.last_eligibility):
+                # The bare repeat: same subject, an answer already paid for, still
+                # fresh. No egress.
+                return VisitIntent.ask_status, None
         return VisitIntent.check_eligibility, candidates[0]
 
-    lowered = (message or "").lower()
     has_id_on_file = bool(stored)
-    if has_id_on_file and any(word in lowered for word in _RETRY_WORDS):
+    if has_id_on_file and wants_retry:
         return VisitIntent.recheck_eligibility, None
-    if has_id_on_file and any(word in lowered for word in _STATUS_WORDS):
+    if has_id_on_file and asks_status:
         # Answered from stored facts — no payer call, no spend.
         return VisitIntent.ask_status, None
-    if any(word in lowered for word in _CHECK_WORDS):
+    if wants_check:
         # Wants a check but we have no id to run one with — the reply asks for it.
         return VisitIntent.check_eligibility, None
     return VisitIntent.other, None
@@ -622,12 +782,17 @@ def visit_chat(req: VisitChatRequest):
         facts.insurance_id = found_id
 
     verdict = facts.last_eligibility
+    checked_this_turn = False
     if intent in (VisitIntent.check_eligibility, VisitIntent.recheck_eligibility) and facts.insurance_id:
         # Deterministic act step: the decision to make an outbound PHI-bearing
         # call is never a function of model output or of what the free text told
         # the model to do. Bounded and breakered (eligibility_client).
+        checked_this_turn = True
         verdict = eligibility_client.check_coverage(facts.insurance_id)
-        facts.last_eligibility = verdict
+        facts.last_eligibility = _remembered_verdict(
+            facts.last_eligibility if req.facts.insurance_id == facts.insurance_id else None,
+            verdict,
+        )
 
     status = (verdict or {}).get("status") or visit_templates.AWAITING_ID
     if not facts.insurance_id:
@@ -639,10 +804,17 @@ def visit_chat(req: VisitChatRequest):
         status = visit_templates.AMBIGUOUS_ID
 
     # Allowlisted, non-PHI projection only — never the message, the transcript, or
-    # the id (D1 lesson, docs/phi-logging-policy.md).
+    # the id (D1 lesson, docs/phi-logging-policy.md). `checked` is the turn's
+    # EGRESS fact, and it is here because `intent` no longer implies it: `ask_status`
+    # now covers both "answered a status question" and "declined to re-verify an id
+    # the clerk re-presented, because the stored verdict was still fresh". Without
+    # it, nobody reviewing why a clerk recorded ACTIVE can tell whether a payer was
+    # asked on that turn (adversarial review, round 4; D2/D12 are open).
     log.info(
         "POST /visit-chat meta=%s",
-        json.dumps(visit_chat_log_metadata(intent, status, len(req.turns))),
+        json.dumps(
+            visit_chat_log_metadata(intent, status, len(req.turns), checked=checked_this_turn)
+        ),
     )
 
     plan = _reply_items(intent, status, len(req.turns))

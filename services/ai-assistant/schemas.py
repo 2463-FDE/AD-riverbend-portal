@@ -286,18 +286,26 @@ class VisitChatResponse(BaseModel):
 
 
 def visit_chat_log_metadata(
-    intent: VisitIntent, status: str, turn_count: int
+    intent: VisitIntent, status: str, turn_count: int, checked: bool = False
 ) -> dict[str, Any]:
     """Loggable projection of a chat turn.
 
     An explicit allowlist of CLOSED values — an enum, a status string derived
-    server-side from the ADR 0010 contract, and a count. The message, the
-    transcript, the insurance id, and every downstream body field are absent by
+    server-side from the ADR 0010 contract, a count, and a boolean. The message,
+    the transcript, the insurance id, and every downstream body field are absent by
     construction, and adding a field means adding it here on purpose (the D1
     lesson: never ``model_dump`` a request into a log).
+
+    ``checked`` is whether a payer lookup ran on this turn. It is separate from
+    ``intent`` because ``ask_status`` stopped implying it once a fresh verdict could
+    answer a repeated member id (round 4): two materially different events — a
+    question answered from memory, and a re-verification declined as unnecessary —
+    otherwise log identically, and neither the reply text nor the response shape
+    distinguishes them either.
     """
     return {
         "intent": intent.value if isinstance(intent, VisitIntent) else str(intent),
         "eligibility_status": status,
         "turn_count": turn_count,
+        "checked": bool(checked),
     }

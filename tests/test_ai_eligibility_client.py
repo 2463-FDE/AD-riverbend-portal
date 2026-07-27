@@ -369,6 +369,56 @@ def test_an_exception_escaping_query_cannot_wedge_the_breaker(monkeypatch):
     assert client_mod._breaker.state == "open"
 
 
+@pytest.mark.parametrize(
+    "kwargs,why",
+    [
+        ({"body": {"active": True, "status": "active"}}, "a definitive verdict"),
+        ({"body": {"active": False, "status": "inactive"}}, "a definitive denial"),
+        ({"body": {"status": "active"}}, "a 2xx with no boolean verdict"),
+        ({"exc": httpx.TimeoutException("timed out")}, "a timeout"),
+        ({"status_code": 500}, "a downstream 5xx"),
+        ({"status_code": 422}, "a caller-fault 4xx"),
+    ],
+)
+def test_every_verdict_carries_our_own_observation_stamp(monkeypatch, kwargs, why):
+    # Codex PR #14 round 4. `observed_at` is the ONLY input to the caller's reuse
+    # decision (app._verdict_is_reusable), and absent means "not reusable" — so a
+    # path that forgot to stamp would silently disable reuse on that path instead
+    # of failing visibly. Stamped on EVERY path so absent means exactly one thing:
+    # the verdict did not come from this module.
+    fake_get, clock = _response(**kwargs)
+    _install(monkeypatch, fake_get, clock)
+
+    verdict = client_mod.check_coverage(MEMBER_ID)
+
+    stamp = verdict["observed_at"]
+    assert isinstance(stamp, str), why
+    parsed = client_mod.datetime.fromisoformat(stamp)
+    # Timezone-AWARE, from THIS service's clock: the caller rejects a naive stamp,
+    # because assuming an offset can be hours wrong in the direction the reuse
+    # window exists to bound.
+    assert parsed.tzinfo is not None, f"{why}: a naive stamp is unusable for freshness"
+    age = (client_mod.datetime.now(client_mod.timezone.utc) - parsed).total_seconds()
+    assert 0 <= age < 60, why
+
+
+def test_the_observation_stamp_is_ours_not_the_downstream_bodys(monkeypatch):
+    # The distinction the whole field exists for: `checked_at` is downstream
+    # CONTENT (another host's clock, and a value this module otherwise refuses to
+    # trust for control decisions), so a stale or crafted body must not be able to
+    # extend the caller's reuse window.
+    fake_get, clock = _response(
+        body={"active": True, "status": "active", "checked_at": "2019-01-01T00:00:00+00:00"}
+    )
+    _install(monkeypatch, fake_get, clock)
+
+    verdict = client_mod.check_coverage(MEMBER_ID)
+
+    assert verdict["checked_at"] == "2019-01-01T00:00:00+00:00"  # what a clerk reads
+    assert verdict["observed_at"] != verdict["checked_at"]
+    assert client_mod.datetime.fromisoformat(verdict["observed_at"]).year >= 2026
+
+
 def test_degraded_answers_carry_an_observation_timestamp(monkeypatch):
     # A degraded verdict is persisted into visit memory and re-rendered on later
     # turns; without checked_at, a 25-minute-old failed attempt reads as if the

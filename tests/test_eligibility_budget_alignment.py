@@ -226,3 +226,41 @@ def test_slow_answer_threshold_is_reachable_by_a_retried_payer_answer():
             "verdict must not be judged more harshly than a reply carrying no "
             "verdict at all"
         )
+
+
+# --- 4. verdict reuse must not outlive the record that holds the verdict ------
+# Added with the round-4 reuse window (ADR 0011). ai-assistant decides how long a
+# stored coverage verdict may answer a repeated member id; the GATEWAY owns how
+# long that verdict exists at all (`AI_VISIT_TTL_SECONDS`, the visit-memory
+# retention policy). Neither service can read the other's config, so — exactly like
+# the three budgets above — the pinning can only live here. ai-assistant mirrors the
+# gateway's default as a hardcoded ceiling, and a mirror with no test is the
+# stale-copy failure this file exists to prevent.
+_gw = load_module("services/gateway/config.py", "gw_config_budget").settings
+
+
+def test_verdict_reuse_cannot_outlive_visit_memory_retention():
+    sources = {
+        "config.py defaults": (
+            _ai._ai_reuse_ceiling_seconds,
+            _ai.ai_eligibility_reuse_seconds,
+            float(_gw.ai_visit_ttl_seconds),
+        ),
+        ".env.example": (
+            _ai._ai_reuse_ceiling_seconds,
+            float(_env_example_values()["AI_ELIGIBILITY_REUSE_SECONDS"]),
+            float(_env_example_values()["AI_VISIT_TTL_SECONDS"]),
+        ),
+    }
+    for label, (ceiling, configured, retention) in sources.items():
+        assert ceiling <= retention, (
+            f"[{label}] ai-assistant's reuse ceiling ({ceiling}s) must be <= the "
+            f"gateway's visit-memory retention ({retention}s). Above it, a verdict "
+            "stays reusable longer than the retention policy the operator chose — "
+            "and the ceiling is a hardcoded mirror of the gateway's default, so "
+            "tightening AI_VISIT_TTL_SECONDS otherwise changes nothing here"
+        )
+        assert min(configured, ceiling) <= retention, (
+            f"[{label}] the effective reuse window ({min(configured, ceiling)}s) must "
+            f"be <= visit-memory retention ({retention}s)"
+        )
