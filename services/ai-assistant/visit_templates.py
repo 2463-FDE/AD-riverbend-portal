@@ -195,6 +195,11 @@ def allowed_selection(status: str) -> set[str]:
     Catalog membership alone is not enough: `self_pay_options` is right for a
     definitive `inactive` and wrong — financially and for the patient — after a
     failed check that proves nothing. The model's only real freedom is OPTIONAL_IDS.
+
+    When this set EQUALS the default selection the model has no freedom at all,
+    and app.py answers that turn deterministically without calling it — paying a
+    vendor request for a decision with one legal outcome is pure waste, and the
+    turns with no freedom are the ones a clerk can repeat all day (round 5).
     """
     if status in NO_LOOKUP_STATUSES:
         # No result exists yet, so the "neutral" extras are not justified either.

@@ -331,6 +331,14 @@ def _reserve_ai_budget() -> str | None:
     that would 422 downstream. Fails closed: a Redis fault here means we cannot
     verify the spend ceiling, so we do not spend.
 
+    "Paid path" means *believed* paid at admission time, and for `/visit-chat`
+    that is the best this can be: whether a turn needs the vendor at all is
+    derived downstream from the message, the visit's facts, and the payer's
+    answer (ADR 0011 round 5). Such a turn reserves a slot and gets it back
+    within the request via `llm_egress: false`, so the counter is correct at
+    rest — but a turn that will cost nothing is still admitted against the
+    ceiling, and still refused with 429 once it is exhausted.
+
     Returns the reservation key — the exact day bucket that was charged. A
     refund must pass this key back (never re-derive it from the clock): a
     fan-out reserved just before UTC midnight refunds after the rollover, and a

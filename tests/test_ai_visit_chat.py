@@ -482,6 +482,111 @@ def test_a_successful_model_call_is_charged_and_healthy(fake_llm, fake_eligibili
     assert body["assistant"] == "ok"
 
 
+# --- a turn with nothing to decide does not buy a model call ----------------
+# Codex PR #14 round 5. On the no-lookup statuses allowed_selection collapses
+# onto the required core, so the model's "choice" has exactly one legal outcome
+# — and those are the cheapest turns in the feature to provoke (send a message
+# with no member id in it). Paying Bedrock and a slot of the shared daily
+# ceiling for them is drainable waste, so the call is skipped and the reserved
+# slot refunded via llm_egress=False.
+def _verdict_for(status):
+    """The file's canonical verdict fixture, restated for `status`.
+
+    Built from the two constants above rather than hand-assembled, so no row
+    asserts against a shape `eligibility_client` could not emit — an `unknown`
+    carrying the payer's ACTIVE raw code and no reason is not a verdict that
+    exists, and inventing one here is how a second, divergent notion of
+    "degraded verdict" gets inherited by the next test.
+    """
+    if status == "active":
+        return dict(ACTIVE_VERDICT)
+    if status == "inactive":
+        return {**ACTIVE_VERDICT, "active": False, "status": "inactive"}
+    return {**UNKNOWN_VERDICT, "status": status}
+
+
+# (status, message that reaches it, verdict the payer returns or None for no
+#  lookup, whether the model must be consulted). The last column is HARDCODED on
+# purpose: deriving it from allowed_selection - default_selection would restate
+# the production predicate, and a test that recomputes the code under test
+# cannot fail when that code changes — narrowing allowed_selection to the
+# default for every status would kill the model step entirely and still pass.
+_STATUS_TURNS = [
+    ("awaiting_id", "can you check this patient's coverage?", None, False),
+    ("ambiguous_id", f"policy BCBS4471 or maybe {MEMBER_ID}, not sure which", None, False),
+    ("active", f"check {MEMBER_ID}", "active", True),
+    ("inactive", f"check {MEMBER_ID}", "inactive", True),
+    ("unknown", f"check {MEMBER_ID}", "unknown", True),
+    ("pending", f"check {MEMBER_ID}", "pending", True),
+]
+
+
+@pytest.mark.parametrize(
+    "status,message,verdict_status,expect_model_call",
+    _STATUS_TURNS,
+    ids=[row[0] for row in _STATUS_TURNS],
+)
+def test_the_model_is_called_exactly_when_the_status_leaves_it_a_choice(
+    fake_llm, fake_eligibility, status, message, verdict_status, expect_model_call
+):
+    # The invariant, not the two anecdotes: for EVERY reachable status, a vendor
+    # request happens if and only if that status justifies an id the
+    # deterministic default does not already contain. Asserting both directions
+    # is what stops the short-circuit from silently swallowing the statuses where
+    # the model does have something to add.
+    if verdict_status:
+        fake_eligibility.set_verdict(_verdict_for(verdict_status))
+
+    body = _post(message).json()
+
+    assert body["status"] == status
+    # Exact counts, not "not one": two calls for one turn is also a defect.
+    assert len(fake_llm) == (1 if expect_model_call else 0), (
+        f"{status}: wrong number of model calls"
+    )
+    assert body["llm_egress"] is expect_model_call
+    # Skipping a pointless call is not a fault: health stays separate from spend.
+    assert body["assistant"] == "ok"
+
+
+@pytest.mark.parametrize(
+    "status,message",
+    [(row[0], row[1]) for row in _STATUS_TURNS if not row[3]],
+    ids=["awaiting_id", "ambiguous_id"],
+)
+def test_a_no_lookup_turn_still_answers_in_full_without_the_model(
+    fake_llm, fake_eligibility, status, message
+):
+    # The clerk must not pay for the saving: the short-circuited reply carries the
+    # same verdict line and the same action list the model path would have
+    # rendered, since the gate could only ever have accepted this one selection.
+    body = _post(message).json()
+
+    assert fake_llm == []
+    assert fake_eligibility == []
+    assert body["llm_egress"] is False
+    assert body["reply"].startswith(visit_templates.verdict_line(status))
+    for item in visit_templates.render(visit_templates.default_selection(status)):
+        assert item in body["reply"]
+    assert body["eligibility"] is None
+
+
+def test_the_skipped_model_call_is_recorded_and_carries_no_phi(
+    fake_llm, fake_eligibility, caplog
+):
+    # A reserve-then-refund is now the COMMON accounting path, and it is the one
+    # path where a 200 charges the shared ceiling and credits it straight back.
+    # With no record of it, a drifting counter has no evidence trail before the
+    # vendor invoice. The line is still allowlisted closed values only.
+    with caplog.at_level("INFO"):
+        _post("checking coverage for Jane Doe, dob 1985-03-12")
+
+    assert "model_consulted" in caplog.text
+    assert '"eligibility_status": "awaiting_id"' in caplog.text
+    for fragment in ("Jane Doe", "1985-03-12", "checking coverage for"):
+        assert fragment not in caplog.text
+
+
 def test_a_rejected_model_selection_is_not_a_degraded_assistant(
     fake_llm, fake_eligibility
 ):

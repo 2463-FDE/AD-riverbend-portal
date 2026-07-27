@@ -680,6 +680,89 @@ writing these gaps down honestly.
    lookup, and during an outage a spurious re-check can turn a confirmed ACTIVE
    into "could not confirm".
 
+## Round 5 corrections (2026-07-27)
+
+Adversarial review round 5 on PR #14 found one finding, and it is the same shape
+as round 4's: an expensive call on the path a common input makes the default.
+
+1. **A turn where the model has no choice no longer buys a model call.**
+   `_reply_items` consulted Bedrock on every turn. For the two no-lookup
+   pseudo-statuses (`awaiting_id`, `ambiguous_id`) `allowed_selection` returns
+   exactly `default_selection` — round 1 removed the "neutral" optional ids there,
+   because "record the coverage result" presupposes a result — so the selection
+   gate could only ever accept the one selection the deterministic default already
+   renders. The request bought nothing: same reply, every time, at the price of a
+   vendor request and a slot of ADR 0007's shared daily ceiling.
+
+   That is not merely wasteful, it is the cheapest waste in the feature to
+   provoke. The turns with no freedom are exactly the turns that need no member
+   id — "can you check this patient's coverage?" repeated — so one clerk, or one
+   never-expiring session (CLAUDE.md §6, D10), walks the *global* counter to its
+   cap and the visible symptom is everyone else's AI features going dark. The
+   per-user chat quota bounds the rate, not the direction.
+
+   `_reply_items` now returns the deterministic render directly when
+   `allowed_selection(status) - set(default_selection(status))` is empty, with
+   `llm_egress=False` so `proxy_visit_chat` refunds the slot it reserved before
+   the call that never happened (§7's flag doing exactly the job it was added
+   for), and `degraded=False`, because this is the designed path for those
+   statuses and health must not start firing on a saving.
+
+   The condition is derived from the two sets, **not** tested against
+   `NO_LOOKUP_STATUSES`. The property that matters is "the model has no freedom
+   here", so a future status whose optional ids are narrowed away inherits the
+   short-circuit instead of quietly re-introducing the spend. Tested as an
+   invariant across every reachable status — a vendor request happens *if and only
+   if* the status justifies an id the default does not already contain — so the
+   short-circuit cannot silently widen to statuses where the model does have
+   something to add.
+
+   The mirror endpoint does not have this hole: `templates.OPTIONAL_IDS`
+   (`billing_questions`, `save_clinic_number`) is disjoint from every
+   `default_selection` a request shape can produce, so `/intake-instructions`
+   always leaves the model a real choice.
+
+   A second benefit was not the motivation but is worth recording against D13:
+   an `ambiguous_id` turn no longer crosses the vendor boundary at all, so the
+   turn class most likely to contain a clerk fumbling with several ids is now
+   one the vendor never sees any derivative of.
+
+2. **The admission slot is still spent on a free turn (accepted gap, found by
+   the pre-push adversarial pass).** The fix above is on the refund side only.
+   `_reserve_ai_budget` runs in the gateway *before* the fan-out, and whether a
+   turn needs the vendor is derived downstream from the message, the visit's
+   facts, and the payer's answer — so admission cannot know. A no-lookup turn
+   therefore reserves a slot and gets it back milliseconds later, and while the
+   ceiling is exhausted it is refused with 429 even though answering it would
+   have cost nothing. Because a first turn has no member id, `awaiting_id` is
+   the entry point of *every* visit: at the ceiling, the feature cannot be
+   started, only continued.
+
+   Accepted rather than fixed, and the alternatives are why. Reserving *after*
+   the fan-out inverts the control — the ceiling exists to bound egress, and a
+   ceiling checked after the request has gone is not one. Telling ai-assistant
+   "the budget is exhausted, answer only if free" moves a spend decision into
+   the service that is supposed to be stateless about spend, and hands a caller
+   a flag that changes what the endpoint will do. Deriving the status in the
+   gateway duplicates `_derive_intent` across a service boundary, which is the
+   cross-layer duplication §1 of this ADR exists to avoid. The residual is a
+   *fail-closed availability* cost on an exhausted ceiling, which is the safe
+   direction; the counter itself stays accurate at rest. `_reserve_ai_budget`'s
+   docstring, which claimed the counter tracks only genuinely paid fan-outs, was
+   corrected rather than left to read as an invariant this change had broken.
+
+3. **The saving is logged, because it is an accounting event with no other
+   witness.** Skipping the vendor makes reserve-then-refund the *common* path
+   rather than a rare failure branch, and the refund side is silent by
+   construction (`_refund_ai_budget` logs only when the Redis release fails).
+   Nothing else in either service distinguishes a 200 that paid from a 200 that
+   did not, so a double-credit — a retry, or a later refactor — would walk the
+   shared counter downward with no evidence before the vendor invoice. The
+   short-circuit now emits one allowlisted metadata line
+   (`eligibility_status`, `model_consulted`), same D1 discipline as the request
+   line. This is the round-1 "a control with no observable signal reads as a
+   green dashboard" lesson, applied to a saving rather than to a guard.
+
 ## Consequences
 
 - **New endpoints.** `POST /ai/visit-chat` on the gateway

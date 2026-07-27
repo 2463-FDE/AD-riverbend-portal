@@ -737,9 +737,50 @@ def _reply_items(intent: VisitIntent, status: str, turn_count: int) -> _ReplyPla
     failure keeps the charge. `getattr` rather than attribute access because a
     caller must not be broken by an exception raised from somewhere that predates
     the attribute.
+
+    The model is also not consulted when the status leaves it nothing to decide
+    — see the short-circuit below.
     """
     required = visit_templates.default_selection(status)
     allowed = visit_templates.allowed_selection(status)
+    if not allowed - set(required):
+        # Nothing to decide, so nothing to buy (Codex PR #14 round 5). For the
+        # no-lookup statuses `allowed_selection` collapses onto the required
+        # core, so the ONLY selection the gate downstream would accept is the one
+        # rendered here: a model call could change this reply by exactly zero
+        # while costing a real Bedrock request. Those are also the cheapest turns
+        # to provoke — a message with no member id in it, repeatable by anyone
+        # holding a never-expiring session (CLAUDE.md §6) — so the waste is
+        # drainable by one clerk.
+        #
+        # What this does NOT save is the gateway's ADR 0007 admission slot: the
+        # reservation is taken before the fan-out, and the gateway cannot know
+        # the turn is free until this function has answered. The slot is
+        # reserved and refunded, so a no-lookup turn still consumes admission
+        # while it is in flight and is still refused once the ceiling is
+        # exhausted (ADR 0011, round 5 gap).
+        #
+        # Derived from the two sets rather than tested against
+        # NO_LOOKUP_STATUSES: the property that matters is "the model has no
+        # freedom", and a future status whose optional ids are narrowed away
+        # then inherits the short-circuit instead of quietly paying for it.
+        #
+        # Not `degraded`: this is the designed path for these statuses, not a
+        # fallback from a fault, and health must keep meaning health (ADR 0011
+        # §7). `llm_egress=False` is what makes the gateway refund the slot it
+        # reserved before the call it turns out we never made.
+        #
+        # Logged, because this is now the most common reason the shared counter
+        # is charged and immediately credited back, and an accounting path with
+        # no signal is one a double-refund can quietly drift through: nothing
+        # else in either service records that a 200 skipped the vendor. Both
+        # values are closed vocabulary, same allowlist discipline as the request
+        # line above.
+        log.info(
+            "visit-chat answered with no model call: %s",
+            json.dumps({"eligibility_status": status, "model_consulted": False}),
+        )
+        return _ReplyPlan(visit_templates.render(required), False, False)
     try:
         result = llm_client.complete_structured(
             prompt=_build_visit_prompt(intent, status, turn_count, required, allowed),
