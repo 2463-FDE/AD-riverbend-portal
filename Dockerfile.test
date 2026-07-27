@@ -1,0 +1,15 @@
+# Test-runner image: python:3.12 with the dev/test deps baked in.
+#
+# Why this exists: local dev Python is 3.8 and cannot run the suite, so the suite
+# runs in a container. Installing requirements-dev.txt on every run re-resolved and
+# re-downloaded eleven packages each time (~13s of a 20s run). Baking them into an
+# image layer keyed on requirements-dev.txt means the install happens once per
+# requirements change instead of once per run; a rebuild with no change is ~0.6s.
+#
+# The repo itself is NOT copied in — it is bind-mounted at run time (see `make
+# test-docker`), so edits are picked up without a rebuild.
+FROM python:3.12
+WORKDIR /repo
+COPY requirements-dev.txt /tmp/requirements-dev.txt
+RUN pip install --no-cache-dir --disable-pip-version-check --root-user-action=ignore \
+      -q -r /tmp/requirements-dev.txt
