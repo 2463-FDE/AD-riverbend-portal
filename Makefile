@@ -1,4 +1,4 @@
-.PHONY: up down logs ps build seed seed-gen psql test frontend-dev config
+.PHONY: up down logs ps build seed seed-gen psql test test-docker frontend-dev config
 
 # Scoped gateway->ai-assistant secret file. Compose refuses to parse when a
 # listed env_file is missing, so every compose target depends on this. The
@@ -35,6 +35,15 @@ psql: .env.ai-proxy ## open a psql shell
 test:          ## run unit tests (no infra needed)
 	pip install -r requirements-dev.txt >/dev/null
 	pytest -m "not integration" -q
+
+# Same suite as `test`, but in the 3.12 container CI uses — the only way to run it
+# on a machine whose local Python is 3.8. The build is a no-op (~0.6s) unless
+# requirements-dev.txt changed. Pass extra pytest args via ARGS, e.g.
+#   make test-docker ARGS="tests/test_redaction.py -q"
+test-docker:   ## run unit tests in the python:3.12 container (mirrors CI)
+	docker build -q -t riverbend-test:py312 -f Dockerfile.test . >/dev/null
+	docker run --rm -v "$$PWD":/repo -w /repo riverbend-test:py312 \
+	  pytest $(if $(ARGS),$(ARGS),-m "not integration" -q)
 
 frontend-dev:  ## run the Next.js dev server
 	cd frontend && npm install && npm run dev
