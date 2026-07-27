@@ -262,30 +262,60 @@ never restated as current.
 - **Fail-closed on the paid path** is preserved: an unreadable rate-limit or
   budget counter returns **503** and no LLM call happens.
 
-### 7. Error mapping, and one deliberate divergence
+### 7. Error mapping: the turn never fails on the LLM, and spend is reported separately
 
-Pre-egress refusals keep ADR-0007's contract: `LLMConfigError` and
-`LLMBudgetExceeded` → **503** (the gateway refunds the reserved slot, since no
-paid call occurred), a bad internal auth → **401**, a rejected body → **422**.
+*(Rewritten in round 3 — see "Round 3 corrections". The original mapping is
+preserved there, because the reasoning that made it wrong is the useful part.)*
 
-There is a known asymmetry here, raised by the adversarial review and accepted
-for now: the eligibility lookup runs *before* the model call, so a pre-egress 503
-discards a verdict that was already computed and does not depend on the LLM, and
-each retry under a persistent Bedrock misconfiguration makes a fresh payer call.
-The budget accounting stays correct (503 is refunded; no Bedrock call occurred),
-and the eligibility breaker bounds the repeated payer cost. Making the turn return
-the verdict anyway would mean answering 200 for a call that never happened, which
-would keep a charge the tenant did not incur — so the fix is to persist the facts
-before raising, and it is deferred rather than bolted on here (gap 7).
+Boundary rejections keep ADR-0007's contract unchanged: a bad internal auth →
+**401**, a rejected body → **422**, an empty member-id catalog → **503**. All
+three are refunded by `_NON_PAID_DOWNSTREAM_STATUS`, and all three happen
+*before* any payer call.
 
-Post-egress failures (`LLMUnavailable`, `LLMResponseError`) **diverge** from
-`/intake-instructions`, which returns 502. `/visit-chat` returns **200 with the
-deterministic template selection**, because the thing the clerk actually needs —
-the coverage verdict — was computed *before* the model call and does not depend on
-it. Accounting stays correct: 200 is not in `_NON_PAID_DOWNSTREAM_STATUS`, so the
-charge is kept, exactly as the 502 would have been. The honest caveat is that this
-leaves two AI endpoints with different post-egress behavior; aligning
-`/intake-instructions` onto the same degrade-don't-fail rule is a candidate
+Everything past that point is different, because by then the deterministic act
+step may already have spent an outbound PHI-bearing eligibility call and written
+its verdict into the visit's facts. **No LLM failure fails the turn.** Action
+selection is the last and least important step — it chooses *which* fixed
+follow-up lines to show, never whether the patient has coverage — so every
+failure branch renders `visit_templates.default_selection(status)` and answers
+200 with the verdict intact.
+
+That breaks the assumption the gateway's refund rule rested on: a 200 no longer
+proves a paid Bedrock call happened. The spend verdict therefore travels as data
+rather than as a status code, in `VisitChatResponse.llm_egress`.
+`proxy_visit_chat` refunds the reserved slot when the flag is explicitly `False`;
+anything absent or ambiguous keeps the charge, which over-counts toward the
+ceiling rather than refunding spend that really occurred.
+
+**The flag is set by the raiser, not inferred from the exception type**, and that
+distinction is load-bearing rather than stylistic. The first cut of this change
+read "`LLMConfigError` ⇒ nothing egressed", which is false:
+`llm_client._call` maps Bedrock's own `ClientError` — `AccessDeniedException`,
+`UnrecognizedClientException`, `ValidationException`, `ResourceNotFoundException`
+— onto `LLMConfigError`, and those arrive *after* the full request crossed the
+vendor boundary. Under a rotated key or a mistyped model id that reading would
+have refunded every turn, so the aggregate ceiling ADR 0007 built to bound
+vendor fan-out would never have advanced, while each turn still shipped a
+request. `LLMError` now carries an `egressed` attribute, defaulting to `True`,
+which only the four genuinely local gates (the two pricing refusals, the
+bearer-token gate, and botocore's credential-chain failure) and
+`LLMBudgetExceeded` set to `False`. `_reply_items` reads the attribute in a
+single `except LLMError`, so there is no longer an exception-ordering hazard to
+get wrong either.
+
+Because a fault now looks like a success from the outside, health travels
+separately from spend: `VisitChatResponse.assistant` is `ok` or `degraded`, and
+the gateway forwards it as `ok` / `degraded` / `unknown` alongside
+`visit_memory`. The two booleans are independent — a post-egress failure is
+billable *and* degraded; a local refusal is neither — so collapsing them into
+one field would have made a dead Bedrock configuration invisible on every
+channel an operator watches.
+
+This also settles the divergence from `/intake-instructions` that the original
+mapping only half-owned. `/visit-chat` degrades and answers for *all* LLM faults;
+`/intake-instructions` still returns 502 on a post-egress failure, and that is
+defensible for a different reason — a checklist has no already-computed result to
+preserve, so failing loudly costs nothing. Aligning the two remains a candidate
 follow-up, not a claim of principle.
 
 ### 8. Non-goals
@@ -389,10 +419,18 @@ follow-up, not a claim of principle.
    debt **D8**, W4/W9 — not this PR.
 5. **Post-egress behavior differs across the two AI endpoints (accepted, §7).**
    Aligning `/intake-instructions` is a follow-up.
-6. **A pre-egress LLM refusal discards an already-computed verdict (accepted).**
-   See §7. Under a persistent Bedrock misconfiguration every retry re-runs the
-   payer call for no user-visible value. Bounded by the eligibility breaker and
-   the chat rate limit; the clean fix is to persist facts before raising the 503.
+6. **A pre-egress LLM refusal discards an already-computed verdict — CLOSED in
+   this PR (round 3), was "accepted".** The gap was accepted on a false
+   constraint (that answering would mean keeping an unearned charge). See
+   "Round 3 corrections". **Its second symptom is only PARTLY closed:** a turn
+   no longer throws away a verdict, and a clerk who follows up by *asking*
+   ("what was the status again?") is answered from `last_eligibility` with no
+   payer call. A clerk who follows up by *re-typing the member id* still routes
+   to `check_eligibility` and spends another payer call, every turn. That is
+   bounded by the eligibility breaker and by the per-user chat rate limit, and
+   closing it needs a per-visit freshness window on `last_eligibility` — a
+   caching decision this ADR deliberately declined (gap 7), so it is not a
+   one-line follow-on.
 7. **No stale-verdict cache when the breaker is open (decided).** This answers
    `docs/specs/w3.md` open question 1: when eligibility is degraded the agent
    reports *unconfirmed* rather than serving a stale-but-usable cached verdict.
@@ -478,6 +516,55 @@ behaviour; both are changes to how a failure is *reported*.
    not). The field is additive on a contract with no client yet (`frontend/` does
    not call this endpoint), so nothing downstream breaks.
 
+## Round 3 corrections (2026-07-27)
+
+Adversarial review round 3 on PR #14 rejected deferred gap 6 rather than the code
+that implemented it, and it was right to.
+
+1. **No LLM failure may discard a completed eligibility result (§7 rewritten).**
+   The original mapping raised **503** on `LLMConfigError` / `LLMBudgetExceeded`
+   so the gateway would refund the reservation. But the eligibility lookup runs
+   *before* the model call: by the time that 503 was raised, an outbound
+   PHI-bearing payer call had already been made and its verdict written into
+   `facts.last_eligibility`. Raising discarded all of it — the gateway got an
+   error, never persisted the visit, and the clerk saw a failure instead of the
+   coverage answer that had just been obtained on their behalf. Under a
+   *persistent* Bedrock misconfiguration (a blank credential, an unpriced model,
+   an exhausted local cap) this repeats: every retry spends another payer call
+   and returns nothing.
+
+   The ADR accepted this on the argument that "answering 200 for a call that
+   never happened would keep a charge the tenant did not incur." That constraint
+   was self-imposed. It only holds while the HTTP status is the *only* channel
+   carrying the spend verdict. `VisitChatResponse.llm_egress` gives it its own
+   channel, and the two facts — *did the turn succeed* and *were we billed* —
+   stop having to share one number. `_reply_items` now returns
+   `(items, llm_egress)`, every LLM branch degrades to the deterministic
+   selection, and `proxy_visit_chat` refunds on `llm_egress is False`. Accounting
+   is strictly more accurate than before, not less: local refusals refund exactly
+   as they did, and the clerk keeps the verdict.
+
+   The general lesson, and the reason this is worth recording: **an "accepted
+   tradeoff" is only accepted if the constraint that forces it is real.** This one
+   was an artifact of an encoding choice one layer down.
+
+2. **The member-id recogniser reads what a human types.** `config.py` upper-cases
+   the catalog and `_build_insurance_id_re` compiled without `re.IGNORECASE`, so
+   `aetn1224` matched nothing: no lookup ran and the assistant asked the clerk for
+   the id they had just supplied. The pattern is now case-insensitive and
+   `_extract_insurance_ids` folds each match to upper case *before*
+   de-duplicating, so "AETN1224 — sorry, aetn1224" stays one candidate instead of
+   tripping the ambiguity branch. `VisitFacts.insurance_id` folds at the schema
+   boundary too, because the contradiction rule compares a new id against the
+   stored one — case-folding only the message would have made every case variant
+   look like a different subject and stranded the visit in "confirm which member
+   ID" forever.
+
+   This does not widen the catalog: the recognised token set is the same payer
+   prefixes, case-folded. The round-1 property still holds — a miss is safe, a
+   wrong match is not — and `test_case_folding_does_not_widen_the_catalog` pins
+   it.
+
 ## Consequences
 
 - **New endpoints.** `POST /ai/visit-chat` on the gateway
@@ -485,9 +572,12 @@ behaviour; both are changes to how a failure is *reported*.
   eligibility?}`, where `visit_memory` is `ok` / `stale` / `unavailable` and
   `visit_id` is null in the last of those — see Round 2 corrections) and
   `POST /visit-chat` on ai-assistant (`{message, turns, facts}` →
-  `{reply, intent, status, facts, eligibility?, disclaimer}`, internal-auth only,
-  no `visit_id`; `intent`/`status` are echoed so the gateway can record a
-  metadata-only turn without handling the clerk's text again).
+  `{reply, intent, status, facts, eligibility?, disclaimer, llm_egress}`,
+  internal-auth only, no `visit_id`; `intent`/`status` are echoed so the gateway
+  can record a metadata-only turn without handling the clerk's text again, and
+  `llm_egress` carries the spend verdict the status code can no longer imply —
+  see Round 3 corrections. It is consumed by the gateway and not forwarded to
+  the portal).
   Both additive; no existing contract changes.
 - **New files.** `services/ai-assistant/eligibility_client.py`,
   `services/ai-assistant/breaker.py` (copy of the ADR-0010 pattern), and

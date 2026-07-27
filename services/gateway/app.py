@@ -358,8 +358,15 @@ def _reserve_ai_budget() -> str | None:
 # Downstream statuses that prove the fan-out made NO paid Bedrock call, so a
 # reserved budget slot must be refunded (Codex PR #7 rounds 8, 9): 401 = bad
 # service-to-service auth, 422 = request rejected at the ai-assistant boundary,
-# 503 = ai-assistant refused BEFORE egress ("assistant is not configured": blank
-# proxy secret, missing/placeholder Bedrock credentials, or an unpriced model).
+# 503 = ai-assistant refused BEFORE egress.
+#
+# What raises that 503 differs by endpoint, and the difference matters when
+# reasoning about refund coverage. /intake-instructions: blank proxy secret,
+# missing/placeholder Bedrock credentials, or an unpriced model. /visit-chat:
+# blank proxy secret or an empty member-id catalog ONLY — the credential and
+# pricing refusals no longer surface as 503 there at all, because that endpoint
+# refuses to discard an already-computed coverage verdict; they arrive as a 200
+# carrying `llm_egress: false` and are refunded on the flag (see below).
 # NOT 502/504/500 — there the provider path was entered, so Bedrock may have been
 # contacted/billed and the charge stands. This split is only sound because
 # ai-assistant maps its POST-egress provider failure (LLMUnavailable: throttle /
@@ -368,6 +375,12 @@ def _reserve_ai_budget() -> str | None:
 # ceiling would stop bounding vendor fan-out. gateway→service transport failures
 # also surface as 502/504 and likewise keep the charge (conservative: over-counts
 # toward the ceiling, never past it).
+#
+# Status is necessary but no longer SUFFICIENT on /ai/visit-chat: that endpoint
+# refuses to throw away an already-computed coverage verdict just because the
+# optional action-selection step failed locally, so a pre-egress refusal there
+# arrives as a 200 carrying `llm_egress: false` and is refunded on the flag
+# instead (Codex PR #14 round 3; see proxy_visit_chat and ADR 0011 §7).
 _NON_PAID_DOWNSTREAM_STATUS = frozenset({401, 422, 503})
 
 
@@ -595,6 +608,25 @@ def _ai_chat_rate_limited(session: dict = Depends(require_session)) -> dict:
     return session
 
 
+_ASSISTANT_HEALTH_STATES = frozenset({"ok", "degraded"})
+
+
+def _assistant_health(value) -> str:
+    """Project ai-assistant's health field onto a closed vocabulary.
+
+    An allowlist, not a pass-through: the value lands in a response the portal
+    renders, so anything unrecognised becomes "unknown" rather than being
+    echoed. Same discipline as every other closed value crossing this boundary.
+
+    The isinstance test is not redundant. ``value`` is a field of a JSON body
+    from another service, so it can be any JSON type, and an unhashable one (an
+    object, an array) raises TypeError from a bare ``in`` against a set —
+    turning a malformed downstream field into a 500 on a turn that otherwise
+    succeeded. Checked, not assumed.
+    """
+    return value if isinstance(value, str) and value in _ASSISTANT_HEALTH_STATES else "unknown"
+
+
 class _VisitChatRequest(BaseModel):
     """Gateway-side validation of a chat turn.
 
@@ -690,6 +722,19 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
                 _refund_ai_budget(budget_reservation)
             raise
 
+        # A 200 from /visit-chat is NOT proof of a paid call (Codex PR #14 round
+        # 3). The endpoint answers with the deterministic action list rather than
+        # discarding a coverage verdict it already computed, so a local
+        # (pre-egress) LLM refusal now surfaces as a successful turn carrying
+        # `llm_egress: false`. Refunding on the flag keeps ADR 0007's accounting
+        # exact — a Bedrock misconfiguration or an exhausted local cap no longer
+        # walks the shared daily counter to its cap — while the clerk still gets
+        # the answer. Absent/unparseable field defaults to charged: the
+        # conservative direction is to over-count toward the ceiling, never to
+        # refund spend that really happened.
+        if result.get("llm_egress") is False:
+            _refund_ai_budget(budget_reservation)
+
         # The transcript is METADATA ONLY — what happened, never what was said
         # (ADR 0011 §3). The clerk's prose is not persisted anywhere: nothing in
         # this feature reads it back (the model only learns the turn COUNT), so
@@ -741,6 +786,20 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
             "reply": reply,
             "disclaimer": result.get("disclaimer"),
             "eligibility": result.get("eligibility"),
+            # "ok" | "degraded" | "unknown". Forwarded for the same reason
+            # `visit_memory` is: before this PR an LLM fault reached the caller
+            # as a 503, and now it reaches them as a normal-looking 200 with a
+            # deterministic action list. Without this the only trace of a dead
+            # Bedrock config is one log line inside ai-assistant — and the
+            # aggregate spend counter, the other thing an operator watches, is
+            # deliberately refunded flat in exactly that case.
+            #
+            # Tri-state for the same reason visit_memory is: anything we did not
+            # recognise (an older ai-assistant mid-rolling-deploy, a field drop)
+            # is reported as "unknown" rather than coerced. Claiming "ok" would
+            # be the green-dashboard lie; claiming "degraded" would raise a
+            # false alarm on every turn during a deploy.
+            "assistant": _assistant_health(result.get("assistant")),
         }
     finally:
         visit_lock_release(visit_id, lock_token)

@@ -247,6 +247,114 @@ def test_post_egress_failure_keeps_the_charge(redis, monkeypatch):
     assert charged and redis.counts[charged[0]] == 1
 
 
+# --- a 200 is no longer proof of a paid call (Codex PR #14 round 3) ---------
+def _fanout_returning(monkeypatch, body):
+    calls = []
+
+    def _fake(service, path, payload, timeout=None, headers=None):
+        calls.append(payload)
+        return json.loads(json.dumps(body))
+
+    monkeypatch.setattr(gw, "_post_checked", _fake)
+    return calls
+
+
+def test_a_successful_turn_that_did_not_egress_is_refunded(redis, monkeypatch):
+    # ai-assistant answers rather than throwing away a coverage verdict it
+    # already paid a payer call for, so a local (pre-egress) LLM refusal now
+    # arrives as a 200 carrying llm_egress=false. Refunding on the flag is what
+    # stops a persistent Bedrock misconfiguration from walking the shared daily
+    # ceiling to its cap and 429-ing every valid caller.
+    _fanout_returning(monkeypatch, {**DOWNSTREAM_OK, "llm_egress": False})
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 5)
+
+    r = _chat()
+
+    assert r.status_code == 200
+    assert r.json()["reply"] == DOWNSTREAM_OK["reply"], "the verdict still reaches the clerk"
+    assert not [k for k in redis.counts if k.startswith("ratelimit:ai:global")]
+
+
+def test_a_refunded_turn_does_not_consume_the_daily_ceiling(redis, monkeypatch):
+    # The quantifier, not the anecdote: under a persistent misconfiguration the
+    # clerk keeps getting answers instead of being locked out after N turns.
+    _fanout_returning(monkeypatch, {**DOWNSTREAM_OK, "llm_egress": False})
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 2)
+
+    for _ in range(5):
+        assert _chat().status_code == 200
+
+
+def test_a_successful_turn_that_egressed_keeps_the_charge(redis, monkeypatch):
+    _fanout_returning(monkeypatch, {**DOWNSTREAM_OK, "llm_egress": True})
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 5)
+
+    assert _chat().status_code == 200
+
+    charged = [k for k in redis.counts if k.startswith("ratelimit:ai:global")]
+    assert charged and redis.counts[charged[0]] == 1
+
+
+@pytest.mark.parametrize("value", [None, "false", 0, "", "no"])
+def test_only_an_explicit_false_refunds(redis, monkeypatch, value):
+    # Fail toward the ceiling: a missing field, a stringified flag, or anything
+    # else ambiguous must KEEP the charge. Refunding spend that really happened
+    # is the direction that lets the ceiling stop bounding vendor cost.
+    body = dict(DOWNSTREAM_OK)
+    if value is not None:
+        body["llm_egress"] = value
+    _fanout_returning(monkeypatch, body)
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 5)
+
+    assert _chat().status_code == 200
+
+    charged = [k for k in redis.counts if k.startswith("ratelimit:ai:global")]
+    assert charged and redis.counts[charged[0]] == 1
+
+
+def test_the_spend_flag_is_not_forwarded_to_the_portal(redis, monkeypatch):
+    # Internal accounting, not part of the portal contract.
+    _fanout_returning(monkeypatch, {**DOWNSTREAM_OK, "llm_egress": False})
+
+    assert "llm_egress" not in _chat().json()
+
+
+# --- assistant health IS forwarded, because spend no longer signals it -------
+def test_a_degraded_assistant_is_reported_to_the_caller(redis, monkeypatch):
+    # The composed failure this guards: a dead Bedrock config produces a 200
+    # that looks like success AND a correctly-refunded spend counter, so neither
+    # of the two things an operator watches moves. This field is the third.
+    _fanout_returning(
+        monkeypatch, {**DOWNSTREAM_OK, "llm_egress": False, "assistant": "degraded"}
+    )
+
+    assert _chat().json()["assistant"] == "degraded"
+
+
+def test_a_healthy_turn_is_reported_ok(redis, monkeypatch):
+    _fanout_returning(monkeypatch, {**DOWNSTREAM_OK, "assistant": "ok"})
+
+    assert _chat().json()["assistant"] == "ok"
+
+
+@pytest.mark.parametrize("value", [None, "OK", "", "healthy", 1, {"state": "ok"}])
+def test_an_unrecognised_health_value_is_unknown_never_ok(redis, monkeypatch, value):
+    # Closed vocabulary at the boundary, and the tri-state is deliberate: an
+    # older ai-assistant mid-rolling-deploy omits the field entirely. Coercing
+    # that to "ok" is the green-dashboard lie; coercing it to "degraded" raises
+    # a false alarm on every turn of a deploy. Neither value is echoed back.
+    body = dict(DOWNSTREAM_OK)
+    if value is not None:
+        body["assistant"] = value
+    _fanout_returning(monkeypatch, body)
+
+    r = _chat()
+
+    assert r.json()["assistant"] == "unknown"
+    if isinstance(value, str) and value:
+        assert value not in r.text.replace('"unknown"', "")
+
+
 # --- no response cache on this path ----------------------------------------
 def test_identical_messages_are_not_collapsed_by_a_cache(redis, fanout):
     visit_id = _start_visit(fanout)

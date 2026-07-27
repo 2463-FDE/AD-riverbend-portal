@@ -459,7 +459,10 @@ def release_ai_global_budget(reservation_key: str | None) -> None:
     Bedrock call), none of which bill inference. A provider outage/throttle is a
     POST-egress 502 and is deliberately NOT refunded, so an outage retry storm
     cannot escape the tenant ceiling that bounds vendor fan-out (Codex PR #7
-    round 9; see gateway _NON_PAID_DOWNSTREAM_STATUS). Without the refund those
+    round 9; see gateway _NON_PAID_DOWNSTREAM_STATUS). /ai/visit-chat adds one
+    more caller: a SUCCESSFUL turn whose body says `llm_egress: false`, because
+    that endpoint degrades instead of failing when the LLM refuses locally
+    (Codex PR #14 round 3). Without the refund those
     non-paid failures would drive
     the shared daily counter to its cap during a misconfiguration or a retry
     storm and 429 every valid caller until the Redis window rolls over — even

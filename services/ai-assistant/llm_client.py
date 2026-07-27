@@ -90,23 +90,67 @@ _THROTTLE_CODES = frozenset({
 
 
 class LLMError(Exception):
-    """Base class. Messages carry metadata only — never prompt/response text."""
+    """Base class. Messages carry metadata only — never prompt/response text.
+
+    ``egressed`` answers one question a caller cannot answer from the type:
+    **had a request already left this process when the error was raised?**
+    Callers use it for spend accounting — the gateway refunds a reserved slot
+    only when nothing was billable (ADR 0007, ADR 0011 §7).
+
+    It is an attribute set BY THE RAISER, never inferred by the catcher, because
+    the type does not determine the answer. ``LLMConfigError`` is the proof: it
+    is raised from four genuinely local gates (pricing, bearer token, credential
+    chain) *and* from Bedrock's own ``ClientError`` response — an
+    ``AccessDeniedException`` for a rotated key is a config error that arrives
+    only after the full request crossed the vendor boundary. A catcher that
+    assumed "config error means nothing was sent" would refund a call that
+    happened, and under a persistent key/model misconfiguration the aggregate
+    ceiling that exists to bound vendor fan-out would never advance.
+
+    Default **True** on purpose: a new subclass, or a raise site that forgets to
+    say, is treated as billable. That over-counts toward the ceiling, which is
+    the safe direction; the unsafe direction refunds real spend.
+    """
+
+    egressed = True
+
+    def __init__(self, *args, egressed: bool | None = None):
+        super().__init__(*args)
+        if egressed is not None:
+            self.egressed = egressed
 
 
 class LLMBudgetExceeded(LLMError):
-    """Pre-flight token or cost budget check failed; no request was sent."""
+    """Pre-flight token or cost budget check failed; no request was sent.
+
+    Every raise site is a local cap checked inside the preflight, so this is the
+    one class that is pre-egress by construction rather than per-site.
+    """
+
+    egressed = False
 
 
 class LLMUnavailable(LLMError):
-    """Rate limited, connection failure, or upstream 5xx after SDK retries."""
+    """Rate limited, connection failure, or upstream 5xx after SDK retries.
+
+    Always post-egress (or indistinguishable from it): a throttle is a response,
+    and a connect/read timeout means the request was attempted.
+    """
 
 
 class LLMConfigError(LLMError):
-    """Bad model name or credentials."""
+    """Bad model name or credentials.
+
+    Raised both PRE-egress (pricing gate, bearer-token gate, botocore credential
+    chain) and POST-egress (Bedrock rejecting the request with AccessDenied /
+    UnrecognizedClient / Validation / ResourceNotFound). Each raise site passes
+    ``egressed=`` explicitly; the inherited default is the billable one.
+    """
 
 
 class LLMResponseError(LLMError):
-    """Response did not match the requested structure."""
+    """Response did not match the requested structure. Always post-egress —
+    there is no response to reject until one has been received."""
 
 
 @dataclass
@@ -231,7 +275,8 @@ def _resolve_pricing() -> tuple:
     override_output = settings.llm_price_per_mtok_output
     if (override_input is None) != (override_output is None):
         raise LLMConfigError(
-            "LLM_PRICE_PER_MTOK_INPUT and LLM_PRICE_PER_MTOK_OUTPUT must be set together"
+            "LLM_PRICE_PER_MTOK_INPUT and LLM_PRICE_PER_MTOK_OUTPUT must be set together",
+            egressed=False,
         )
     if override_input is not None:
         return override_input, override_output
@@ -245,7 +290,8 @@ def _resolve_pricing() -> tuple:
     if pricing is None:
         raise LLMConfigError(
             "no pricing entry for model %s — the cost gate cannot price it; "
-            "add it to _MODEL_PRICING or set LLM_PRICE_PER_MTOK_INPUT/OUTPUT" % model_id
+            "add it to _MODEL_PRICING or set LLM_PRICE_PER_MTOK_INPUT/OUTPUT" % model_id,
+            egressed=False,
         )
     return pricing
 
@@ -380,7 +426,8 @@ def _require_bearer_token() -> None:
     if not token or token.lower() in _PLACEHOLDER_BEARER_TOKENS:
         raise LLMConfigError(
             "AWS_BEARER_TOKEN_BEDROCK is not set to a real value — refusing to "
-            "fall back to ambient AWS credentials"
+            "fall back to ambient AWS credentials",
+            egressed=False,
         )
 
 
@@ -443,6 +490,10 @@ def _call(
         # Bad model, bad request shape, or auth/permission → config error;
         # throttling / capacity / 5xx (after botocore retries) → unavailable.
         if code in _CONFIG_ERROR_CODES or status in (401, 403, 404):
+            # POST-egress: a ClientError IS Bedrock's response, so the full
+            # request already crossed the vendor boundary and may be billable.
+            # Inherits egressed=True — do NOT mark this one local just because
+            # the remedy is a config change.
             raise LLMConfigError(
                 "model/auth error (code=%s status=%s)" % (code, status)
             ) from None
@@ -461,7 +512,8 @@ def _call(
         # (Codex review, PR #5 round 2). Must precede the BotoCoreError catch —
         # all three subclass it. Message names the exception type only.
         raise LLMConfigError(
-            "credential configuration error (%s)" % type(exc).__name__
+            "credential configuration error (%s)" % type(exc).__name__,
+            egressed=False,
         ) from None
     except BotoCoreError as exc:
         # Connect/read timeout or endpoint connection failure, after retries.

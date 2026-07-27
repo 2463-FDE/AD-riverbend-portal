@@ -34,7 +34,7 @@ matters — the VENDOR boundary — rather than at this service's edge:
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from config import settings
 
@@ -188,6 +188,34 @@ class VisitFacts(BaseModel):
     insurance_id: str | None = None
     last_eligibility: dict[str, Any] | None = None
 
+    @field_validator("insurance_id")
+    @classmethod
+    def _normalise_insurance_id(cls, value: str | None) -> str | None:
+        """Fold the stored id to upper case at the boundary (Codex PR #14 round 3).
+
+        The catalog is upper case and the recogniser now matches case-insensitively,
+        so `aetn1224` and `AETN1224` are the same subject. That equality has to hold
+        for the STORED id too: `_derive_intent` treats an id that differs from the
+        one on file as a contradiction and refuses to run a lookup, so a
+        case-only difference would strand a visit in "confirm which member ID"
+        forever. Normalising here rather than at each comparison means the value
+        the gateway persists, echoes back, and compares is one canonical form.
+
+        Non-ASCII is REJECTED, not folded. `.upper()` is not a canonicalisation
+        over Unicode (U+0130 and U+212A survive it), and a stored id is used
+        directly for a payer lookup on a recheck turn without passing back
+        through the recogniser — so an id that got in here by any route other
+        than `_extract_insurance_ids` could reach the payer as-is, where a 404
+        renders as a definitive denial. 422 at the boundary is the fail-closed
+        answer; the caller is the gateway, never a human, so nothing is echoed.
+        """
+        if not value:
+            return value
+        folded = value.upper()
+        if not folded.isascii():
+            raise ValueError("insurance_id must be ASCII")
+        return folded
+
 
 class VisitChatRequest(BaseModel):
     """A single chat turn. The ONE free-text surface in this service — see the
@@ -227,6 +255,14 @@ class VisitChatResponse(BaseModel):
     ``intent`` and ``status`` are echoed back precisely so the gateway can record
     a metadata-only turn (see VisitTurn) without ever handling the clerk's text
     again. Both are closed values this service derived, not client input.
+
+    ``llm_egress`` carries the spend accounting that used to be encoded in the
+    HTTP status alone (Codex PR #14 round 3). A turn can now succeed WITHOUT a
+    paid Bedrock call — a local config or budget refusal degrades to the
+    deterministic action list instead of throwing away a coverage verdict that
+    was already computed — so 200 no longer implies "billable". False tells the
+    gateway to refund the slot it reserved for this turn; the field is a boolean
+    about our own infrastructure and carries nothing about the patient.
     """
 
     reply: str
@@ -235,6 +271,18 @@ class VisitChatResponse(BaseModel):
     facts: VisitFacts
     eligibility: dict[str, Any] | None = None
     disclaimer: str
+    # Conservative default: an unset value must read as "we may have been
+    # billed", so a future field-drop over-counts toward the ceiling instead of
+    # silently refunding real spend.
+    llm_egress: bool = True
+    # "ok" | "degraded". Distinct from llm_egress, which is spend accounting:
+    # a post-egress failure is billable AND degraded, a local refusal is neither
+    # billable nor undegraded. Before this PR an LLM fault reached the operator
+    # as a 503; now it reaches them as a normal-looking 200, so the degradation
+    # needs a channel of its own or it is invisible — the green-dashboard /
+    # dead-service shape this repo has already been bitten by. The gateway
+    # forwards it, exactly as it forwards `visit_memory`.
+    assistant: str = "ok"
 
 
 def visit_chat_log_metadata(

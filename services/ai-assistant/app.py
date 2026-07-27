@@ -20,6 +20,7 @@ docstring for the full argument and the obligations it created.
 import json
 import re
 import secrets
+from typing import NamedTuple
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -317,12 +318,35 @@ def _build_insurance_id_re(prefixes: tuple[str, ...]) -> "re.Pattern[str] | None
     Each prefix is escaped because the catalog is operator input: an unescaped
     `.` or `|` would silently WIDEN the pattern (`A.C` matching `ABC1234`)
     instead of failing loudly.
+
+    IGNORECASE because the input is a human typing, not a machine field (Codex
+    PR #14 round 3). `config.py` upper-cases the catalog, so a case-sensitive
+    pattern made `aetn1224` invisible — the clerk gets asked for the id they
+    just supplied, and no lookup ever runs.
+
+    ASCII is mandatory alongside it, and is NOT a style choice. On `str`
+    patterns Python case-folds across the whole of Unicode, so bare IGNORECASE
+    genuinely widens this catalog — verified against the shipped prefixes:
+    `KAIſ1234` (U+017F LATIN SMALL LETTER LONG S) and `MEDı1234` (U+0131
+    DOTLESS I) match, and `KAIK1234` (KELVIN SIGN) and `MEDİ1234` (U+0130)
+    match while surviving `.upper()` as non-ASCII. Both directions break the
+    fail-closed property this catalog exists for: a homoglyph folds to a
+    DIFFERENT well-formed member id and gets looked up as though the clerk had
+    typed it, and a non-ASCII id goes to the payer verbatim, where a 404 renders
+    as a definitive "no active coverage" about a patient who has coverage. The
+    `re.ASCII` flag also confines `\\d` to 0-9, closing a pre-existing hole where
+    Arabic-Indic digits (`AETN١٢٣٤`) matched.
+
+    With both flags the recognised token set really is the shipped prefixes and
+    nothing else, case-folded. `_extract_insurance_ids` folds each match back to
+    upper case so only one canonical form is ever stored or compared.
     """
     if not prefixes:
         return None
     return re.compile(
         r"\b(?:%s)\d{3,9}\b"
-        % "|".join(re.escape(prefix) for prefix in sorted(prefixes, key=len, reverse=True))
+        % "|".join(re.escape(prefix) for prefix in sorted(prefixes, key=len, reverse=True)),
+        re.IGNORECASE | re.ASCII,
     )
 
 
@@ -371,13 +395,30 @@ def _extract_insurance_ids(message: str) -> list[str]:
     `_build_insurance_id_re`. Callers are protected from the state by
     `_require_member_id_catalog`; this branch is the belt to that braces, so no
     future caller can reach a "match anything" path.
+
+    Matches are folded to UPPER CASE before de-duplication, not after, because
+    the two rules downstream both key on distinctness: "AETN1224 — sorry,
+    aetn1224" is one id typed twice, and counting it as two candidates would
+    render the ambiguity question for a message that contains no ambiguity.
+
+    The non-ASCII reject is belt to `re.ASCII`'s braces. The flag confines the
+    `\\d` run and the word boundaries, but the PREFIX alternation is built from
+    operator-supplied catalog values, so a non-ASCII prefix in
+    `AI_MEMBER_ID_PREFIXES` would still match itself literally and could reach a
+    payer as a member id `.upper()` cannot canonicalise. Dropping it here keeps
+    "what can be looked up" ASCII regardless of how the catalog is configured —
+    a miss is safe, a wrong match is not.
     """
     if _INSURANCE_ID_RE is None:
         return []
     seen: list[str] = []
     for match in _INSURANCE_ID_RE.finditer(message or ""):
-        if match.group(0) not in seen:
-            seen.append(match.group(0))
+        candidate = match.group(0).upper()
+        if not candidate.isascii():
+            log.warning("visit-chat: dropped a non-ASCII member-id candidate")
+            continue
+        if candidate not in seen:
+            seen.append(candidate)
     return seen
 
 
@@ -492,24 +533,50 @@ def _select_reply_items(status: str, selection: list[str]) -> list[str]:
     return items
 
 
-def _reply_items(intent: VisitIntent, status: str, turn_count: int) -> list[str]:
+class _ReplyPlan(NamedTuple):
+    """What the action-selection step produced, plus the two facts about HOW.
+
+    ``llm_egress`` is spend accounting (did a request cross the vendor
+    boundary). ``degraded`` is service health (did the clerk get the model's
+    selection or the deterministic fallback). They are genuinely independent —
+    a post-egress failure is billable and degraded; a local refusal is neither
+    — so one boolean cannot carry both, and collapsing them is how a
+    misconfiguration becomes invisible.
+    """
+
+    items: list[str]
+    llm_egress: bool
+    degraded: bool
+
+
+def _reply_items(intent: VisitIntent, status: str, turn_count: int) -> _ReplyPlan:
     """Ask the model to choose follow-up actions; degrade deterministically.
 
-    Error mapping deliberately splits on EGRESS, matching the gateway's refund
-    rule (ADR 0007, ADR 0011 §7):
+    **No LLM failure of any kind fails this
+    turn** (Codex PR #14 round 3): action selection is the LAST and least
+    important step, and by the time it runs the payer lookup has already
+    happened and mutated the visit's facts. Raising here threw that work away —
+    the clerk lost a coverage verdict that had been computed and paid for, the
+    gateway never persisted the visit, and each retry re-ran a PHI-bearing payer
+    call for no user-visible value. Every branch below now renders the
+    deterministic default selection instead, so the only thing an LLM fault can
+    cost is the *quality* of the follow-up list.
 
-      * PRE-egress refusals (`LLMConfigError`, `LLMBudgetExceeded` — the caps are
-        enforced locally before any Bedrock call) raise 503, a status the gateway
-        REFUNDS, because no paid call happened.
-      * POST-egress failures (`LLMUnavailable`, `LLMResponseError`) do NOT fail the
-        turn. The coverage verdict was computed before this call and does not
-        depend on it, so the clerk still gets the answer they need with the
-        deterministic action list. Returning 200 keeps the spend charge, exactly as
-        the 502 /intake-instructions returns would — the accounting is unchanged,
-        only the user experience differs. This divergence is deliberate and is
-        recorded in ADR 0011 §7.
-      * anything else is not a proven pre-egress refusal, so it must not be
-        refunded: 500, keeping the charge.
+    What the branches still differ on is SPEND, which is why the flag exists.
+    The old mapping encoded that in the HTTP status because the gateway's refund
+    rule keys on it (ADR 0007); a turn that succeeds without egress cannot say
+    that with a status code, so it says it with ``llm_egress`` and the gateway
+    refunds on the boolean (ADR 0011 §7).
+
+    ONE catch, and the spend answer is read off the exception rather than
+    inferred from its type. Splitting by type here was wrong and shipped briefly
+    in this PR: `LLMConfigError` is raised both by the local pricing/token gates
+    AND by Bedrock's own `ClientError` rejection, so "config error" says nothing
+    about whether a request crossed the boundary. `llm_client.LLMError.egressed`
+    is set at each raise site, defaulting to True, so an unclassified or future
+    failure keeps the charge. `getattr` rather than attribute access because a
+    caller must not be broken by an exception raised from somewhere that predates
+    the attribute.
     """
     required = visit_templates.default_selection(status)
     allowed = visit_templates.allowed_selection(status)
@@ -519,20 +586,16 @@ def _reply_items(intent: VisitIntent, status: str, turn_count: int) -> list[str]
             output_model=VisitReplyPlan,
             system=_VISIT_SYSTEM_PROMPT,
         )
-    except llm_client.LLMConfigError as e:
-        log.error("visit-chat config error: %s", e)
-        raise HTTPException(status_code=503, detail="assistant is not configured")
-    except llm_client.LLMBudgetExceeded as e:
-        # Must precede the LLMError catch — LLMBudgetExceeded subclasses it.
-        log.error("visit-chat local budget refusal: %s", e)
-        raise HTTPException(status_code=503, detail="assistant is not configured")
-    except (llm_client.LLMUnavailable, llm_client.LLMResponseError) as e:
-        log.error("visit-chat degrading to deterministic reply (%s): %s", type(e).__name__, e)
-        return visit_templates.render(required)
     except llm_client.LLMError as e:
-        log.error("visit-chat llm error (%s): %s", type(e).__name__, e)
-        raise HTTPException(status_code=500, detail="assistant request failed")
-    return _select_reply_items(status, result.parsed.template_ids)
+        egressed = getattr(e, "egressed", True)
+        log.error(
+            "visit-chat degrading to deterministic reply (%s, egressed=%s): %s",
+            type(e).__name__,
+            egressed,
+            e,
+        )
+        return _ReplyPlan(visit_templates.render(required), egressed, True)
+    return _ReplyPlan(_select_reply_items(status, result.parsed.template_ids), True, False)
 
 
 @app.post(
@@ -582,9 +645,9 @@ def visit_chat(req: VisitChatRequest):
         json.dumps(visit_chat_log_metadata(intent, status, len(req.turns))),
     )
 
-    items = _reply_items(intent, status, len(req.turns))
+    plan = _reply_items(intent, status, len(req.turns))
     reply = "\n".join(
-        [visit_templates.verdict_line(status, verdict)] + [f"- {item}" for item in items]
+        [visit_templates.verdict_line(status, verdict)] + [f"- {item}" for item in plan.items]
     )
     # No lookup ran this turn (no id yet, or an ambiguous one), so this turn has
     # no eligibility result to report — even when the visit holds an earlier one.
@@ -599,4 +662,10 @@ def visit_chat(req: VisitChatRequest):
         facts=facts,
         eligibility=turn_verdict,
         disclaimer=_VISIT_DISCLAIMER,
+        # The turn's spend verdict, not the turn's outcome: False means nothing
+        # crossed the vendor boundary, so the gateway must give the reserved slot
+        # back (ADR 0011 §7).
+        llm_egress=plan.llm_egress,
+        # The turn's health, which the status code no longer carries.
+        assistant="degraded" if plan.degraded else "ok",
     )
