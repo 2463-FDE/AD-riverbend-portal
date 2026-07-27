@@ -73,6 +73,17 @@ git stash pop
 
 Report both results explicitly. "Test passes" alone is not verification here.
 
+**A whole-file stash proves less than it looks like once a round layers several
+fixes into one file** (measured on PR #14 r4). Stashing `app.py` reverts to
+`origin/main`, so a test can fail for a reason that has nothing to do with the
+fix it guards — or, worse, *pass*, because the behaviour it asserts also held
+before the feature that broke it existed. Two of that round's six tests were in
+that position. Where a fix is one line or one hunk, **restore that line
+specifically** (copy the file aside, edit it back to the pre-fix form, run the
+targeted test, restore the copy) and report the per-fix red/green pair. The
+useful question is not "does this test need the file" but "does this test
+discriminate the fix".
+
 ## 5. PHI/security diffs: dynamic check
 
 For anything touching a log path or redaction: `make up`, drive the real flow
@@ -259,6 +270,7 @@ Measurements so far:
 | PR #14 r3 fixes (2026-07-27) | `cavecrew-reviewer` + briefing pack | 30k | 1 | **0** — missed both highs below |
 | PR #14 r3 fixes (2026-07-27) | `general-purpose` + briefing pack | 105k | 13 | 4 (2 high), all real, all fixed |
 | PR #14 r3 security lens (2026-07-27) | `/security-review` + pack | 153k | 27 | 0 |
+| PR #14 r4 fixes (2026-07-27) | `general-purpose` + pack, BOTH lenses | 73k | 7 | 6 (2 high + 1 high pre-existing), all real, all fixed |
 
 Two things that table settles.
 
