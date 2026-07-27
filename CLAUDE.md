@@ -298,15 +298,33 @@ So the primary rule is about ownership:
   disagreement is a bug to fix immediately in whichever file is behind — do not just pick
   one and move on, which is precisely what failed here.
 
-And a precaution against the failure mode this *nearly* was — `.claude/` is tracked in git,
-so a process change committed to a feature branch does not exist on `main` or on the next
-branch:
+`.claude/` is tracked in git, so a process change committed to a feature branch does not
+exist on `main` or on the next branch. **Detect that; do not try to prevent it.**
 
-- **Process/tooling changes land on `main` promptly**, in their own `docs(process)` /
-  `chore(tooling)` commit, rather than sitting unmerged on a long-lived feature branch.
 - Starting a session on a feature branch, check for drift before relying on a skill:
-  `git diff main...HEAD -- .claude/`. (Checked 2026-07-27: `main` and this branch agree on
-  the reviewer guidance; the branch only *adds* the briefing-pack section.)
+  `git diff main...HEAD -- .claude/`. One command, and it is the whole control.
+- Process/tooling changes go in their **own** `docs(process)` / `chore(tooling)` commit,
+  then ride the PR like anything else. The drift window is the PR's lifetime, which the
+  check above covers.
+
+An earlier draft of this section required process commits to land on `main` *promptly*,
+ahead of the feature branch carrying them. That is removed deliberately, and re-adding it
+needs new evidence. It was written as a precaution against a drift incident that has never
+occurred — the 2026-07-27 failure above was duplication, and the drift example first cited
+to justify the rule turned out to be false on inspection (`main` already had the correct
+guidance). What the rule reliably produced was a cherry-pick-and-merge ritual around
+two-line edits. Measured 2026-07-27: five commits have ever touched `.claude/`, four of
+them pure tooling with no code mixed in, across 751 lines in 8 files. The hygiene problem
+the rule policed was not happening.
+
+Keep `.claude/` **tracked**, and resist gitignoring it when the bookkeeping feels tedious.
+This is a training engagement: the process is part of the deliverable, and `verify-stack`
+§6's measurements table — which agent found what, at what cost — is harder-won than most
+of the code. Untracked, it is invisible to CI and a fresh clone, unreviewable, and one
+`rm -rf` from gone. If branch-independence ever genuinely becomes worth engineering, the
+mature answer is a symlink into a sibling repo (the dotfile-manager pattern), which keeps
+history and review; `git update-index --skip-worktree` is not that answer and silently
+discards local edits on a pull conflict.
 
 ### 10.2 Delegating to subagents
 
