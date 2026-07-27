@@ -11,9 +11,23 @@ does not run on 3.8 at all (pre-existing). Everything below mirrors CI.
 ## 1. Unit suite (CI mirror)
 
 ```bash
-docker run --rm -v "$PWD":/repo -w /repo python:3.12 \
-  bash -c "pip install -q -r requirements-dev.txt && pytest -m 'not integration' -q"
+make test-docker
 ```
+
+Uses the `Dockerfile.test` image with the dev deps baked in, so pip does not
+re-resolve them per run (20.5s → 12s; a no-change rebuild is ~0.6s, and editing
+`requirements-dev.txt` reinstalls automatically). The bare
+`docker run ... python:3.12 bash -c "pip install -q -r requirements-dev.txt && pytest"`
+form still works and is what CI does — prefer the target.
+
+**While iterating, prefer the local `.venv` (~2s)** — `.venv/bin/python -m pytest
+tests/test_intake_breaker.py -q` — or a targeted container run,
+`make test-docker ARGS="tests/test_intake_breaker.py -q"` (~4s). The container is
+the authoritative gate (arm64 vs CI's amd64), so any "verified" claim comes from
+it; iteration does not need it. A 2026-07-26 audit measured 25 full-suite
+container runs against 14 pushes (~1.8/push — near the floor, since regression-proof
+needs ≥2 per new test) but only 2 `.venv` runs against 45 targeted container runs:
+the fast loop is the underused part, not the gate.
 
 Invariant (not a fixed count — the pass total grows as tests are added; it was
 50 on 2026-07-07, 261 by PR #11 / 2026-07-23): **exactly 1 xfailed + 4 deselected,
@@ -28,8 +42,13 @@ CI runs `python -c "import app"` per service with that service's requirements:
 
 ```bash
 docker run --rm -v "$PWD":/repo -w /repo/services/<service> python:3.12 \
-  bash -c "pip install -q -r requirements.txt && python -c 'import app'"
+  bash -c "pip install -q --disable-pip-version-check --root-user-action=ignore \
+             -r requirements.txt && python -c 'import app'"
 ```
+
+Per-service deps differ, so there is no baked image for this one; the extra pip
+flags only suppress the root/version notices that otherwise land in context on
+every run. (A shared pip-cache volume was measured and rejected: 8.7s → 7.6s.)
 
 Run for every service whose files the diff touches. ai-assistant imports
 keyless by design — needing `ANTHROPIC_API_KEY` at import time is a regression.
