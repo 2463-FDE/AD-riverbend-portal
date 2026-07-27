@@ -89,5 +89,6 @@ jobs:
         run: |
           cp .env.example .env
           cp .env.ai-proxy.example .env.ai-proxy
+          cp .env.redis.example .env.redis
       - name: Build images
         run: docker compose build

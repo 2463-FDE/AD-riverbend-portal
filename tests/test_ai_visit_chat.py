@@ -619,6 +619,80 @@ def test_no_optional_ids_are_offered_before_a_check_has_run(fake_llm, fake_eligi
     assert "member ID" in r.json()["reply"]
 
 
+# --- an EMPTY catalog recognises nothing (Codex PR #14 round 1) -------------
+# A closed catalog is only a safety control while it is closed. Joining zero
+# prefixes builds `\b(?:)\d{3,9}\b` — an empty alternation matching EVERY 3-9
+# digit token — so blanking the config silently restores the generic pattern the
+# catalog replaced, with DOB fragments, ZIPs and group numbers as payer lookups.
+# Empty must mean "recognise nothing", and it must be loud.
+_GENERIC_DIGIT_TOKENS = ["19850312", "94110", "4471", "123456789", "0042719"]
+
+
+@pytest.fixture()
+def blank_catalog(monkeypatch):
+    """Rebuild the recogniser as a fresh process would with the env var blank."""
+    monkeypatch.setenv("AI_MEMBER_ID_PREFIXES", "")
+    blank_config = load_module("services/ai-assistant/config.py", "vc_config_blank")
+    assert blank_config.settings.ai_member_id_prefixes == ()
+    pattern = app_mod._build_insurance_id_re(blank_config.settings.ai_member_id_prefixes)
+    monkeypatch.setattr(app_mod, "_INSURANCE_ID_RE", pattern)
+    return pattern
+
+
+def test_blank_prefix_config_compiles_no_pattern(blank_catalog):
+    assert blank_catalog is None
+
+
+@pytest.mark.parametrize("token", _GENERIC_DIGIT_TOKENS)
+def test_blank_prefix_config_recognises_no_generic_digits(blank_catalog, token):
+    assert app_mod._extract_insurance_ids(f"patient says {token}") == []
+
+
+@pytest.mark.parametrize("token", _GENERIC_DIGIT_TOKENS)
+def test_visit_chat_refuses_when_the_catalog_is_empty(
+    blank_catalog, fake_llm, fake_eligibility, token
+):
+    r = _post(f"check coverage for {token}")
+
+    assert r.status_code == 503
+    assert fake_eligibility == [], f"{token} must never reach a payer"
+    assert fake_llm == [], "a config refusal is pre-egress and must not spend budget"
+    assert token not in r.text, "the refusal must not echo the clerk's text"
+
+
+def test_an_unauthenticated_caller_learns_nothing_about_the_config(blank_catalog):
+    # The catalog check is ordered AFTER the auth dependency on purpose: a
+    # caller without the shared secret must get the same 401 whether or not the
+    # service is misconfigured. Reordering the dependencies list would flip this
+    # to 503 and leak config state to an unauthenticated caller.
+    r = client.post(
+        "/visit-chat",
+        json={"message": "check coverage for 19850312"},
+        headers={"X-Internal-Auth": "wrong-secret"},
+    )
+
+    assert r.status_code == 401
+
+
+def test_catalog_prefixes_are_escaped_not_interpreted_as_regex(monkeypatch):
+    # The catalog is operator input. An unescaped metacharacter WIDENS the
+    # pattern instead of failing loudly, which is the same wrong-subject failure
+    # arriving through a typo rather than a deletion.
+    monkeypatch.setattr(app_mod, "_INSURANCE_ID_RE", app_mod._build_insurance_id_re(("A.C",)))
+
+    assert app_mod._extract_insurance_ids("card says ABC1234") == []
+    assert app_mod._extract_insurance_ids("card says A.C1234") == ["A.C1234"]
+
+
+def test_the_shipped_default_catalog_is_not_empty():
+    # The fail-closed branch must be reachable only by an operator deleting the
+    # value — never the state a fresh `cp .env.example .env` deploy boots into
+    # (PR #5 round-5 lesson: test the default deploy state, not just the state
+    # you designed the guard for).
+    assert app_mod.settings.ai_member_id_prefixes
+    assert app_mod._build_insurance_id_re(app_mod.settings.ai_member_id_prefixes)
+
+
 # --- intent ordering --------------------------------------------------------
 def test_a_question_about_the_past_does_not_re_spend_a_payer_call(
     fake_llm, fake_eligibility

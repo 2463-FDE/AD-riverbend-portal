@@ -362,13 +362,22 @@ follow-up, not a claim of principle.
    boundary while D13 (no BAA) is open. Revisit when W8 lands a BAA and a real
    Safe-Harbor scrub; the upgrade is model-authored phrasing behind a grounding
    checker, with the verdict still server-rendered.
-2. **Redis is unhardened (flagged, not fixed here).** Port 6379 is published to
-   the host and no `requirepass` is set. Storing a member id there widens exposure
-   relative to sessions. Recommended precondition: drop the host port publish
-   (`expose` only) and/or set `requirepass`. Both are `docker-compose.yml` /
-   infra changes with a dev-convenience cost for every developer, so the
-   2026-07-26 decision is to keep PR-B scoped to the feature and land the
-   hardening separately. Tracked as **D3b** in `docs/debt-log.md`.
+2. **Redis hardening — CLOSED in this PR (2026-07-27), was "flagged, not fixed".**
+   The original decision (2026-07-26) was to keep PR-B feature-scoped and land the
+   hardening separately, accepting a member id at rest on a host-published,
+   passwordless store under the §3 mitigations. The adversarial review round 1 on
+   PR #14 called that the shipping blocker, and the engagement lead reversed the
+   scoping call: the precondition ships **with** the feature rather than after it.
+   What landed — `docker-compose.yml` drops the `6379:6379` publish for `expose`
+   and starts Redis with `--requirepass`, refusing to boot on an empty password;
+   the credential lives in a scoped `.env.redis` (redis + gateway only, the same
+   containment as `.env.ai-proxy`), generated per machine by `make up`; and
+   `security._redis()` refuses to connect when no credential (or a placeholder
+   one) is configured, so a deploy whose topology is not ours still cannot put
+   sessions or a member id on an open store. Residual, still **D3b** in
+   `docs/debt-log.md`: no TLS in transit, one shared credential rather than
+   per-consumer ACL users, no named volume (RDB snapshots stay container-local
+   and unencrypted), and no audit trail of reads.
 3. **Deterministic intent classification is shallow (accepted).** Keyword +
    pattern matching will miss unusual phrasings, degrading to the `other` intent,
    which asks a clarifying question. A gated `complete_structured` intent
@@ -438,7 +447,12 @@ follow-up, not a claim of principle.
 - **Human approval (CLAUDE.md §6/§7).** Decided with the engagement lead on
   2026-07-26: (a) **PHI at rest in Redis is approved** for `facts.insurance_id`
   under the §3 mitigations — the no-store fallback in Alternatives is not taken;
-  (b) the Redis hardening is **flagged, not bundled** (gap 2 / debt-log D3b);
+  (b) the Redis hardening is **flagged, not bundled** (gap 2 / debt-log D3b) —
+  **superseded 2026-07-27**: after adversarial round 1 named the unauthenticated
+  host-published store the blocker, the lead approved bundling the hardening into
+  this PR (no host port, `requirepass`, scoped credential, gateway-side
+  fail-closed guard). This is a §6 change to the session store, taken with
+  explicit approval; no other auth behaviour moved;
   (c) replies stay **catalog-rendered** — no free text to the vendor while D13 is
   open. Still to confirm at the PR approval gate: the new API contract, the
   `docs/phi-logging-policy.md` edit, ai-assistant's new PHI-bearing outbound

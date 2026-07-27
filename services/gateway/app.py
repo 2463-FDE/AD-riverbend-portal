@@ -28,6 +28,7 @@ from db import get_db
 from logging_config import configure
 from models import User
 from security import (
+    RedisUnauthenticated,
     VisitMemoryUnavailable,
     ai_cache_get,
     ai_cache_key,
@@ -35,6 +36,7 @@ from security import (
     ai_singleflight_acquire,
     ai_singleflight_release,
     check_ai_rate_limit,
+    check_redis_credentials,
     consume_ai_global_budget,
     create_session,
     destroy_session,
@@ -110,8 +112,39 @@ def require_session(authorization: Optional[str] = Header(default=None)) -> dict
     return sess
 
 
+@app.exception_handler(RedisUnauthenticated)
+async def redis_unauthenticated(request: Request, exc: RedisUnauthenticated):
+    """A refused session store is a 503, not a 500 (Codex PR #14 round 1).
+
+    security._redis() refuses to speak to an unauthenticated Redis, so every
+    session read/write raises. Unhandled, that surfaced as a 500 with a
+    traceback, while the identical class of failure on the DB side (login's
+    handler) already answers 503 "auth backend unavailable". Same shape here so
+    a misconfigured deploy reads as a dependency outage rather than a bug, and
+    the detail stays generic — the message names the env var, and that belongs
+    in the log, not in a client response.
+    """
+    log.error("session store refused: %s", exc)
+    return JSONResponse(status_code=503, content={"detail": "auth backend unavailable"})
+
+
 @app.get("/healthz")
 def healthz():
+    """Liveness + "can this instance serve at all".
+
+    The Redis credential check is deliberately included. It is a CONFIG probe,
+    not a connectivity probe: it builds the client lazily and issues no
+    command, so this costs nothing per poll and cannot flap on a Redis blip —
+    but it does turn the one failure the D3b guard exists to make loud (a
+    gateway refusing an unauthenticated store) into a RED container health
+    status. Before this, `docker compose ps` reported the whole stack healthy
+    while every login returned an error.
+    """
+    try:
+        check_redis_credentials()
+    except RedisUnauthenticated as e:
+        log.error("healthz: session store refused: %s", e)
+        raise HTTPException(status_code=503, detail="session store not configured")
     return {"status": "ok", "service": settings.service_name}
 
 

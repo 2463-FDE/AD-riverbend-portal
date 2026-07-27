@@ -8,6 +8,13 @@ class Settings:
     log_level = os.getenv("LOG_LEVEL", "INFO")
 
     redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    # Redis auth (docs/debt-log.md D3b). Kept OUT of REDIS_URL so there is one
+    # source of truth for the credential: compose loads it from the scoped
+    # .env.redis into both redis and this service, and security._redis() passes
+    # it to the client. Empty (or a placeholder) means the store is
+    # unauthenticated, which security._redis() refuses to connect to — sessions
+    # and visit memory are not allowed onto an open Redis.
+    redis_password = os.getenv("REDIS_PASSWORD", "")
 
     db_host = os.getenv("DB_HOST", "postgres")
     db_port = os.getenv("DB_PORT", "5432")

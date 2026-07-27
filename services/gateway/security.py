@@ -14,6 +14,7 @@ import json
 import os
 import time
 import uuid
+from urllib.parse import urlparse
 
 import redis as redis_lib
 
@@ -43,12 +44,82 @@ def verify_password(password: str, encoded: str) -> bool:
 
 _redis_client = None
 
+# Same sentinel class the AI guards use (app._PLACEHOLDER_SECRETS): a value that
+# survives a copied template must count as ABSENT, or the default deploy state
+# walks past the guard (PR #5 round-5 lesson). "redis" and "password" are here
+# because they are what an unauthenticated instance gets "secured" with first.
+_PLACEHOLDER_REDIS_PASSWORDS = frozenset(
+    {"changeme", "change-me", "placeholder", "password", "redis", "secret", "todo", "xxx"}
+)
+
+
+class RedisUnauthenticated(RuntimeError):
+    """Raised when the configured Redis has no usable credential."""
+
+
+def _redis_credential() -> str:
+    """The credential to authenticate with, from REDIS_PASSWORD or REDIS_URL.
+
+    Both are accepted because an operator can legitimately deploy either way,
+    but the compose topology uses REDIS_PASSWORD (scoped .env.redis) so the
+    credential is not duplicated inside a URL that also ships in .env.example.
+
+    Returned VERBATIM, never stripped: the server is started with
+    ``--requirepass "$REDIS_PASSWORD"`` from the same env file, and env files
+    preserve trailing whitespace. Stripping here would make the gateway
+    authenticate with a different string than the one Redis was configured
+    with — every request failing AUTH against a server whose own healthcheck,
+    using the unstripped value, reports green. Whitespace is stripped only for
+    the "is this actually configured" TEST below.
+    """
+    password = settings.redis_password or ""
+    if password.strip():
+        return password
+    return urlparse(settings.redis_url).password or ""
+
 
 def _redis():
+    """The shared Redis client, refusing an unauthenticated store.
+
+    This is a fail-closed guard, not a connectivity check (Codex PR #14 round
+    1, docs/debt-log.md D3b). Redis holds session tokens — which never expire
+    (D10) — and, since ADR 0011, visit memory: a payer member id plus a
+    coverage verdict. Speaking to a passwordless instance is how that becomes
+    readable by anything that can reach the port, with no application audit
+    trail of the read, so a missing credential must stop the gateway rather
+    than silently downgrade to open access. The compose topology no longer
+    publishes the port either; this is the layer behind it, for a deploy whose
+    topology is not ours.
+
+    The raise propagates: callers of the session/quota/cache helpers do not
+    swallow it into a success, and the visit-memory helpers that DO swallow
+    failures are best-effort by design — a misconfigured deploy fails at login
+    long before it reaches them.
+    """
     global _redis_client
     if _redis_client is None:
-        _redis_client = redis_lib.from_url(settings.redis_url, decode_responses=True)
+        password = _redis_credential()
+        probe = password.strip().lower()
+        if not probe or probe in _PLACEHOLDER_REDIS_PASSWORDS:
+            raise RedisUnauthenticated(
+                "REDIS_PASSWORD is unset or a placeholder — refusing to use an "
+                "unauthenticated Redis for sessions and visit memory "
+                "(docs/debt-log.md D3b)"
+            )
+        _redis_client = redis_lib.from_url(
+            settings.redis_url, decode_responses=True, password=password
+        )
     return _redis_client
+
+
+def check_redis_credentials() -> None:
+    """Raise RedisUnauthenticated unless a usable credential is configured.
+
+    The credential check without a command: lazy client construction issues no
+    I/O, so /healthz can use this as a CONFIG probe that cannot flap on a Redis
+    blip while still turning a refused store into a red container health status.
+    """
+    _redis()
 
 
 def create_session(username: str, role: str) -> str:
@@ -279,6 +350,12 @@ def ai_cache_get(key: str):
     the cache, is the authoritative guard)."""
     try:
         raw = _redis().get(key)
+    except RedisUnauthenticated:
+        # A configuration refusal is NOT the transient fault this swallow exists
+        # for. Degrading to "cache miss" here would let a gateway pointed at an
+        # unauthenticated store carry on and make a paid call; the guard has to
+        # propagate. Same re-raise precedes every catch-all below.
+        raise
     except Exception:
         return None
     if raw is None:
@@ -297,6 +374,8 @@ def ai_cache_set(key: str, value, ttl_seconds: int) -> None:
         return
     try:
         _redis().set(key, json.dumps(value), ex=ttl_seconds)
+    except RedisUnauthenticated:
+        raise
     except Exception:
         pass
 
@@ -353,6 +432,8 @@ def ai_singleflight_acquire(cache_key: str, lock_ttl_seconds: int) -> str | None
     try:
         got = _redis().set(_flight_key(cache_key), token, nx=True, ex=max(1, lock_ttl_seconds))
         return token if got else None
+    except RedisUnauthenticated:
+        raise
     except Exception:
         return token
 
@@ -370,6 +451,8 @@ def ai_singleflight_release(cache_key: str, token: str | None) -> None:
         return
     try:
         _redis().eval(_SINGLEFLIGHT_RELEASE_LUA, 1, _flight_key(cache_key), token)
+    except RedisUnauthenticated:
+        raise
     except Exception:
         pass
 
@@ -384,10 +467,12 @@ def ai_singleflight_release(cache_key: str, token: str | None) -> None:
 # is written to bound exposure: opaque keys, an owner check, a TTL on every
 # write, a hard cap on transcript size, and no identifier in a key or a log.
 #
-# Redis itself is NOT hardened in this deployment (host-published 6379, no
-# requirepass) — tracked as debt-log D3b and the recommended precondition for
-# this feature. These helpers do not paper over that; they minimise what an
-# exposure would yield.
+# Redis is compose-internal and password-protected as of PR #14 (debt-log D3b:
+# no host publish, `--requirepass`, scoped credential, and the `_redis()`
+# refusal above). Residual exposure is still real — no TLS, one shared
+# credential rather than per-consumer ACL users, no audit trail of reads — so
+# these helpers still minimise what an exposure would yield rather than assume
+# the store is safe.
 
 
 class VisitMemoryUnavailable(Exception):
@@ -433,6 +518,8 @@ def visit_memory_get(visit_id: str, owner: str) -> dict | None:
     """
     try:
         raw = _redis().get(_visit_key(visit_id))
+    except RedisUnauthenticated:
+        raise
     except Exception as e:
         raise VisitMemoryUnavailable(type(e).__name__) from None
     if raw is None:
@@ -488,6 +575,8 @@ def visit_memory_save(
     }
     try:
         _redis().set(_visit_key(visit_id), json.dumps(record, default=str), ex=ttl_seconds)
+    except RedisUnauthenticated:
+        raise
     except Exception:
         pass
 
@@ -512,6 +601,8 @@ def visit_lock_acquire(visit_id: str, lock_ttl_seconds: int) -> str | None:
             _visit_lock_key(visit_id), token, nx=True, ex=max(1, lock_ttl_seconds)
         )
         return token if got else None
+    except RedisUnauthenticated:
+        raise
     except Exception:
         return token
 
@@ -528,5 +619,7 @@ def visit_lock_release(visit_id: str, token: str | None) -> None:
         return
     try:
         _redis().eval(_SINGLEFLIGHT_RELEASE_LUA, 1, _visit_lock_key(visit_id), token)
+    except RedisUnauthenticated:
+        raise
     except Exception:
         pass

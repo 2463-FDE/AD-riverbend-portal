@@ -128,18 +128,37 @@
   (45 CFR 164.400+). Default RDB snapshots also write that state to the
   container filesystem unencrypted.
 - **Ticket:** — (to file)
-- **Status:** OPEN, flagged not fixed. The engagement decision (2026-07-26) is
-  to keep PR-B scoped to the feature and land the hardening separately:
-  drop the host port publish (`expose` only) and/or set `requirepass` with
-  credentials in `REDIS_URL`. Both are infra changes that cost local
-  `redis-cli` convenience for every developer, so they need an ops call, and
-  hardening is the **recommended precondition** for ADR 0011's PHI-at-rest
-  decision (ADR 0011 deferred gap 2). Mitigations shipping with ADR 0011
-  meanwhile: opaque `visit:{uuid4}` keys, a 1800s sliding TTL, session-owner
-  binding, a **metadata-only turn log** (no clerk text is stored at all — the
-  earlier draft said "redacted transcript", which was withdrawn because pattern
-  redaction cannot mask a typed patient name), and the member id never appearing
-  in a key or a log line.
+- **Status:** **MOSTLY CLOSED (2026-07-27, PR #14 round 1).** The 2026-07-26
+  decision was to land the hardening separately from ADR 0011; the adversarial
+  review named the unauthenticated store the shipping blocker and the engagement
+  lead reversed that call, so the precondition shipped with the feature. What
+  landed:
+  - `docker-compose.yml`: the `6379:6379` host publish is gone (`expose` only),
+    so the store is reachable only on the compose network;
+  - Redis starts with `--requirepass` and **refuses to boot** on an empty
+    password (guard inside the container command — a `${REDIS_PASSWORD:?}`
+    interpolation would fail `docker compose build` in CI, which seeds env files
+    from deliberately empty templates), and its healthcheck authenticates;
+  - the credential lives in a **scoped `.env.redis`** loaded by redis + gateway
+    only — the `.env.ai-proxy` containment pattern, because the shared `.env`
+    goes to every container — and `make up` generates a random one per machine;
+  - `services/gateway/security.py::_redis()` **refuses to connect** when no
+    credential (or a known placeholder) is configured, so a deploy whose
+    topology is not ours cannot put sessions or a member id on an open store;
+  - guarded by `tests/test_compose_topology.py` (no host port, requirepass,
+    empty-password refusal, authenticated healthcheck, credential scoping, empty
+    template, CI seeds every env_file) and `tests/test_gateway_redis_auth.py`
+    (placeholder/whitespace/URL-embedded credentials, no cached client after a
+    refusal, session + visit-memory writes cannot reach an open store).
+- **Residual (still open):** no TLS in transit; one shared credential instead of
+  per-consumer Redis ACL users; no named volume, so default RDB snapshots stay
+  container-local and unencrypted; still no audit trail of reads; and rotation is
+  manual (delete `.env.redis`, `make down && make up` — existing sessions drop).
+  ADR 0011's own mitigations remain in force: opaque `visit:{uuid4}` keys, a
+  1800s sliding TTL, session-owner binding, a **metadata-only turn log** (no
+  clerk text is stored at all — the earlier draft said "redacted transcript",
+  which was withdrawn because pattern redaction cannot mask a typed patient
+  name), and the member id never appearing in a key or a log line.
 
 ### D12 — ROI disclosures without authorization
 - **Location:** `services/roi-service/app.py:90,104,146,148`

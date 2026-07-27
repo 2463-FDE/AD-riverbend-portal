@@ -150,6 +150,14 @@ class Settings:
     # output. Unknown payers are an ops change (add the prefix here), which is the
     # correct failure direction: an unrecognised token asks the clerk instead of
     # guessing at the payer's expense.
+    #
+    # An EMPTY catalog (`AI_MEMBER_ID_PREFIXES=`) is not clamped back to the
+    # defaults and is not tolerated: app.py compiles no pattern for it, so
+    # nothing is recognised, and /visit-chat refuses with 503 rather than run a
+    # recogniser that matches every 3-9 digit token (Codex PR #14 round 1). The
+    # clamp idiom used by the numeric knobs above does not transfer — there is no
+    # "safest value" to clamp a catalog to, only "no catalog", and that state has
+    # to be loud.
     ai_member_id_prefixes = tuple(
         prefix.strip().upper()
         for prefix in os.getenv(

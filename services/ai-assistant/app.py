@@ -299,10 +299,49 @@ _VISIT_DISCLAIMER = (
 # workstream exists to prevent. A MISS is safe (the reply asks for the id); a
 # WRONG MATCH is not, so the pattern only recognises ids it can attribute to a
 # known payer. Longest-first alternation so AETNA1224 is not truncated to AETN.
-_INSURANCE_ID_RE = re.compile(
-    r"\b(?:%s)\d{3,9}\b"
-    % "|".join(sorted(settings.ai_member_id_prefixes, key=len, reverse=True))
-)
+def _build_insurance_id_re(prefixes: tuple[str, ...]) -> "re.Pattern[str] | None":
+    """Compile the catalog into a pattern, or return None for an EMPTY catalog.
+
+    An empty catalog must mean "recognise nothing", never "recognise
+    everything" (Codex PR #14 round 1). Joining zero prefixes yields
+    ``\\b(?:)\\d{3,9}\\b`` — an empty alternation that matches ANY 3-9 digit
+    token, so a DOB fragment, a ZIP, or a group number becomes the subject of a
+    payer lookup, and a payer 404 renders that as a definitive "NO ACTIVE
+    COVERAGE". The catalog's whole reason to exist is defeated by deleting its
+    config value, which is exactly the state `AI_MEMBER_ID_PREFIXES=` leaves
+    behind. None is the fail-closed direction: a MISS is safe, a WRONG MATCH is
+    not. `_require_member_id_catalog` turns that state into a loud 503 so the
+    misconfiguration surfaces as an outage rather than an endless "give me the
+    member ID" loop.
+
+    Each prefix is escaped because the catalog is operator input: an unescaped
+    `.` or `|` would silently WIDEN the pattern (`A.C` matching `ABC1234`)
+    instead of failing loudly.
+    """
+    if not prefixes:
+        return None
+    return re.compile(
+        r"\b(?:%s)\d{3,9}\b"
+        % "|".join(re.escape(prefix) for prefix in sorted(prefixes, key=len, reverse=True))
+    )
+
+
+_INSURANCE_ID_RE = _build_insurance_id_re(settings.ai_member_id_prefixes)
+
+
+def _require_member_id_catalog() -> None:
+    """Refuse /visit-chat when the member-id catalog is empty.
+
+    Fail-closed on configuration, the same shape as `_require_internal_auth`:
+    with no catalog the turn can never recognise an id, so the endpoint cannot
+    do the one job it exists for. 503 (and not a silent degrade) makes the
+    misconfiguration visible, and 503 is the pre-egress status the gateway
+    REFUNDS — a config mistake must not spend the LLM budget. Ordered after the
+    auth dependency so an unauthenticated caller learns nothing about config.
+    """
+    if _INSURANCE_ID_RE is None:
+        log.error("/visit-chat refused: AI_MEMBER_ID_PREFIXES is empty")
+        raise HTTPException(status_code=503, detail="assistant is not configured")
 
 # Deterministic intent keywords. Lowercased substring checks, not an LLM call:
 # the message is PHI-bearing free text and must not reach the vendor while D13
@@ -327,7 +366,14 @@ def _extract_insurance_ids(message: str) -> list[str]:
     group or prior-auth number becomes the subject of a coverage verdict. The
     caller treats more than one candidate as ambiguity to resolve with the human,
     never as a guess to act on.
+
+    An empty catalog (no compiled pattern) recognises nothing — see
+    `_build_insurance_id_re`. Callers are protected from the state by
+    `_require_member_id_catalog`; this branch is the belt to that braces, so no
+    future caller can reach a "match anything" path.
     """
+    if _INSURANCE_ID_RE is None:
+        return []
     seen: list[str] = []
     for match in _INSURANCE_ID_RE.finditer(message or ""):
         if match.group(0) not in seen:
@@ -492,7 +538,7 @@ def _reply_items(intent: VisitIntent, status: str, turn_count: int) -> list[str]
 @app.post(
     "/visit-chat",
     response_model=VisitChatResponse,
-    dependencies=[Depends(_require_internal_auth)],
+    dependencies=[Depends(_require_internal_auth), Depends(_require_member_id_catalog)],
 )
 def visit_chat(req: VisitChatRequest):
     """One turn of the front-desk eligibility conversation.

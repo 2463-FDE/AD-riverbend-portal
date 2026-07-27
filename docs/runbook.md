@@ -78,6 +78,26 @@ Duplicate-patient problem: self-service intake created multiple charts for one
 person (no match key), and inbound HL7 AL1/RXA segments are dropped by the
 parser. Reconcile charts manually; do not assume one chart is complete.
 
+### Redis: "refusing to start an unauthenticated Redis" / gateway login 500s
+Redis now requires a password and is no longer published on the host
+(`docs/debt-log.md` D3b). The credential lives in `.env.redis` (gitignored,
+loaded by the redis and gateway containers only); `make up` generates a random
+one on first run.
+
+```bash
+# the container refuses to boot with an empty REDIS_PASSWORD — check the file
+grep REDIS_PASSWORD .env.redis
+# regenerate it (drops every session: everyone is logged out)
+rm .env.redis && make down && make up
+# redis-cli is now inside the network, and needs the password
+docker compose exec redis sh -c 'redis-cli -a "$REDIS_PASSWORD" ping'
+```
+
+A gateway that logs `REDIS_PASSWORD is unset or a placeholder` is refusing to
+put sessions and visit memory on an open store — that is the guard working, not
+a Redis outage. Fix the credential; do not work around it by pointing
+`REDIS_URL` at an unauthenticated instance.
+
 ### DB connection errors after a restart
 Postgres healthcheck gates the app services, but if you `down -v` you wipe the
 volume and lose data; next `up` re-seeds from scratch.
