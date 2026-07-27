@@ -57,8 +57,10 @@ fix was chosen or what was already checked, since inheriting this thread's
 assumptions is exactly what destroys the pass's value. Round 2 onward, the pack
 is nearly free to rebuild: it is a re-dump of context this thread already holds.
 
-The same pack feeds `/security-review` when a round touches auth/PHI/ROI. Build
-it once per round, use it for both lenses.
+The same pack feeds `/security-review` when a round earns it — see `verify-stack`
+§6 for the trigger rule (it is NOT every round) and for the commit-first gotcha
+that silently narrows what that command reviews. Build the pack once per round
+and use it for whichever lenses run.
 
 ## 5. Single approval gate, then commit + push + reply
 

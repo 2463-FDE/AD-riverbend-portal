@@ -190,11 +190,59 @@ Then constrain the search, not the reasoning:
   severity, each with a full multi-step failure trace. The dropped
   `cavecrew-reviewer` failed because one-line output is a reasoning constraint in
   disguise (see above); a count cap is not.
-- **Build the pack once, feed it to both passes.** This step and
+- **Build the pack once, feed it to whichever lenses run.** This step and
   `/security-review` need the same geography and differ only in lens, so the
   discovery cost should be paid once. If the diff is small (≲3 files in a single
   service), a single agent carrying both trigger lists is fine — one prelude, one
   exploration, two lenses. Keep them separate above that size.
+
+### When the security lens is worth its own pass
+
+**Not every round.** The two lenses overlap heavily *in this repo*, because the
+security surface here largely IS the correctness surface — PHI handling is data-
+flow correctness, and the adversarial pass traces data flow anyway. Measured
+twice now (see the table below): on PR #14 the security pass has produced **zero
+unique findings across two runs**, and on the pre-push pass for `84117fd` its
+top candidate turned out to be the adversarial pass's ship-blocker seen from
+another angle. Meanwhile the adversarial pass's `re.IGNORECASE` Unicode finding
+in round 3 was, in substance, a PHI/patient-safety finding — the security-shaped
+defect was caught by the correctness lens, unprompted.
+
+So run `/security-review` when the diff opens a **new surface**, not when it
+changes behaviour on an existing one. New surface means any of:
+
+- a new **egress** (a new outbound call, a new destination, a new field added to
+  an existing outbound payload);
+- a new **persistence sink**, or a new field written to an existing one;
+- a new **auth/authz decision point**, or a change to an existing one;
+- a new **externally reachable route**, or a route changing its auth posture;
+- a new **parser of untrusted input**, or a new credential/secret path.
+
+PR #14 rounds 1–2 hit several of these (Redis credentials, a public `/healthz`
+doing I/O, two new endpoints) and the pass was justified. Round 3 hit none — it
+changed control flow, a regex flag, and two response fields on surfaces that
+already existed — and returned zero, predictably. When you skip it, **say so in
+the approval gate and name which trigger was absent**, so skipping stays a
+judgement on record rather than a quiet omission.
+
+CLAUDE.md §5's "run it on auth/PHI/ROI diffs before a PR" still holds for
+**opening** a PR. This rule is about the per-round loop after that.
+
+### ⚠ `/security-review` builds its diff from COMMITTED state only
+
+Its `DIFF CONTENT` is `origin/main...HEAD`. Working-tree changes are **absent
+from the diff it hands the reviewer**, even though the `GIT STATUS` block it
+prints lists them as modified — which reads as if they were included. Verified
+on PR #14 round 3: the artifact ended at the branch tip and contained zero
+occurrences of `llm_egress`, `re.ASCII`, or `_assistant_health`, i.e. none of
+the round's actual work. The pass came back clean on code it had never seen. It
+was saved only by the reviewer independently noticing the mismatch and reading
+the working tree instead — luck, not design.
+
+`/security-review` is a built-in command, so this cannot be fixed in-repo.
+**Commit first, then invoke it.** If you must run it on uncommitted work, state
+in the sub-agent prompt that the artifact is stale and that the working tree is
+authoritative.
 
 **Record the cost.** After the pass, note the agent's token total and its
 findings count here, the way the 78k/0-findings `cavecrew-reviewer` figure above
@@ -208,6 +256,25 @@ Measurements so far:
 |-----|-------|------|-----------|----------|
 | PR #14 r5 diff (2026-07-25) | `cavecrew-reviewer`, no pack | 78k | — | 0 (all real ones missed) |
 | PR #14 r2 fixes (2026-07-27) | `general-purpose` + briefing pack | 72k | 12 | 6, all real, all fixed |
+| PR #14 r3 fixes (2026-07-27) | `cavecrew-reviewer` + briefing pack | 30k | 1 | **0** — missed both highs below |
+| PR #14 r3 fixes (2026-07-27) | `general-purpose` + briefing pack | 105k | 13 | 4 (2 high), all real, all fixed |
+| PR #14 r3 security lens (2026-07-27) | `/security-review` + pack | 153k | 27 | 0 |
+
+Two things that table settles.
+
+**`cavecrew-reviewer` is retired here for good.** Second run, second zero — and
+this time it had the same briefing pack the `general-purpose` run had, on the
+same diff, so the pack is not what separates them. It cost 30k to conclude "diff
+is sound" about code containing a refund path that would have let a rotated
+Bedrock key escape the tenant spend ceiling. Cheap and wrong is the worst cell
+in the matrix; do not re-litigate this on the grounds that it is cheap.
+
+**The adversarial pass earns its 105k; the security pass has not yet earned
+its 153k.** Round 3's two highs were both in code the main thread had just
+written and self-reviewed — one of them a fix that was wrong in the unsafe
+direction, which is exactly the blind spot an isolated reviewer exists to catch
+and exactly what self-review cannot. Keep it every round. Gate the security lens
+on the new-surface rule above.
 
 The pack run read 9 files in 12 calls with **zero** orientation greps — the
 budget went into tracing rather than searching, and it found a class of defect
