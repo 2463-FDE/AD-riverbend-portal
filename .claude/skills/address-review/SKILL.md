@@ -47,6 +47,19 @@ front-loads what the bot would catch next round). Do not push on red or on
 "probably fine". The adversarial pass is the lever that shrinks review rounds —
 run it every round, not just the first.
 
+Every round means the reviewer agent's cost is paid repeatedly, so brief it the
+way `/verify-stack` §6 specifies: hand it the **briefing pack** (the inline
+diff, the touched-file inventory, the `file:line` call-site map, what each
+changed branch returns and what its callers do with that, and the tests already
+covering the surface), forbid orientation greps, and cap the finding count
+rather than the finding length. **Facts, not verdicts** — never include why the
+fix was chosen or what was already checked, since inheriting this thread's
+assumptions is exactly what destroys the pass's value. Round 2 onward, the pack
+is nearly free to rebuild: it is a re-dump of context this thread already holds.
+
+The same pack feeds `/security-review` when a round touches auth/PHI/ROI. Build
+it once per round, use it for both lenses.
+
 ## 5. Single approval gate, then commit + push + reply
 
 STOP after verification. Present ONE gate (superseded the old three-checkpoint

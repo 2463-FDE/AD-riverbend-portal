@@ -105,7 +105,9 @@ any of it by pattern-matching on the word "verify."
 
 **When:** any diff touching logic, a response/API contract, concurrency, a
 timeout/retry budget, or a flow that spans layers (frontend BFF → gateway →
-service). Skip for pure docs/comments/config-value-only diffs.
+service). Skip for pure docs/comments/config-value-only diffs, and for
+test-only diffs — step 4's stash-proof is deterministic evidence that the test
+discriminates, which is the whole claim a test-only diff makes.
 
 **How:** spawn a reviewer agent on the branch diff (`git diff origin/main...`),
 prompted to attack like the adversarial bot — NOT a rehash of `/security-review`
@@ -140,10 +142,80 @@ compressed-output tradeoff also buys nothing here: context sits near 20% of a
 1M window. It stays in the roster for ad-hoc "review my working diff" during
 development; it is not a pre-push gate.
 
-Give the agent the diff, the trigger list above, and enough context to trace a
-failure end-to-end (what the service under test returns, and what its callers
-do with it). Ask it to say plainly when a section is sound — an agent that must
-produce findings will invent them.
+Ask it to say plainly when a section is sound — an agent that must produce
+findings will invent them.
+
+### The briefing pack (how to keep this pass cheap without weakening it)
+
+A subagent starts from an empty context: it inherits none of this thread's
+conversation and none of the files already read here. It does inherit the fixed
+prelude (system prompt, tool schemas, and the ~20KB CLAUDE.md chain, re-paid per
+spawn). The prelude is the small, one-time part. The expensive part is
+*rediscovery* — a reviewer groping for where things live runs many read/grep
+turns, and each turn re-pays its whole accumulated context as cache read
+([[session-length-dominates-token-cost]]).
+
+Separate the two things that get conflated here:
+
+- **The value is independent judgment** — a reviewer that never saw the reasoning
+  which produced the diff cannot inherit that reasoning's assumptions.
+- **The cost is independent cartography** — the reviewer not knowing where
+  anything is.
+
+Only the second is worth cutting. So hand the agent the geography and the raw
+facts, and withhold every conclusion. **Facts, not verdicts.** Verdicts are what
+contaminate isolation; a call-site map does not.
+
+Assemble the pack from what this thread already holds (so it costs output tokens
+once, not a multiplied read loop in the agent):
+
+- the full `git diff origin/main...` output, inline and verbatim
+- the inventory of touched files
+- a call-site map: who calls each changed function, as `file:line`
+- contract facts: what the changed code returns on each branch, and what its
+  callers do with each of those returns
+- the tests that already cover this surface, by name
+
+Deliberately excluded: why the design was chosen, what was considered and
+rejected, and any "I already checked X, it's fine." Those are the assumptions
+the pass exists to test.
+
+Then constrain the search, not the reasoning:
+
+- **No orientation greps.** State in the prompt that the geography in the pack is
+  authoritative, and that a file may be read only to test a *named* failure
+  hypothesis — hypothesis first, then the read. This converts an unbounded sweep
+  into targeted tracing.
+- **Cap the number of findings, never their length.** Ask for the top findings by
+  severity, each with a full multi-step failure trace. The dropped
+  `cavecrew-reviewer` failed because one-line output is a reasoning constraint in
+  disguise (see above); a count cap is not.
+- **Build the pack once, feed it to both passes.** This step and
+  `/security-review` need the same geography and differ only in lens, so the
+  discovery cost should be paid once. If the diff is small (≲3 files in a single
+  service), a single agent carrying both trigger lists is fine — one prelude, one
+  exploration, two lenses. Keep them separate above that size.
+
+**Record the cost.** After the pass, note the agent's token total and its
+findings count here, the way the 78k/0-findings `cavecrew-reviewer` figure above
+was recorded — that number is what retires an approach. Subagent transcripts do
+not appear in `~/.claude/projects/<project>/*.jsonl` (no `isSidechain` rows), so
+take the number from the run's own reporting, not from log archaeology.
+
+Measurements so far:
+
+| run | agent | cost | tool calls | findings |
+|-----|-------|------|-----------|----------|
+| PR #14 r5 diff (2026-07-25) | `cavecrew-reviewer`, no pack | 78k | — | 0 (all real ones missed) |
+| PR #14 r2 fixes (2026-07-27) | `general-purpose` + briefing pack | 72k | 12 | 6, all real, all fixed |
+
+The pack run read 9 files in 12 calls with **zero** orientation greps — the
+budget went into tracing rather than searching, and it found a class of defect
+self-review had not: a per-operation timeout being reasoned about as if it were
+a per-probe timeout. Cost is roughly flat versus the no-pack baseline; what
+changed is what the tokens bought. Treat 70–80k as the expected price of this
+step on a ~35KB diff, and the *orientation-call count* (target: 0) as the number
+to watch, since it does not drift with diff size.
 
 Triage findings, fix the real ones **with regression-proven tests** (step 4),
 re-run the suite, then present the approval gate.
