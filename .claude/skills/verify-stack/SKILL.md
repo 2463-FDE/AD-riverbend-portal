@@ -84,6 +84,20 @@ targeted test, restore the copy) and report the per-fix red/green pair. The
 useful question is not "does this test need the file" but "does this test
 discriminate the fix".
 
+**Two layers, once the adversarial pass finds defects in your own fix.** From
+PR #14 r6 on: layer A reverts to the branch tip (proves the tests need the
+round's work at all), layer B reverts **your own first cut** — the version you
+had before the pre-push pass — leaving the second-cut changes out. Only layer B
+pins what that pass found, and it is the layer that catches a "fix" whose test
+would have passed against the flawed first attempt. Where the change is a
+declared bound rather than a branch, neither layer discriminates it: widen the
+bound (mutation) and confirm the at-limit case fails. On r6, layer A red 15/16,
+layer B red 8, and the mutation red 2 — three different questions, three
+different runs.
+
+A test that stays green in *every* layer is not a safety net, it is decoration:
+delete it, or make it discriminate. One did on r6 and was deleted.
+
 ## 5. PHI/security diffs: dynamic check
 
 For anything touching a log path or redaction: `make up`, drive the real flow
@@ -138,7 +152,10 @@ prompted to attack like the adversarial bot — NOT a rehash of `/security-revie
 
 **Agent: one `general-purpose` pass. Cap at one — do not fan out.** The working
 model reaches for subagents readily; a second reviewer on the same diff is
-duplicated cost, not coverage.
+duplicated cost, not coverage. A pass that dies mid-run (the r6 first attempt
+returned "Agent terminated early due to an API error") yields **nothing** — its
+partial output is not a review. Re-run it; that is a retry, not a fan-out, and
+the pack makes the retry cheap because it is already written.
 
 Do **not** use `cavecrew-reviewer` here (dropped 2026-07-25). Its contract is
 one line per finding — `path:line: severity: problem. fix.` — which is a
@@ -272,6 +289,7 @@ Measurements so far:
 | PR #14 r3 security lens (2026-07-27) | `/security-review` + pack | 153k | 27 | 0 |
 | PR #14 r4 fixes (2026-07-27) | `general-purpose` + pack, BOTH lenses | 73k | 7 | 6 (2 high + 1 high pre-existing), all real, all fixed |
 | PR #14 r5 fixes (2026-07-27) | `general-purpose` + pack | 66k | 8 | 4 (3 medium + 1 low), all real, 3 fixed + 1 accepted-and-documented |
+| PR #14 r6 fixes (2026-07-27) | `general-purpose` + pack | 69k | 5 | 5 (2 high), all real, all fixed |
 
 Two things that table settles.
 
