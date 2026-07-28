@@ -70,6 +70,9 @@ docs/
   runbook.md           # operations + recovery
   debt-log.md          # D1–D14 debt register (the taxonomy the capstone must align to)
   phi-logging-policy.md# what may and may not reach a log line
+  review-loop-metrics.md# A/B/C labels on every review finding + the measured baseline the
+                       #   address-review design gate is justified by. Append, don't re-derive.
+  specs/wN.md          # per-week engagement specs (client ask, scope, requirements)
   handover/            # jira-tickets.md (the client asks), breach policy, auditor Q, payer status, portal.har
 tests/                 # pytest; integration tests marked and need live infra
 .claude/               # this project's own tooling: skills, hooks, settings. Tracked in git —
