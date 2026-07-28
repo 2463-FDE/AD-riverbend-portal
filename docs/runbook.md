@@ -78,6 +78,58 @@ Duplicate-patient problem: self-service intake created multiple charts for one
 person (no match key), and inbound HL7 AL1/RXA segments are dropped by the
 parser. Reconcile charts manually; do not assume one chart is complete.
 
+### Redis: "refusing to start an unauthenticated Redis" / gateway login 500s
+Redis now requires a password and is no longer published on the host
+(`docs/debt-log.md` D3b). The credential lives in `.env.redis` (gitignored,
+loaded by the redis and gateway containers only); `make up` generates a random
+one on first run.
+
+```bash
+# the container refuses to boot with an empty REDIS_PASSWORD — check the file
+grep REDIS_PASSWORD .env.redis
+# regenerate it (drops every session: everyone is logged out)
+rm .env.redis && make down && make up
+# redis-cli is now inside the network, and needs the password
+docker compose exec redis sh -c 'redis-cli -a "$REDIS_PASSWORD" ping'
+```
+
+A gateway that logs `REDIS_PASSWORD is unset or a placeholder` is refusing to
+put sessions and visit memory on an open store — that is the guard working, not
+a Redis outage. Fix the credential; do not work around it by pointing
+`REDIS_URL` at an unauthenticated instance.
+
+### Gateway is unhealthy with "session store" in the log
+`GET /healthz` sends an authenticated Redis `PING` (each socket operation bounded
+by `REDIS_PROBE_TIMEOUT_SECONDS`, default 0.5s), so the container goes red when
+the store is unusable rather than only when the process has died. The verdict is
+reused for 2s, so a burst of polls costs one PING; every 10s healthcheck still
+gets a fresh answer. The log line names the cause — class plus Redis error code:
+
+| log | meaning | fix |
+|-----|---------|-----|
+| `healthz: session store refused` | no credential configured, or a placeholder | the `.env.redis` steps above |
+| `… did not answer: ConnectionError` | Redis is down or unreachable | `docker compose ps redis` |
+| `… did not answer: AuthenticationError WRONGPASS` | the gateway's `REDIS_PASSWORD` has drifted from the server's `--requirepass` — both come from `.env.redis`, so check both containers loaded the same file | re-generate: `rm .env.redis && make down && make up` (logs everyone out) |
+| `… did not answer: ResponseError ERR` | usually `Client sent AUTH, but no password is set` — **the store this gateway points at is running without `--requirepass`**. Sessions and visit memory would be readable by anything that can reach it | fix `REDIS_URL`/the store, do not disable the guard |
+| `… did not answer: ResponseError OOM` / `MISCONF` | Redis is up but rejecting writes (`maxmemory` reached, or persistence failing) | `redis-cli info memory`, `… info persistence` |
+
+The check recovers on the next poll (10s) once Redis answers; nothing drains or
+restarts on this signal, so a red gateway during a Redis blip is the status
+being accurate, not an incident of its own.
+
+### Chat replies with `"visit_memory": "stale"` or `"unavailable"`
+The turn was answered but its visit record could not be written; the gateway logs
+`visit memory write failed; answering with memory=…`. Cause is a Redis write
+fault — check the store as above (`OOM`/`MISCONF` are the usual ones).
+
+- `stale` — a later turn. The visit still exists and `visit_id` is still returned;
+  only that turn is missing from the transcript. The conversation continues.
+- `unavailable` — the first turn. Nothing was stored, so no `visit_id` comes back
+  and the clerk's next message opens a fresh visit.
+
+No data recovery is possible or needed: visit memory is a 30-minute sliding
+cache, never a system of record.
+
 ### DB connection errors after a restart
 Postgres healthcheck gates the app services, but if you `down -v` you wipe the
 volume and lose data; next `up` re-seeds from scratch.

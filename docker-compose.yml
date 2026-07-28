@@ -19,10 +19,48 @@ services:
 
   redis:
     image: redis:7
-    ports:
-      - "6379:6379"
+    # NOT host-published, and password-protected (debt-log D3b, Codex PR #14
+    # round 1). This store holds session tokens (username + role, and sessions
+    # never expire — D10) and, since ADR 0011, visit memory: a payer member id
+    # plus a coverage verdict. Publishing 6379 on the Docker host made all of
+    # that readable and flushable by any process on the host, with no
+    # application audit trail to scope the exposure afterwards. The gateway is
+    # the only client and reaches it on the compose network.
+    #
+    # The password lives in its OWN env file, loaded by exactly redis +
+    # gateway, for the same reason .env.ai-proxy does: compose hands the shared
+    # .env to every container, and a credential there is a credential for every
+    # service on the network. Guarded by tests/test_compose_topology.py.
+    #
+    # The rejected-value list mirrors security._PLACEHOLDER_REDIS_PASSWORDS on
+    # purpose: if only the gateway rejected "changeme", redis would boot with it
+    # and report HEALTHY while every request failed — the loud failure this
+    # guard exists for, arriving silently. Kept in sync by
+    # tests/test_compose_topology.py.
+    #
+    # The auth guard lives in the container command, NOT in a
+    # `${REDIS_PASSWORD:?}` interpolation: compose resolves interpolations at
+    # PARSE time, so `:?` would fail `docker compose build`/`config` in CI,
+    # which seeds env files from the (deliberately empty) templates. Checking
+    # inside the container fails closed where it matters — at boot, with a
+    # refusal instead of an open port — and leaves parsing intact.
+    expose:
+      - "6379"
+    env_file:
+      - .env.redis
+    command:
+      - sh
+      - -c
+      - |
+        case "$$(printf '%s' "$$REDIS_PASSWORD" | tr 'A-Z' 'a-z' | tr -d '[:space:]')" in
+          ""|changeme|change-me|placeholder|password|redis|secret|todo|xxx)
+            echo "REDIS_PASSWORD is empty or a placeholder - refusing to start a Redis holding sessions and visit memory (docs/debt-log.md D3b). Run 'make up', which generates a real one into .env.redis." >&2
+            exit 1
+            ;;
+        esac
+        exec redis-server --requirepass "$$REDIS_PASSWORD"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -35,9 +73,13 @@ services:
     # secret holder can bypass the gateway session check on the paid LLM path.
     # `make up` creates the file from its template (empty = fail-closed 503).
     # Guarded by tests/test_compose_topology.py.
+    # .env.redis holds REDIS_PASSWORD, scoped to redis + the gateway (its only
+    # client) for the same reason .env.ai-proxy is scoped — see the redis
+    # service above and docs/debt-log.md D3b.
     env_file:
       - .env
       - .env.ai-proxy
+      - .env.redis
     environment:
       INTAKE_URL: http://intake-service:8071
       ELIGIBILITY_URL: http://eligibility-service:8072
@@ -52,7 +94,7 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
       intake-service:
         condition: service_started
       records-service:
@@ -156,6 +198,11 @@ services:
     env_file:
       - .env
       - .env.ai-proxy
+    environment:
+      # visit-chat calls eligibility-service directly (ADR 0011 §4), the same
+      # service-to-service topology intake has always used. Bounded by a timeout
+      # and an in-process breaker on the ai-assistant side.
+      ELIGIBILITY_URL: http://eligibility-service:8072
     # Deliberately NOT published to the host (expose = compose-network only):
     # the endpoint has no auth of its own — the gateway session check is the
     # auth boundary, and every request spends paid Bedrock capacity. Other

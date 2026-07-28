@@ -12,6 +12,9 @@ dist/
 .env.local
 # Scoped gateway->ai-assistant secret (template: .env.ai-proxy.example)
 .env.ai-proxy
+# Scoped redis+gateway secret, generated per machine by `make up`
+# (template: .env.redis.example)
+.env.redis
 
 # Application logs may contain PHI (see docs/phi-logging-policy.md) — never track them.
 *.log

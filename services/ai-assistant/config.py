@@ -74,5 +74,131 @@ class Settings:
     # Independent gross-size backstop (defense-in-depth), also local.
     llm_max_input_chars = int(os.getenv("LLM_MAX_INPUT_CHARS", str(llm_max_input_tokens * 4)))
 
+    # --- visit-chat: the eligibility dependency (ADR 0011) -------------------
+    # ai-assistant's own hop to eligibility-service. Bounded and breakered from
+    # the start: the D4 lesson (RIV-088/RIV-141) is about the CALLER's worker
+    # thread, so a new caller inherits the problem, not the fix.
+    eligibility_url = os.getenv("ELIGIBILITY_URL", "http://eligibility-service:8072")
+    # Hard cap on how long one chat turn can be held by the dependency. Matches
+    # intake's ELIGIBILITY_TIMEOUT_SECONDS: it must exceed eligibility-service's
+    # own worst-case payer budget ((connect + read) * (1 + retries) = 6s with the
+    # shipped defaults), or this client would time out while the downstream is
+    # still doing bounded, useful work — the inner-budget-inside-outer rule from
+    # ADR 0010.
+    ai_eligibility_timeout_seconds = float(os.getenv("AI_ELIGIBILITY_TIMEOUT_SECONDS", "8"))
+    ai_eligibility_breaker_fail_threshold = int(
+        os.getenv("AI_ELIGIBILITY_BREAKER_FAIL_THRESHOLD", "3")
+    )
+    ai_eligibility_breaker_reset_seconds = float(
+        os.getenv("AI_ELIGIBILITY_BREAKER_RESET_SECONDS", "30")
+    )
+    # Breaker health is "usable AND cheap", on two separate latency thresholds —
+    # the same rule intake landed on across adversarial rounds r5/r6 (see
+    # services/intake-service/config.py for the full derivation; it is not
+    # restated here). Short version: eligibility-service returns the identical
+    # shaped 200 {"active": null, "status": "unknown"} when its payer breaker
+    # short-circuits (free) and when it burned its whole payer budget on a hanging
+    # payer (expensive), so only LATENCY separates them. Counting every shaped 2xx
+    # as healthy leaves this breaker closed during the exact outage it guards.
+    #
+    # INVARIANT: 0.1 <= degraded <= slow_answer <= eligibility-service's
+    # PAYER_READ_TIMEOUT_SECONDS (2s). The upper bound is the FLOOR of the retried
+    # band, not the ceiling of a healthy attempt — anchoring higher makes the check
+    # dead code for a payer that degrades but keeps answering (the r6 no-op).
+    # Both are clamped rather than validated at startup, mirroring intake and the
+    # gateway's singleflight lock TTL: 0 is what an operator would plausibly set to
+    # "turn this off", and it would do the opposite (every answer unhealthy, so the
+    # circuit never closes). "Off" here is a large number, never zero.
+    _ai_degraded_slow_floor = 0.1
+    ai_eligibility_degraded_slow_seconds = max(
+        float(os.getenv("AI_ELIGIBILITY_DEGRADED_SLOW_SECONDS", "1")),
+        _ai_degraded_slow_floor,
+    )
+    ai_eligibility_slow_answer_seconds = max(
+        float(os.getenv("AI_ELIGIBILITY_SLOW_ANSWER_SECONDS", "2")),
+        ai_eligibility_degraded_slow_seconds,
+    )
+
+    # --- visit-chat: per-visit verdict reuse (Codex PR #14 round 4) ---------
+    # How long a DEFINITIVE verdict a visit already holds answers a repeat of the
+    # SAME member id, instead of spending another PHI-bearing payer call. A clerk
+    # restating or re-pasting the id is normal front-desk behaviour, and before
+    # this knob every repeat routed to `check_eligibility` and paid again (ADR
+    # 0011 gap 6). The breaker and the per-user chat rate limit bounded that; they
+    # did not stop it, because the expensive path was the DEFAULT for a common
+    # input.
+    #
+    # This is per-VISIT reuse of state the visit already carries — not the shared
+    # stale-verdict cache ADR 0011 gap 7 declined. Nothing new is stored, no new
+    # keyspace is involved, the verdict is already reused verbatim by `ask_status`
+    # turns, and it is always rendered with its `checked_at` stamp, so it reads as
+    # a past observation rather than a fresh claim.
+    #
+    # Only definitive (`active`/`inactive`) verdicts are reusable — a degraded
+    # `unknown`/`pending` is re-checked however fresh it is, which is what keeps
+    # gap 7's decision intact: an unconfirmed check is never served in place of a
+    # real attempt.
+    #
+    # Clamped at BOTH ends, and 0 is meaningful here (unlike the breaker latency
+    # knobs, where 0 is the trap): 0 disables reuse and restores "always call the
+    # payer", which is the strictest-freshness direction, so an operator setting
+    # it gets what they expect. The ceiling is what stops the opposite mistake: a
+    # typo'd 300000 would make a verdict reusable for as long as the visit lives,
+    # and reuse must never outlive the visit's own retention window (the
+    # gateway's AI_VISIT_TTL_SECONDS, 1800s by default — a different service's
+    # config, so it is mirrored here as a constant rather than imported).
+    _ai_reuse_ceiling_seconds = 1800.0
+    ai_eligibility_reuse_seconds = min(
+        max(float(os.getenv("AI_ELIGIBILITY_REUSE_SECONDS", "300")), 0.0),
+        _ai_reuse_ceiling_seconds,
+    )
+
+    # --- visit-chat: transcript bounds (ADR 0011 §3) ------------------------
+    # The gateway owns visit memory and enforces these at the edge; ai-assistant
+    # applies them again on the inbound side so the caps hold even if a future
+    # caller forgets. Both are PHI bounds as much as token bounds: an unbounded
+    # transcript in Redis is a PHI dump whose retention policy is "never".
+    # Clamped to floors like every other knob here: 0 turns or 0 chars would 422
+    # every message (the endpoint silently stops working), and a negative value
+    # crashes the service at import via pydantic's max_length.
+    ai_visit_max_turns = max(int(os.getenv("AI_VISIT_MAX_TURNS", "12")), 2)
+    ai_visit_max_message_chars = max(int(os.getenv("AI_VISIT_MAX_MESSAGE_CHARS", "1000")), 100)
+
+    # --- visit-chat: member-id recognition (adversarial review) -------------
+    # A CLOSED PREFIX CATALOG, not a generic letters-then-digits pattern.
+    #
+    # The first cut matched `[A-Z]{3,6}\d{3,9}` and carried the comment "a false
+    # positive is safe, the lookup returns unknown, never a denial". That was
+    # wrong in the direction that hurts patients: eligibility-service maps a payer
+    # 404 (member not found) to a DEFINITIVE {"active": false}, so a mis-extracted
+    # token — a prior-auth number, a group number, an account ref — renders as
+    # "the payer reports NO ACTIVE COVERAGE for this member ID" for a patient
+    # whose coverage is fine. An outage is safe (it degrades to unknown); a
+    # confident answer about the WRONG SUBJECT is not, and nothing downstream can
+    # detect it.
+    #
+    # Member ids in this estate are payer-prefix + 4 digits
+    # (db/seed/generate_seed.py: `payer.split()[0][:4].upper()` + 1000-9999), so
+    # the prefix set is small, knowable, and the right shape for a catalog — the
+    # same "closed catalog over regex filter" rule ADR 0011 applies to model
+    # output. Unknown payers are an ops change (add the prefix here), which is the
+    # correct failure direction: an unrecognised token asks the clerk instead of
+    # guessing at the payer's expense.
+    #
+    # An EMPTY catalog (`AI_MEMBER_ID_PREFIXES=`) is not clamped back to the
+    # defaults and is not tolerated: app.py compiles no pattern for it, so
+    # nothing is recognised, and /visit-chat refuses with 503 rather than run a
+    # recogniser that matches every 3-9 digit token (Codex PR #14 round 1). The
+    # clamp idiom used by the numeric knobs above does not transfer — there is no
+    # "safest value" to clamp a catalog to, only "no catalog", and that state has
+    # to be loud.
+    ai_member_id_prefixes = tuple(
+        prefix.strip().upper()
+        for prefix in os.getenv(
+            "AI_MEMBER_ID_PREFIXES", "AETN,AETNA,BCBS,BLUE,CIGN,KAIS,MEDI,UNIT"
+        ).split(",")
+        if prefix.strip()
+    )
+
 
 settings = Settings()

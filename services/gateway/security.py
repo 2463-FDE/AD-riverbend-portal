@@ -14,6 +14,7 @@ import json
 import os
 import time
 import uuid
+from urllib.parse import urlparse
 
 import redis as redis_lib
 
@@ -43,12 +44,232 @@ def verify_password(password: str, encoded: str) -> bool:
 
 _redis_client = None
 
+# Same sentinel class the AI guards use (app._PLACEHOLDER_SECRETS): a value that
+# survives a copied template must count as ABSENT, or the default deploy state
+# walks past the guard (PR #5 round-5 lesson). "redis" and "password" are here
+# because they are what an unauthenticated instance gets "secured" with first.
+_PLACEHOLDER_REDIS_PASSWORDS = frozenset(
+    {"changeme", "change-me", "placeholder", "password", "redis", "secret", "todo", "xxx"}
+)
+
+
+class RedisUnauthenticated(RuntimeError):
+    """Raised when the configured Redis has no usable credential."""
+
+
+def _redis_credential() -> str:
+    """The credential to authenticate with, from REDIS_PASSWORD or REDIS_URL.
+
+    Both are accepted because an operator can legitimately deploy either way,
+    but the compose topology uses REDIS_PASSWORD (scoped .env.redis) so the
+    credential is not duplicated inside a URL that also ships in .env.example.
+
+    Returned VERBATIM, never stripped: the server is started with
+    ``--requirepass "$REDIS_PASSWORD"`` from the same env file, and env files
+    preserve trailing whitespace. Stripping here would make the gateway
+    authenticate with a different string than the one Redis was configured
+    with — every request failing AUTH against a server whose own healthcheck,
+    using the unstripped value, reports green. Whitespace is stripped only for
+    the "is this actually configured" TEST below.
+    """
+    password = settings.redis_password or ""
+    if password.strip():
+        return password
+    return urlparse(settings.redis_url).password or ""
+
 
 def _redis():
+    """The shared Redis client, refusing an unauthenticated store.
+
+    This is a fail-closed guard, not a connectivity check (Codex PR #14 round
+    1, docs/debt-log.md D3b). Redis holds session tokens — which never expire
+    (D10) — and, since ADR 0011, visit memory: a payer member id plus a
+    coverage verdict. Speaking to a passwordless instance is how that becomes
+    readable by anything that can reach the port, with no application audit
+    trail of the read, so a missing credential must stop the gateway rather
+    than silently downgrade to open access. The compose topology no longer
+    publishes the port either; this is the layer behind it, for a deploy whose
+    topology is not ours.
+
+    The raise propagates: callers of the session/quota/cache helpers do not
+    swallow it into a success, and the visit-memory helpers that catch a
+    transient fault report it to their caller rather than raising — a
+    misconfigured deploy fails at login long before it reaches them.
+    """
     global _redis_client
     if _redis_client is None:
-        _redis_client = redis_lib.from_url(settings.redis_url, decode_responses=True)
+        _redis_client = redis_lib.from_url(
+            settings.redis_url, decode_responses=True, password=_usable_credential()
+        )
     return _redis_client
+
+
+def _usable_credential() -> str:
+    """The credential to connect with, or RedisUnauthenticated if there is none.
+
+    One source of truth for the refusal policy, shared by the session client and
+    the health probe's client. If each applied its own test they could disagree,
+    and the disagreement that matters is silent: a probe more permissive than
+    the session path reports green on a store every login refuses.
+    """
+    password = _redis_credential()
+    probe = password.strip().lower()
+    if not probe or probe in _PLACEHOLDER_REDIS_PASSWORDS:
+        raise RedisUnauthenticated(
+            "REDIS_PASSWORD is unset or a placeholder — refusing to use an "
+            "unauthenticated Redis for sessions and visit memory "
+            "(docs/debt-log.md D3b)"
+        )
+    return password
+
+
+class RedisUnreachable(RuntimeError):
+    """A credential is configured, but the store did not answer it."""
+
+
+_redis_probe_client = None
+
+
+def _redis_probe():
+    """A second client, used ONLY by the health probe, with bounded timeouts.
+
+    The shared session client is deliberately built without socket timeouts: it
+    is on the auth path, and changing how a session read blocks changes auth
+    behaviour, which is a §6 zone. The probe needs the opposite property — it
+    must give up quickly — so it gets its own client rather than retuning that
+    one.
+
+    Two settings beyond the timeouts, both about bounding this endpoint's cost:
+
+    * ``max_connections=1``. /healthz takes no session and is published on the
+      host port, so concurrent callers are not a hypothetical; without a cap the
+      pool grows one connection per in-flight request against a slow store.
+    * ``lib_name``/``lib_version`` off. redis-py sends CLIENT SETINFO twice per
+      new connection to register its own name and version. Neither is useful to
+      a health probe and each is a blocking round trip inside the connect path,
+      which is where the probe's budget arithmetic is tightest (see config).
+    """
+    global _redis_probe_client
+    if _redis_probe_client is None:
+        timeout = settings.redis_probe_timeout_seconds
+        _redis_probe_client = redis_lib.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            password=_usable_credential(),
+            socket_timeout=timeout,
+            socket_connect_timeout=timeout,
+            max_connections=1,
+            lib_name=None,
+            lib_version=None,
+        )
+    return _redis_probe_client
+
+
+# How long a probe verdict is reused. Must stay well under the healthcheck's
+# `interval: 10s` so every poll gets a fresh answer — the memo exists to collapse
+# a BURST (see _redis_probe: the endpoint is public and takes no session), not to
+# soften the signal. Asserted against compose in tests/test_compose_topology.py.
+_PROBE_MEMO_SECONDS = 2.0
+
+# (monotonic expiry, fault detail or None) — module-global, like both clients.
+_probe_verdict = None
+
+
+# Redis's server-side error prefixes, as an allowlist. A CATALOG, not a shape
+# test ("first token, if it looks uppercase"): the string being inspected is an
+# error message that can quote the credential we just sent, and a heuristic that
+# admits anything matching a pattern eventually admits the thing it should not
+# (the PR #7 member-id lesson — recognise a closed vocabulary, never "whatever
+# looks like one"). Anything outside this set is dropped rather than logged.
+_REDIS_ERROR_CODES = frozenset(
+    {
+        "ERR",          # generic — includes "Client sent AUTH, but no password is set"
+        "WRONGPASS",    # the credential is wrong
+        "NOAUTH",       # authentication required, none sent
+        "NOPERM",       # ACL user lacks the command
+        "OOM",          # maxmemory reached, writes rejected
+        "MISCONF",      # persistence failing; writes rejected
+        "LOADING",      # dataset still loading from disk
+        "BUSY",         # a script is monopolising the server
+        "READONLY",     # a replica was handed a write
+        "MASTERDOWN",
+        "CLUSTERDOWN",
+        "NOPROTO",
+    }
+)
+
+
+def _probe_fault_detail(exc: Exception) -> str:
+    """What to log about a failed PING: the class, plus a Redis error code.
+
+    Never ``str(exc)``: a rejected credential arrives as AuthenticationError
+    whose message can quote what was sent. But the class alone is too coarse in
+    one case that matters — a store started WITHOUT ``--requirepass`` answers
+    AUTH with ``ERR Client sent AUTH, but no password is set``, and reporting
+    only the class sends the operator to check whether Redis is up when the
+    actual finding is that the store is open. So the class is joined by the error
+    code, and only if it is one Redis is known to send.
+
+    The exception class is NOT what decides this: redis-py raises
+    AuthenticationError from ConnectionError, not from ResponseError, so gating
+    on ResponseError silently drops the WRONGPASS case this exists to surface.
+    """
+    name = type(exc).__name__
+    code = str(exc).split(" ", 1)[0]
+    return f"{name} {code}" if code in _REDIS_ERROR_CODES else name
+
+
+def check_redis_usable(max_age_seconds: float = _PROBE_MEMO_SECONDS) -> None:
+    """Prove the store is usable: credential configured AND answering (round 2).
+
+    Superseded the round-1 config-only probe, which built the client and issued
+    no command. That caught the one failure it was written for — a placeholder
+    or missing credential — and missed every other way this instance can be
+    unable to serve while reporting healthy: a credential Redis rejects (the
+    gateway's value drifting from the server's `--requirepass`), a store that
+    died after boot, a cached client whose connection no longer works. Each of
+    those returns 200 from /healthz while every session-backed route fails,
+    which is precisely the green-dashboard-dead-service shape the guard exists
+    to prevent.
+
+    The PING can now go red on a genuine Redis blip. That is the intended
+    trade: `docker compose ps` telling the truth during an outage is the point,
+    nothing in the topology drains or restarts on this signal (the portal's
+    depends_on carries no health condition), and the check self-heals on the
+    next 10s poll.
+
+    The verdict — failure as well as success — is reused for ``max_age_seconds``.
+    Caching only successes would leave the expensive case unbounded, which is
+    backwards: the slow store is exactly when a burst of health polls must not
+    each occupy a threadpool worker for the full probe budget.
+
+    Raises RedisUnauthenticated when no credential is configured — kept distinct
+    from RedisUnreachable so the log says which of "misconfigured" and "down"
+    happened, and the operator does not go looking at the wrong one. The refusal
+    is never written to the memo (it does no I/O, so there is nothing to
+    amortise); a memoized success can suppress re-evaluating it for the window,
+    which is harmless because the credential comes from the environment and
+    cannot change inside a running process.
+    """
+    global _probe_verdict
+    now = time.monotonic()
+    if _probe_verdict is not None and now < _probe_verdict[0]:
+        if _probe_verdict[1] is not None:
+            raise RedisUnreachable(_probe_verdict[1])
+        return
+    try:
+        # Inside the try on purpose: from_url can also fail (a malformed
+        # REDIS_URL), and that is a 503 for the same reason an unanswered PING
+        # is. The RedisUnauthenticated re-raise below keeps a configuration
+        # refusal from being reshaped into "the store did not answer".
+        _redis_probe().ping()
+    except RedisUnauthenticated:
+        raise
+    except Exception as e:
+        detail = _probe_fault_detail(e)
+        _probe_verdict = (now + max_age_seconds, detail)
+        raise RedisUnreachable(detail) from None
+    _probe_verdict = (now + max_age_seconds, None)
 
 
 def create_session(username: str, role: str) -> str:
@@ -100,8 +321,10 @@ def _incr_fixed_window(key: str, window_seconds: int) -> int:
     return int(_redis().eval(_INCR_FIXED_WINDOW_LUA, 1, key, window_seconds))
 
 
-def check_ai_rate_limit(username: str, per_minute: int, per_day: int) -> int:
-    """Fixed-window per-user REQUEST quota for the AI endpoint.
+def check_ai_rate_limit(
+    username: str, per_minute: int, per_day: int, namespace: str = "ai"
+) -> int:
+    """Fixed-window per-user REQUEST quota for an AI endpoint.
 
     Increments a minute-window and a day-window counter for ``username`` in
     Redis and returns a Retry-After hint in seconds if either cap is now
@@ -113,10 +336,18 @@ def check_ai_rate_limit(username: str, per_minute: int, per_day: int) -> int:
     consume_ai_global_budget, counted only on paid fan-outs. Callers must fail
     closed if this raises (a Redis fault): the paid path must not run when the
     quota cannot be consulted. (ADR 0007.)
+
+    ``namespace`` separates each endpoint's counters (ADR 0011 §6). It defaults
+    to ``ai``, so /intake-instructions keeps byte-for-byte the same keys it has
+    always used, while visit-chat counts under ``aichat`` with its own, higher
+    caps: a conversation is many turns where a checklist is one shot, and one
+    endpoint's traffic must not exhaust the other's quota. The SPEND ceiling is
+    deliberately NOT namespaced — it bounds dollars per tenant per day, and
+    splitting it would silently raise the real ceiling.
     """
     now = int(time.time())
-    minute_count = _incr_fixed_window(f"ratelimit:ai:min:{username}:{now // 60}", 60)
-    day_count = _incr_fixed_window(f"ratelimit:ai:day:{username}:{now // 86400}", 86400)
+    minute_count = _incr_fixed_window(f"ratelimit:{namespace}:min:{username}:{now // 60}", 60)
+    day_count = _incr_fixed_window(f"ratelimit:{namespace}:day:{username}:{now // 86400}", 86400)
     # Reject BEFORE touching the shared global budget, so a user hammering past
     # their own cap cannot inflate the aggregate counter with rejected requests
     # and starve everyone else (a DoS-amplification inversion of the guard).
@@ -228,7 +459,10 @@ def release_ai_global_budget(reservation_key: str | None) -> None:
     Bedrock call), none of which bill inference. A provider outage/throttle is a
     POST-egress 502 and is deliberately NOT refunded, so an outage retry storm
     cannot escape the tenant ceiling that bounds vendor fan-out (Codex PR #7
-    round 9; see gateway _NON_PAID_DOWNSTREAM_STATUS). Without the refund those
+    round 9; see gateway _NON_PAID_DOWNSTREAM_STATUS). /ai/visit-chat adds one
+    more caller: a SUCCESSFUL turn whose body says `llm_egress: false`, because
+    that endpoint degrades instead of failing when the LLM refuses locally
+    (Codex PR #14 round 3). Without the refund those
     non-paid failures would drive
     the shared daily counter to its cap during a misconfiguration or a retry
     storm and 429 every valid caller until the Redis window rolls over — even
@@ -269,6 +503,12 @@ def ai_cache_get(key: str):
     the cache, is the authoritative guard)."""
     try:
         raw = _redis().get(key)
+    except RedisUnauthenticated:
+        # A configuration refusal is NOT the transient fault this swallow exists
+        # for. Degrading to "cache miss" here would let a gateway pointed at an
+        # unauthenticated store carry on and make a paid call; the guard has to
+        # propagate. Same re-raise precedes every catch-all below.
+        raise
     except Exception:
         return None
     if raw is None:
@@ -287,6 +527,8 @@ def ai_cache_set(key: str, value, ttl_seconds: int) -> None:
         return
     try:
         _redis().set(key, json.dumps(value), ex=ttl_seconds)
+    except RedisUnauthenticated:
+        raise
     except Exception:
         pass
 
@@ -343,6 +585,8 @@ def ai_singleflight_acquire(cache_key: str, lock_ttl_seconds: int) -> str | None
     try:
         got = _redis().set(_flight_key(cache_key), token, nx=True, ex=max(1, lock_ttl_seconds))
         return token if got else None
+    except RedisUnauthenticated:
+        raise
     except Exception:
         return token
 
@@ -360,5 +604,230 @@ def ai_singleflight_release(cache_key: str, token: str | None) -> None:
         return
     try:
         _redis().eval(_SINGLEFLIGHT_RELEASE_LUA, 1, _flight_key(cache_key), token)
+    except RedisUnauthenticated:
+        raise
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------------------- #
+# visit-scoped chat memory (ADR 0011)
+# --------------------------------------------------------------------------- #
+# The gateway owns this store for the same reason it owns every other Redis
+# control: it is the choke point, it already holds the session, and ai-assistant
+# has no Redis client and stays stateless. What lands here is PHI-adjacent
+# (a payer member id plus a structured coverage verdict), so every helper below
+# is written to bound exposure: opaque keys, an owner check, a TTL on every
+# write, a hard cap on transcript size, and no identifier in a key or a log.
+#
+# Redis is compose-internal and password-protected as of PR #14 (debt-log D3b:
+# no host publish, `--requirepass`, scoped credential, and the `_redis()`
+# refusal above). Residual exposure is still real — no TLS, one shared
+# credential rather than per-consumer ACL users, no audit trail of reads — so
+# these helpers still minimise what an exposure would yield rather than assume
+# the store is safe.
+
+
+class VisitMemoryUnavailable(Exception):
+    """The visit store could not be consulted. Callers must fail CLOSED.
+
+    Deliberately distinct from "no such visit". A backend fault cannot tell an
+    absent visit from one owned by somebody else, so treating a fault as "start
+    fresh" would let a Redis blip wave through a turn whose ownership was never
+    verified. The route maps this to 503; only a turn that supplies NO visit id
+    (the first turn of a conversation) starts fresh, and that path reads nothing.
+    """
+
+
+def new_visit_id() -> str:
+    """Mint an opaque visit id.
+
+    128 bits of uuid4, deliberately the opposite of the walkable sequential
+    ``patient_id`` behind debt D11: a visit id cannot be guessed or enumerated,
+    and it is never derived from the member id it protects.
+    """
+    return uuid.uuid4().hex
+
+
+def _visit_key(visit_id: str) -> str:
+    return f"visit:{visit_id}"
+
+
+def _visit_lock_key(visit_id: str) -> str:
+    return f"visitlock:{visit_id}"
+
+
+def visit_memory_get(visit_id: str, owner: str) -> dict | None:
+    """Load a visit, or None if it does not exist OR is not ``owner``'s.
+
+    The two cases are collapsed on purpose: the route answers both with 404, so a
+    caller cannot use the response to learn that somebody else's visit id exists
+    (a 403 would confirm it). Owner binding is per-visit access control on a new
+    resource — it does NOT change ``require_session`` and does not make sessions
+    patient-scoped (ADR 0003 stands; the shared ``staff`` role is debt D8, so two
+    clerks sharing a login share visits).
+
+    Raises VisitMemoryUnavailable on a backend or parse fault — see that class.
+    """
+    try:
+        raw = _redis().get(_visit_key(visit_id))
+    except RedisUnauthenticated:
+        raise
+    except Exception as e:
+        raise VisitMemoryUnavailable(type(e).__name__) from None
+    if raw is None:
+        return None
+    try:
+        record = json.loads(raw)
+    except (ValueError, TypeError):
+        # A corrupt value is not "no such visit" either: silently starting fresh
+        # would drop a real conversation and, worse, skip the owner check.
+        raise VisitMemoryUnavailable("corrupt visit record") from None
+    if not isinstance(record, dict) or record.get("owner") != owner:
+        return None
+    return record
+
+
+def visit_memory_save(
+    visit_id: str,
+    owner: str,
+    facts: dict,
+    turns: list,
+    ttl_seconds: int,
+    max_turns: int,
+    created_at: float | None = None,
+) -> bool:
+    """Persist a visit with a sliding TTL. Best-effort, but never silent.
+
+    One ``SET key value EX ttl`` — atomic, so the "counter created without its
+    TTL" failure the fixed-window counters needed Lua to avoid (ADR 0007 round
+    12) cannot arise here: the value and its expiry are written together or not
+    at all. Every save refreshes the TTL, which is what makes it sliding.
+
+    ``turns`` is truncated to the last ``max_turns`` entries BEFORE the write, so
+    the stored transcript is bounded at the store rather than by the good
+    behaviour of callers. That bound is a PHI control as much as a memory one —
+    an unbounded transcript in Redis is a PHI dump whose retention policy is
+    "never".
+
+    Returns True when the record is stored and False when it is not, so a caller
+    can decline to hand back a visit id that resolves to nothing (Codex PR #14
+    round 2). A write failure still does not fail the turn — the answer has been
+    produced and the payer call already paid for, and discarding that is the
+    larger harm — but the previous version returned None either way, so the
+    route handed the client a usable-looking visit id whose next turn answered
+    404 "visit not found". Continuity was lost either way; the difference is
+    whether the client is told.
+
+    Logging stays with the caller, never here: this module has no logger, and
+    the values in scope are PHI-adjacent.
+    """
+    if ttl_seconds <= 0:
+        # Memory disabled by config (the setting clamps to >= 60, so this is the
+        # explicit-override path). Nothing is stored, so nothing is reusable.
+        return False
+    now = time.time()
+    record = {
+        "owner": owner,
+        "created_at": created_at if created_at is not None else now,
+        "updated_at": now,
+        "facts": facts,
+        # Keep the tail: the most recent turns are the ones that carry context.
+        "turns": turns[-max_turns:] if max_turns > 0 else [],
+    }
+    try:
+        _redis().set(_visit_key(visit_id), json.dumps(record, default=str), ex=ttl_seconds)
+    except RedisUnauthenticated:
+        raise
+    except Exception:
+        return False
+    return True
+
+
+class VisitLockUnavailable(Exception):
+    """The per-visit lock could not be consulted or written.
+
+    Deliberately distinct from "somebody else holds it" (``None``), which is a
+    legitimate concurrent turn the route answers with 429. This is the state
+    where the guard itself is absent, and the caller must not act as though it
+    were held — see ``visit_lock_acquire``.
+
+    Carries the token the failed ``SET`` used, and the caller must pass it back to
+    ``visit_lock_release``. "The write did not land" is only ONE of the two faults
+    here: a reset connection, a read timeout, or a failover can leave the ``SET``
+    applied server-side with its reply lost, and a token discarded in that case
+    orphans the key for its whole TTL (75s by default) — every later turn in that
+    visit answering 429 "already processing" against a lock nobody holds. The
+    compare-and-delete release removes the key only if OUR ``SET`` is what landed,
+    so passing the token back is safe in both cases (pre-push review, round 7).
+    """
+
+    def __init__(self, reason: str, token: str | None = None):
+        super().__init__(reason)
+        self.token = token
+
+
+def visit_lock_acquire(visit_id: str, lock_ttl_seconds: int) -> str | None:
+    """Serialise concurrent turns within ONE visit (ADR 0011 §3).
+
+    The ADR-0007 single-flight pattern, re-keyed from "identical body" to
+    "identical visit": identical bodies in a conversation are legitimate ("still
+    active?"), two simultaneous turns in the same visit are not — they would
+    read-modify-write the same record and silently drop a turn, and they would
+    make two paid calls for one clerk.
+
+    Returns a unique owner token to the winner and None to anyone who finds the
+    lock held. A Redis fault raises ``VisitLockUnavailable``: this lock does NOT
+    fail open, and that is the one place it departs from ``ai_singleflight_acquire``
+    (Codex PR #14 round 7).
+
+    Single-flight only dedupes paid work, and the authoritative guard behind it is
+    the fail-CLOSED budget ceiling, so failing it open costs at most a duplicate
+    call. This lock guards STATE, and nothing else guards that state: two turns
+    that both believe they hold it read the same record, both fan out to a
+    PHI-bearing payer lookup, and whichever save lands second silently drops the
+    other's appended turns and facts — and the confirmed member id and the payer
+    verdict live nowhere else. Nor can the fault be assumed to have stopped the
+    write that does the damage: the realistic shape here is Redis at
+    ``maxmemory`` with ``noeviction``, where GET succeeds (so the record loads,
+    and ownership IS verified) and SET fails, and a fault that clears between the
+    lock and the save leaves both writers live.
+
+    Policy stays with the route, which is the only caller that knows which turn
+    this is, and which owes the release either way (see the exception): 503 for an
+    existing visit, and proceed unlocked for a FIRST turn,
+    whose id was minted microseconds earlier and is not yet known to any client,
+    so there is nothing to serialise against and failing it closed would turn a
+    blip into an outage for no gain.
+    """
+    token = uuid.uuid4().hex
+    try:
+        got = _redis().set(
+            _visit_lock_key(visit_id), token, nx=True, ex=max(1, lock_ttl_seconds)
+        )
+        return token if got else None
+    except RedisUnauthenticated:
+        raise
+    except Exception as e:
+        # Type name only, and no chained context: the same no-value rule
+        # visit_memory_get follows. The token rides along — the write may have
+        # landed with its reply lost, and only this token can clear it.
+        raise VisitLockUnavailable(type(e).__name__, token=token) from None
+
+
+def visit_lock_release(visit_id: str, token: str | None) -> None:
+    """Release a visit lock (best-effort, owner-checked).
+
+    Compare-and-delete via the same Lua script the single-flight release uses: a
+    turn that outran the lock TTL must not delete the NEXT turn's valid lock
+    (ADR 0007 round 13). ``None`` (never acquired) is a no-op, and a fault is
+    harmless because the TTL clears the key regardless.
+    """
+    if not token:
+        return
+    try:
+        _redis().eval(_SINGLEFLIGHT_RELEASE_LUA, 1, _visit_lock_key(visit_id), token)
+    except RedisUnauthenticated:
+        raise
     except Exception:
         pass

@@ -110,6 +110,56 @@
   and moving the gateway `proxy_intake` path off the legacy error-swallowing
   `_post` onto `_post_checked`.
 
+### D3b — Redis holds PHI-adjacent state on an unauthenticated, host-published instance
+- **Location:** `docker-compose.yml` `redis:` service (`ports: 6379:6379`, no
+  `requirepass`, no named volume); consumers are `services/gateway/security.py`
+  (sessions, ADR-0007 counters/cache) and — proposed — visit memory (ADR 0011).
+- **What:** Redis is reachable from the Docker host on 6379 with **no
+  authentication**, and nothing in the topology restricts it to the compose
+  network. Today it holds session tokens (username + role). ADR 0011's
+  visit-scoped memory would add a payer **member/insurance id** plus a
+  structured coverage verdict — PHI-adjacent state at rest, in the D3
+  (plaintext-PHI-at-rest) family, in a store that any process on the host can
+  read or flush. Surfaced while designing ADR 0011, not introduced by it.
+- **Business risk:** an unauthenticated Redis is a credential-free path to live
+  session tokens (session hijack, and sessions never expire — D10) and, once
+  visit memory ships, to member ids. Reading it leaves no application audit
+  trail, so an exposure would be hard to scope for a breach assessment
+  (45 CFR 164.400+). Default RDB snapshots also write that state to the
+  container filesystem unencrypted.
+- **Ticket:** — (to file)
+- **Status:** **MOSTLY CLOSED (2026-07-27, PR #14 round 1).** The 2026-07-26
+  decision was to land the hardening separately from ADR 0011; the adversarial
+  review named the unauthenticated store the shipping blocker and the engagement
+  lead reversed that call, so the precondition shipped with the feature. What
+  landed:
+  - `docker-compose.yml`: the `6379:6379` host publish is gone (`expose` only),
+    so the store is reachable only on the compose network;
+  - Redis starts with `--requirepass` and **refuses to boot** on an empty
+    password (guard inside the container command — a `${REDIS_PASSWORD:?}`
+    interpolation would fail `docker compose build` in CI, which seeds env files
+    from deliberately empty templates), and its healthcheck authenticates;
+  - the credential lives in a **scoped `.env.redis`** loaded by redis + gateway
+    only — the `.env.ai-proxy` containment pattern, because the shared `.env`
+    goes to every container — and `make up` generates a random one per machine;
+  - `services/gateway/security.py::_redis()` **refuses to connect** when no
+    credential (or a known placeholder) is configured, so a deploy whose
+    topology is not ours cannot put sessions or a member id on an open store;
+  - guarded by `tests/test_compose_topology.py` (no host port, requirepass,
+    empty-password refusal, authenticated healthcheck, credential scoping, empty
+    template, CI seeds every env_file) and `tests/test_gateway_redis_auth.py`
+    (placeholder/whitespace/URL-embedded credentials, no cached client after a
+    refusal, session + visit-memory writes cannot reach an open store).
+- **Residual (still open):** no TLS in transit; one shared credential instead of
+  per-consumer Redis ACL users; no named volume, so default RDB snapshots stay
+  container-local and unencrypted; still no audit trail of reads; and rotation is
+  manual (delete `.env.redis`, `make down && make up` — existing sessions drop).
+  ADR 0011's own mitigations remain in force: opaque `visit:{uuid4}` keys, a
+  1800s sliding TTL, session-owner binding, a **metadata-only turn log** (no
+  clerk text is stored at all — the earlier draft said "redacted transcript",
+  which was withdrawn because pattern redaction cannot mask a typed patient
+  name), and the member id never appearing in a key or a log line.
+
 ### D12 — ROI disclosures without authorization
 - **Location:** `services/roi-service/app.py:90,104,146,148`
 - **What:** release-of-information goes out with no recorded 45 CFR 164.508

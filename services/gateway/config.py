@@ -8,6 +8,36 @@ class Settings:
     log_level = os.getenv("LOG_LEVEL", "INFO")
 
     redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    # Redis auth (docs/debt-log.md D3b). Kept OUT of REDIS_URL so there is one
+    # source of truth for the credential: compose loads it from the scoped
+    # .env.redis into both redis and this service, and security._redis() passes
+    # it to the client. Empty (or a placeholder) means the store is
+    # unauthenticated, which security._redis() refuses to connect to — sessions
+    # and visit memory are not allowed onto an open Redis.
+    redis_password = os.getenv("REDIS_PASSWORD", "")
+
+    # Budget for the /healthz PING only — never for a session read (Codex PR #14
+    # round 2). The probe must answer inside the container healthcheck's own
+    # `timeout: 3s` (docker-compose.yml, gateway.healthcheck) or docker kills the
+    # request first: the container still goes red, but by timeout, so neither the
+    # 503 nor the log line that says WHICH failure happened is ever produced.
+    #
+    # This is a PER-SOCKET-OPERATION budget, not a budget for the probe. redis-py
+    # applies it to each blocking call separately, and a cold connection makes
+    # several before PING is even sent: TCP connect, AUTH, an optional SELECT
+    # when REDIS_URL names a non-zero db, then PING. (`_redis_probe` also turns
+    # OFF redis-py's CLIENT SETINFO handshake, which would otherwise add two
+    # more.) So the ceiling is the healthcheck timeout divided by that op count,
+    # not the timeout itself — the round-2 first cut clamped at 2.5s and could
+    # spend ~10s. tests/test_compose_topology.py enforces the arithmetic against
+    # compose so neither side can drift.
+    #
+    # Both ends are clamped because both are reachable by hand and both defeat
+    # the probe: 0 means "wait forever" to redis-py, and too large means docker
+    # gives up before the endpoint does.
+    redis_probe_timeout_seconds = min(
+        max(float(os.getenv("REDIS_PROBE_TIMEOUT_SECONDS", "0.5")), 0.1), 0.7
+    )
 
     db_host = os.getenv("DB_HOST", "postgres")
     db_port = os.getenv("DB_PORT", "5432")
@@ -88,6 +118,73 @@ class Settings:
     ai_singleflight_lock_ttl_seconds = max(
         int(os.getenv("AI_SINGLEFLIGHT_LOCK_TTL_SECONDS", str(_ai_singleflight_lock_ttl_floor))),
         _ai_singleflight_lock_ttl_floor,
+    )
+
+    # --- visit-chat (ADR 0011) ---------------------------------------------
+    # The chat endpoint gets its OWN per-user request quota, in its own Redis
+    # namespace (ratelimit:aichat:*), and higher than the one-shot endpoint's: a
+    # conversation is many turns where a checklist is one submit. Separate
+    # namespaces so neither endpoint can exhaust the other's quota. The aggregate
+    # SPEND ceiling above is shared by both on purpose — it bounds dollars per
+    # tenant per day, and splitting it would silently raise the real ceiling.
+    ai_chat_rate_limit_per_minute = int(os.getenv("AI_CHAT_RATE_LIMIT_PER_MINUTE", "20"))
+    ai_chat_rate_limit_per_day = int(os.getenv("AI_CHAT_RATE_LIMIT_PER_DAY", "400"))
+
+    # Visit-scoped memory. The TTL is a RETENTION policy for PHI-adjacent state
+    # (a payer member id + a structured coverage verdict), not just a cache
+    # setting: it is the upper bound on how long that state survives in a Redis
+    # instance this deployment has not hardened (debt-log D3b). Sliding — every
+    # turn refreshes it — so 30 minutes is "30 minutes after the last turn",
+    # comfortably longer than a check-in and far shorter than a shift.
+    # Clamped to a floor: 0 is what an operator would plausibly set to "turn
+    # visit memory off", and it is not a supported mode — every turn would open a
+    # visit that is never stored. Since round 2 that at least degrades honestly
+    # (the route reports `visit_memory: unavailable` and returns no visit id
+    # rather than one that 404s on the next turn), but "off" still is not
+    # reachable through this knob.
+    ai_visit_ttl_seconds = max(int(os.getenv("AI_VISIT_TTL_SECONDS", "1800")), 60)
+    # Hard caps on what one visit can hold. Both bound token spend AND the size of
+    # a hypothetical exposure; the store truncates to these rather than trusting
+    # callers (security.visit_memory_save).
+    # Floors for the same reason (and matching ai-assistant's copies): 0 turns
+    # or 0 chars silently 422s every message, and a negative value crashes
+    # ai-assistant at import via pydantic's max_length.
+    ai_visit_max_turns = max(int(os.getenv("AI_VISIT_MAX_TURNS", "12")), 2)
+    ai_visit_max_message_chars = max(
+        int(os.getenv("AI_VISIT_MAX_MESSAGE_CHARS", "1000")), 100
+    )
+    # The per-visit lock reuses the single-flight lock TTL deliberately, rather
+    # than adding a knob: it is already clamped to a floor above the AI read
+    # timeout, which is exactly the property a lock around this fan-out needs (a
+    # TTL under the fan-out bound would let a second turn overlap the first).
+
+    # The member-id prefix CATALOG — the SAME env var and the same default as
+    # ai-assistant's recogniser reads (Codex PR #14 round 7). The gateway needs it
+    # because it is the service that decides what a downstream 200 may PERSIST,
+    # and a stored member id is used directly for a payer lookup on a later
+    # `recheck` turn without passing back through the recogniser. Validating only
+    # the SHAPE here (upper-case alnum) let an off-catalog id like `ABC1234` into
+    # visit memory, where it bypasses the closed-catalog false-positive control
+    # entirely and a payer 404 renders as a definitive "no active coverage".
+    #
+    # Two services holding the same default is a mirror, and an unpinned mirror is
+    # the round-4 failure — so tests/test_eligibility_budget_alignment.py asserts
+    # the two defaults are equal, and tests/test_compose_topology.py asserts
+    # neither service overrides the var in a per-service `environment:` block, so
+    # an operator's override lands in the shared .env and reaches both ends
+    # identically. A gateway that has not learned a prefix ai-assistant knows 502s
+    # that turn with the record untouched; the turn succeeds once the config
+    # matches, which is the fail-closed direction for a value used on a payer call.
+    #
+    # Empty is NOT clamped back to this default, for the same reason ai-assistant
+    # does not clamp it: there is no "safest catalog", only "no catalog", and that
+    # state has to be loud — app.py compiles no pattern and /ai/visit-chat 503s.
+    ai_member_id_prefixes = tuple(
+        prefix.strip().upper()
+        for prefix in os.getenv(
+            "AI_MEMBER_ID_PREFIXES", "AETN,AETNA,BCBS,BLUE,CIGN,KAIS,MEDI,UNIT"
+        ).split(",")
+        if prefix.strip()
     )
 
     @property

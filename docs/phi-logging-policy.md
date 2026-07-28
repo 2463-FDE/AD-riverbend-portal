@@ -35,6 +35,34 @@
    any handler, at any level — they may contain arbitrary PHI. Log metadata
    only: model, token counts, cost, latency, request id. Wrapper enforces this
    (`llm_client.py`); tests pin it (`tests/test_llm_client.py` PHI-safety cases).
+5. **Free-text rule (visit-chat, ADR 0011).** The chat `message` is the only
+   free-text field a client can send this estate, and a clerk typing at a front
+   desk will put a name, a DOB, or a member id in it. Three consequences, all
+   enforced in code rather than by convention:
+   - **Never logged.** Chat logging goes through
+     `schemas.visit_chat_log_metadata` — an allowlist of closed values (intent
+     enum, derived status, turn count). Never the message, never the transcript.
+   - **Never sent to the vendor.** Intent derivation and the eligibility lookup
+     are deterministic; the prompt is assembled only from closed vocabulary.
+     While **D13** (Bedrock, no BAA) is open, no clerk prose may egress.
+     `tests/test_visit_chat_phi.py` asserts the prompt is byte-identical to the
+     deterministic build, which catches any future interpolation of the message.
+   - **Never stored.** Visit memory records `{role, intent, status}` per turn —
+     what happened, not what was said. Pattern redaction is *not* an acceptable
+     substitute here: `redact_text` covers SSN / email / phone and cannot mask a
+     typed patient name. If a future feature needs the transcript, that is a new
+     PHI-at-rest decision requiring approval, not a schema tweak.
+6. **PHI at rest in Redis (visit-chat, ADR 0011).** `facts.insurance_id` is the
+   one PHI-adjacent value approved to persist, under an opaque `visit:{uuid4}`
+   key, owner-bound, with a sliding TTL that IS its retention policy. Never put
+   an identifier in a Redis key, and never persist a downstream `error` string
+   (eligibility's carries the member id — the leak PR #11 closed). Redis itself
+   was hardened alongside this feature (**debt-log D3b**, PR #14): the store is
+   compose-internal, requires a password, refuses to start without one, and the
+   gateway refuses to connect to an unauthenticated instance. Residual, and the
+   reason the rules above still bind: no TLS in transit, one shared credential
+   rather than per-consumer ACL users, no named volume (RDB snapshots stay
+   container-local and unencrypted), and no audit trail of reads.
 
 ## How to comply in a service
 
@@ -53,6 +81,7 @@
 | `services/eligibility-service/app.py:44` logs `insurance_id` | OPEN | Violates rule 2 (external identifier) |
 | `services/intake-service/app.py` `_verify_eligibility` error path | **FIXED 2026-07-08** | Was `str(e)` (could embed the payer URL + `insurance_id` query param, rule 3); now logs the exception class only and returns a generic error. Test: `tests/test_intake_eligibility_phi.py` (Codex review). |
 | `.env` committed to git | OPEN | Not a log site, but the same exposure class — tracked in `docs/debt-log.md` |
+| Redis holds `facts.insurance_id` at rest (visit-chat) | **ACCEPTED 2026-07-26** | Approved under rule 6's controls (opaque key, owner binding, sliding TTL, no id in keys/logs). The Redis hardening that was its recommended precondition shipped with it (**D3b**, PR #14): no host publish, `requirepass`, scoped credential, gateway-side fail-closed guard. Residual: no TLS, one shared credential, no read audit trail. |
 
 ## Enforcement
 

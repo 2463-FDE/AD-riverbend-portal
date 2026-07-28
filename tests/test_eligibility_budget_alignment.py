@@ -22,12 +22,34 @@ that satisfies the invariant proves nothing if the template overrides it with a
 value that does not — the fail-closed lesson from PR #5 r5.
 """
 import os
+import pathlib
 import re
 
 from conftest import load_module
 
 _elig = load_module("services/eligibility-service/config.py", "elig_config_budget").settings
 _intake = load_module("services/intake-service/config.py", "intake_config_budget").settings
+_ai = load_module("services/ai-assistant/config.py", "ai_config_budget").settings
+
+# Every CALLER of eligibility-service carries the same three knobs and owes the
+# same invariants. intake was first (ADR 0010); ai-assistant's visit-chat is the
+# second (ADR 0011). Parameterising here is the point: a third copy of the
+# pattern that inherited only the COMMENTS and not the guard would be exactly the
+# "confident docstring masking a gap" failure this suite exists to catch.
+CALLERS = {
+    "intake-service": {
+        "prefix": "",
+        "timeout": _intake.eligibility_timeout_seconds,
+        "degraded": _intake.eligibility_degraded_slow_seconds,
+        "slow_answer": _intake.eligibility_slow_answer_seconds,
+    },
+    "ai-assistant (visit-chat)": {
+        "prefix": "AI_",
+        "timeout": _ai.ai_eligibility_timeout_seconds,
+        "degraded": _ai.ai_eligibility_degraded_slow_seconds,
+        "slow_answer": _ai.ai_eligibility_slow_answer_seconds,
+    },
+}
 
 MARGIN_SECONDS = 1.0
 
@@ -79,34 +101,55 @@ def _answer_thresholds(source):
     )
 
 
-def _from_code_defaults():
+def _from_code_defaults(caller):
     return {
         "PAYER_CONNECT_TIMEOUT_SECONDS": _elig.payer_connect_timeout_seconds,
         "PAYER_READ_TIMEOUT_SECONDS": _elig.payer_read_timeout_seconds,
         "PAYER_MAX_RETRIES": _elig.payer_max_retries,
-        "ELIGIBILITY_TIMEOUT_SECONDS": _intake.eligibility_timeout_seconds,
-        "ELIGIBILITY_DEGRADED_SLOW_SECONDS": _intake.eligibility_degraded_slow_seconds,
-        "ELIGIBILITY_SLOW_ANSWER_SECONDS": _intake.eligibility_slow_answer_seconds,
+        "ELIGIBILITY_TIMEOUT_SECONDS": caller["timeout"],
+        "ELIGIBILITY_DEGRADED_SLOW_SECONDS": caller["degraded"],
+        "ELIGIBILITY_SLOW_ANSWER_SECONDS": caller["slow_answer"],
     }
 
 
-def _from_env_example():
+def _from_env_example(caller):
+    """The values `cp .env.example .env` actually seeds, for THIS caller's knobs.
+
+    ai-assistant's are the same three names under an AI_ prefix, so the template
+    is checked for both sets — a code default that satisfies an invariant proves
+    nothing if the template a fresh deploy copies overrides it (PR #5 r5).
+    """
     raw = _env_example_values()
-    missing = [
-        key
-        for key in _from_code_defaults()
-        if key not in raw
-    ]
+    prefix = caller["prefix"]
+    wanted = {
+        "PAYER_CONNECT_TIMEOUT_SECONDS": "PAYER_CONNECT_TIMEOUT_SECONDS",
+        "PAYER_READ_TIMEOUT_SECONDS": "PAYER_READ_TIMEOUT_SECONDS",
+        "PAYER_MAX_RETRIES": "PAYER_MAX_RETRIES",
+        "ELIGIBILITY_TIMEOUT_SECONDS": f"{prefix}ELIGIBILITY_TIMEOUT_SECONDS",
+        "ELIGIBILITY_DEGRADED_SLOW_SECONDS": f"{prefix}ELIGIBILITY_DEGRADED_SLOW_SECONDS",
+        "ELIGIBILITY_SLOW_ANSWER_SECONDS": f"{prefix}ELIGIBILITY_SLOW_ANSWER_SECONDS",
+    }
+    missing = [env_name for env_name in wanted.values() if env_name not in raw]
     assert not missing, f".env.example is missing {missing} — a fresh deploy would not seed them"
-    return {key: float(raw[key]) for key in _from_code_defaults()}
+    return {key: float(raw[env_name]) for key, env_name in wanted.items()}
 
 
-def _both_sources():
-    return {"config.py defaults": _from_code_defaults(), ".env.example": _from_env_example()}
+def _both_sources(caller):
+    return {
+        "config.py defaults": _from_code_defaults(caller),
+        ".env.example": _from_env_example(caller),
+    }
+
+
+def _every_caller_and_source():
+    """(label, budget source) for every caller x both sources of truth."""
+    for caller_name, caller in CALLERS.items():
+        for source_name, source in _both_sources(caller).items():
+            yield f"{caller_name} / {source_name}", source
 
 
 def test_payer_budget_fits_within_intake_timeout():
-    for label, source in _both_sources().items():
+    for label, source in _every_caller_and_source():
         inner, outer, _, _ = _budgets(source)
         assert inner < outer, (
             f"[{label}] payer worst-case {inner}s must be < intake eligibility timeout "
@@ -132,7 +175,7 @@ def test_degraded_slow_threshold_separates_short_circuit_from_payer_attempt():
     Lower: comfortably above one local HTTP round trip, so eligibility's free
     short-circuit is never mistaken for a payer round trip and does not trip the
     circuit on a dependency that is answering instantly."""
-    for label, source in _both_sources().items():
+    for label, source in _every_caller_and_source():
         _, _, threshold, connect_timeout = _budgets(source)
         assert threshold >= MIN_DEGRADED_SLOW_SECONDS, (
             f"[{label}] ELIGIBILITY_DEGRADED_SLOW_SECONDS ({threshold}s) must be >= "
@@ -169,7 +212,7 @@ def test_slow_answer_threshold_is_reachable_by_a_retried_payer_answer():
     Lower bound: the degraded threshold — a real verdict must never be judged more
     harshly than a no-verdict shrug. `config.py` also clamps this at runtime, so an
     operator override cannot invert it; the assertion pins the shipped values."""
-    for label, source in _both_sources().items():
+    for label, source in _every_caller_and_source():
         degraded, threshold, retried_floor = _answer_thresholds(source)
         assert threshold <= retried_floor, (
             f"[{label}] ELIGIBILITY_SLOW_ANSWER_SECONDS ({threshold}s) must be <= "
@@ -183,4 +226,97 @@ def test_slow_answer_threshold_is_reachable_by_a_retried_payer_answer():
             f"ELIGIBILITY_DEGRADED_SLOW_SECONDS ({degraded}s) — a real coverage "
             "verdict must not be judged more harshly than a reply carrying no "
             "verdict at all"
+        )
+
+
+# --- 4. verdict reuse must not outlive the record that holds the verdict ------
+# Added with the round-4 reuse window (ADR 0011). ai-assistant decides how long a
+# stored coverage verdict may answer a repeated member id; the GATEWAY owns how
+# long that verdict exists at all (`AI_VISIT_TTL_SECONDS`, the visit-memory
+# retention policy). Neither service can read the other's config, so — exactly like
+# the three budgets above — the pinning can only live here. ai-assistant mirrors the
+# gateway's default as a hardcoded ceiling, and a mirror with no test is the
+# stale-copy failure this file exists to prevent.
+_gw = load_module("services/gateway/config.py", "gw_config_budget").settings
+
+
+def test_verdict_reuse_cannot_outlive_visit_memory_retention():
+    sources = {
+        "config.py defaults": (
+            _ai._ai_reuse_ceiling_seconds,
+            _ai.ai_eligibility_reuse_seconds,
+            float(_gw.ai_visit_ttl_seconds),
+        ),
+        ".env.example": (
+            _ai._ai_reuse_ceiling_seconds,
+            float(_env_example_values()["AI_ELIGIBILITY_REUSE_SECONDS"]),
+            float(_env_example_values()["AI_VISIT_TTL_SECONDS"]),
+        ),
+    }
+    for label, (ceiling, configured, retention) in sources.items():
+        assert ceiling <= retention, (
+            f"[{label}] ai-assistant's reuse ceiling ({ceiling}s) must be <= the "
+            f"gateway's visit-memory retention ({retention}s). Above it, a verdict "
+            "stays reusable longer than the retention policy the operator chose — "
+            "and the ceiling is a hardcoded mirror of the gateway's default, so "
+            "tightening AI_VISIT_TTL_SECONDS otherwise changes nothing here"
+        )
+        assert min(configured, ceiling) <= retention, (
+            f"[{label}] the effective reuse window ({min(configured, ceiling)}s) must "
+            f"be <= visit-memory retention ({retention}s)"
+        )
+
+
+# --- 5. the member-id catalog must mean the same thing at both ends -----------
+# Added with the round-7 fix. ai-assistant RECOGNISES member ids against a closed
+# payer-prefix catalog; the gateway decides which ids may be PERSISTED into visit
+# memory, and a stored id is used directly for a payer lookup on a later recheck
+# turn without passing back through the recogniser. So the gateway needs the same
+# catalog — and two copies of a default is exactly the unpinned mirror this file
+# exists to catch. Runtime identity comes from a different control: both services
+# read AI_MEMBER_ID_PREFIXES from the SHARED .env (tests/test_compose_topology.py
+# pins that neither overrides it per-service), so an operator's change reaches both
+# ends at once. This test covers the defaults, which is what a deploy that never
+# sets the var actually runs on.
+def test_the_member_id_catalog_defaults_match_across_the_two_services():
+    assert _gw.ai_member_id_prefixes == _ai.ai_member_id_prefixes, (
+        "the gateway's member-id catalog default has drifted from ai-assistant's. "
+        "A prefix ai-assistant recognises but the gateway does not 502s that turn; "
+        "a prefix the gateway accepts but the recogniser never emits is an id that "
+        "reached visit memory by some other route, which is what round 7 closed"
+    )
+
+
+def test_an_empty_catalog_is_not_clamped_back_to_the_default_at_either_end(monkeypatch):
+    # Neither service treats "" as "use the defaults": there is no safest catalog,
+    # only no catalog, and that state must be loud (both endpoints 503) rather than
+    # silently permissive. Reloading with the var set proves the parse, not the
+    # comment.
+    monkeypatch.setenv("AI_MEMBER_ID_PREFIXES", "")
+    gw_blank = load_module("services/gateway/config.py", "gw_config_blank_catalog")
+    ai_blank = load_module("services/ai-assistant/config.py", "ai_config_blank_catalog")
+
+    assert gw_blank.settings.ai_member_id_prefixes == ()
+    assert ai_blank.settings.ai_member_id_prefixes == ()
+
+
+def test_the_recognised_member_id_LENGTH_is_pinned_at_both_ends():
+    # The catalog is not the only mirror this round created: each service compiles
+    # its own regex around the same `\d{3,9}` bound, and the tuple comparison above
+    # cannot see that. Widen one side and the other 502s an id the recogniser
+    # legitimately emits — the exact failure round 7 closed — while every other
+    # test still passes (pre-push review). A source scan rather than an import,
+    # because the two patterns live in app modules whose imports pull in a database
+    # engine and a Bedrock client; the values, not the machinery, are what drift.
+    root = pathlib.Path(__file__).resolve().parent.parent
+    bounds = {
+        name: set(re.findall(r"\\d\{(\d+),(\d+)\}", (root / name).read_text()))
+        for name in ("services/gateway/app.py", "services/ai-assistant/app.py")
+    }
+    for name, found in bounds.items():
+        assert found == {("3", "9")}, (
+            f"{name} changed the member-id digit bound to {found}. It is a mirror of "
+            "the other service's: the recogniser decides which ids exist and the "
+            "gateway decides which ids may be stored, so a one-sided change makes a "
+            "legitimate id unstorable (502, and the ai budget charge is kept)"
         )

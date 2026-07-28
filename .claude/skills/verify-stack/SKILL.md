@@ -73,6 +73,31 @@ git stash pop
 
 Report both results explicitly. "Test passes" alone is not verification here.
 
+**A whole-file stash proves less than it looks like once a round layers several
+fixes into one file** (measured on PR #14 r4). Stashing `app.py` reverts to
+`origin/main`, so a test can fail for a reason that has nothing to do with the
+fix it guards — or, worse, *pass*, because the behaviour it asserts also held
+before the feature that broke it existed. Two of that round's six tests were in
+that position. Where a fix is one line or one hunk, **restore that line
+specifically** (copy the file aside, edit it back to the pre-fix form, run the
+targeted test, restore the copy) and report the per-fix red/green pair. The
+useful question is not "does this test need the file" but "does this test
+discriminate the fix".
+
+**Two layers, once the adversarial pass finds defects in your own fix.** From
+PR #14 r6 on: layer A reverts to the branch tip (proves the tests need the
+round's work at all), layer B reverts **your own first cut** — the version you
+had before the pre-push pass — leaving the second-cut changes out. Only layer B
+pins what that pass found, and it is the layer that catches a "fix" whose test
+would have passed against the flawed first attempt. Where the change is a
+declared bound rather than a branch, neither layer discriminates it: widen the
+bound (mutation) and confirm the at-limit case fails. On r6, layer A red 15/16,
+layer B red 8, and the mutation red 2 — three different questions, three
+different runs.
+
+A test that stays green in *every* layer is not a safety net, it is decoration:
+delete it, or make it discriminate. One did on r6 and was deleted.
+
 ## 5. PHI/security diffs: dynamic check
 
 For anything touching a log path or redaction: `make up`, drive the real flow
@@ -105,7 +130,9 @@ any of it by pattern-matching on the word "verify."
 
 **When:** any diff touching logic, a response/API contract, concurrency, a
 timeout/retry budget, or a flow that spans layers (frontend BFF → gateway →
-service). Skip for pure docs/comments/config-value-only diffs.
+service). Skip for pure docs/comments/config-value-only diffs, and for
+test-only diffs — step 4's stash-proof is deterministic evidence that the test
+discriminates, which is the whole claim a test-only diff makes.
 
 **How:** spawn a reviewer agent on the branch diff (`git diff origin/main...`),
 prompted to attack like the adversarial bot — NOT a rehash of `/security-review`
@@ -125,7 +152,10 @@ prompted to attack like the adversarial bot — NOT a rehash of `/security-revie
 
 **Agent: one `general-purpose` pass. Cap at one — do not fan out.** The working
 model reaches for subagents readily; a second reviewer on the same diff is
-duplicated cost, not coverage.
+duplicated cost, not coverage. A pass that dies mid-run (the r6 first attempt
+returned "Agent terminated early due to an API error") yields **nothing** — its
+partial output is not a review. Re-run it; that is a retry, not a fan-out, and
+the pack makes the retry cheap because it is already written.
 
 Do **not** use `cavecrew-reviewer` here (dropped 2026-07-25). Its contract is
 one line per finding — `path:line: severity: problem. fix.` — which is a
@@ -140,10 +170,190 @@ compressed-output tradeoff also buys nothing here: context sits near 20% of a
 1M window. It stays in the roster for ad-hoc "review my working diff" during
 development; it is not a pre-push gate.
 
-Give the agent the diff, the trigger list above, and enough context to trace a
-failure end-to-end (what the service under test returns, and what its callers
-do with it). Ask it to say plainly when a section is sound — an agent that must
-produce findings will invent them.
+Ask it to say plainly when a section is sound — an agent that must produce
+findings will invent them.
+
+### The briefing pack (how to keep this pass cheap without weakening it)
+
+A subagent starts from an empty context: it inherits none of this thread's
+conversation and none of the files already read here. It does inherit the fixed
+prelude (system prompt, tool schemas, and the ~20KB CLAUDE.md chain, re-paid per
+spawn). The prelude is the small, one-time part. The expensive part is
+*rediscovery* — a reviewer groping for where things live runs many read/grep
+turns, and each turn re-pays its whole accumulated context as cache read
+([[session-length-dominates-token-cost]]).
+
+Separate the two things that get conflated here:
+
+- **The value is independent judgment** — a reviewer that never saw the reasoning
+  which produced the diff cannot inherit that reasoning's assumptions.
+- **The cost is independent cartography** — the reviewer not knowing where
+  anything is.
+
+Only the second is worth cutting. So hand the agent the geography and the raw
+facts, and withhold every conclusion. **Facts, not verdicts.** Verdicts are what
+contaminate isolation; a call-site map does not.
+
+Assemble the pack from what this thread already holds (so it costs output tokens
+once, not a multiplied read loop in the agent):
+
+- the full `git diff origin/main...` output, inline and verbatim
+- the inventory of touched files
+- a call-site map: who calls each changed function, as `file:line`
+- contract facts: what the changed code returns on each branch, and what its
+  callers do with each of those returns
+- the tests that already cover this surface, by name
+
+Deliberately excluded: why the design was chosen, what was considered and
+rejected, and any "I already checked X, it's fine." Those are the assumptions
+the pass exists to test.
+
+Then constrain the search, not the reasoning:
+
+- **No orientation greps.** State in the prompt that the geography in the pack is
+  authoritative, and that a file may be read only to test a *named* failure
+  hypothesis — hypothesis first, then the read. This converts an unbounded sweep
+  into targeted tracing.
+- **Cap the number of findings, never their length.** Ask for the top findings by
+  severity, each with a full multi-step failure trace. The dropped
+  `cavecrew-reviewer` failed because one-line output is a reasoning constraint in
+  disguise (see above); a count cap is not.
+- **Build the pack once, feed it to whichever lenses run.** This step and
+  `/security-review` need the same geography and differ only in lens, so the
+  discovery cost should be paid once. If the diff is small (≲3 files in a single
+  service), a single agent carrying both trigger lists is fine — one prelude, one
+  exploration, two lenses. Keep them separate above that size.
+
+### When the security lens is worth its own pass
+
+**Not every round.** The two lenses overlap heavily *in this repo*, because the
+security surface here largely IS the correctness surface — PHI handling is data-
+flow correctness, and the adversarial pass traces data flow anyway. Measured
+twice now (see the table below): on PR #14 the security pass has produced **zero
+unique findings across two runs**, and on the pre-push pass for `84117fd` its
+top candidate turned out to be the adversarial pass's ship-blocker seen from
+another angle. Meanwhile the adversarial pass's `re.IGNORECASE` Unicode finding
+in round 3 was, in substance, a PHI/patient-safety finding — the security-shaped
+defect was caught by the correctness lens, unprompted.
+
+So run `/security-review` when the diff opens a **new surface**, not when it
+changes behaviour on an existing one. New surface means any of:
+
+- a new **egress** (a new outbound call, a new destination, a new field added to
+  an existing outbound payload);
+- a new **persistence sink**, or a new field written to an existing one;
+- a new **auth/authz decision point**, or a change to an existing one;
+- a new **externally reachable route**, or a route changing its auth posture;
+- a new **parser of untrusted input**, or a new credential/secret path.
+
+PR #14 rounds 1–2 hit several of these (Redis credentials, a public `/healthz`
+doing I/O, two new endpoints) and the pass was justified. Round 3 hit none — it
+changed control flow, a regex flag, and two response fields on surfaces that
+already existed — and returned zero, predictably. When you skip it, **say so in
+the approval gate and name which trigger was absent**, so skipping stays a
+judgement on record rather than a quiet omission.
+
+CLAUDE.md §5's "run it on auth/PHI/ROI diffs before a PR" still holds for
+**opening** a PR. This rule is about the per-round loop after that.
+
+### ⚠ `/security-review` builds its diff from COMMITTED state only
+
+Its `DIFF CONTENT` is `origin/main...HEAD`. Working-tree changes are **absent
+from the diff it hands the reviewer**, even though the `GIT STATUS` block it
+prints lists them as modified — which reads as if they were included. Verified
+on PR #14 round 3: the artifact ended at the branch tip and contained zero
+occurrences of `llm_egress`, `re.ASCII`, or `_assistant_health`, i.e. none of
+the round's actual work. The pass came back clean on code it had never seen. It
+was saved only by the reviewer independently noticing the mismatch and reading
+the working tree instead — luck, not design.
+
+`/security-review` is a built-in command, so this cannot be fixed in-repo.
+**Commit first, then invoke it.** If you must run it on uncommitted work, state
+in the sub-agent prompt that the artifact is stale and that the working tree is
+authoritative.
+
+**Record the cost.** After the pass, note the agent's token total and its
+findings count here, the way the 78k/0-findings `cavecrew-reviewer` figure above
+was recorded — that number is what retires an approach. Subagent transcripts do
+not appear in `~/.claude/projects/<project>/*.jsonl` (no `isSidechain` rows), so
+take the number from the run's own reporting, not from log archaeology.
+
+Measurements so far:
+
+| run | agent | cost | tool calls | findings |
+|-----|-------|------|-----------|----------|
+| PR #14 r5 diff (2026-07-25) | `cavecrew-reviewer`, no pack | 78k | — | 0 (all real ones missed) |
+| PR #14 r2 fixes (2026-07-27) | `general-purpose` + briefing pack | 72k | 12 | 6, all real, all fixed |
+| PR #14 r3 fixes (2026-07-27) | `cavecrew-reviewer` + briefing pack | 30k | 1 | **0** — missed both highs below |
+| PR #14 r3 fixes (2026-07-27) | `general-purpose` + briefing pack | 105k | 13 | 4 (2 high), all real, all fixed |
+| PR #14 r3 security lens (2026-07-27) | `/security-review` + pack | 153k | 27 | 0 |
+| PR #14 r4 fixes (2026-07-27) | `general-purpose` + pack, BOTH lenses | 73k | 7 | 6 (2 high + 1 high pre-existing), all real, all fixed |
+| PR #14 r5 fixes (2026-07-27) | `general-purpose` + pack | 66k | 8 | 4 (3 medium + 1 low), all real, 3 fixed + 1 accepted-and-documented |
+| PR #14 r6 fixes (2026-07-27) | `general-purpose` + pack | 69k | 5 | 5 (2 high), all real, all fixed |
+| PR #14 r7 fixes (2026-07-27) | `general-purpose` + pack | 127k | 19 | 4, all real, all fixed — incl. a regression the fix itself introduced |
+
+Two things that table settles.
+
+**`cavecrew-reviewer` is retired here for good.** Second run, second zero — and
+this time it had the same briefing pack the `general-purpose` run had, on the
+same diff, so the pack is not what separates them. It cost 30k to conclude "diff
+is sound" about code containing a refund path that would have let a rotated
+Bedrock key escape the tenant spend ceiling. Cheap and wrong is the worst cell
+in the matrix; do not re-litigate this on the grounds that it is cheap.
+
+**The adversarial pass earns its 105k; the security pass has not yet earned
+its 153k.** Round 3's two highs were both in code the main thread had just
+written and self-reviewed — one of them a fix that was wrong in the unsafe
+direction, which is exactly the blind spot an isolated reviewer exists to catch
+and exactly what self-review cannot. Keep it every round. Gate the security lens
+on the new-surface rule above.
+
+**A round-5 addition: point the pass at the fix's own tests, not only its code.**
+On a ~4KB diff the pass cost 66k for 8 calls and its highest-value finding was
+in the *test*, not the implementation — the new invariant test computed its
+expected value from the production predicate, so it was an identity and would
+have survived a mutation that deleted the whole model-selection step. Self-review
+does not catch that: the same reasoning that wrote the predicate writes the
+expectation. Include the new tests verbatim in the pack and name "does each new
+assertion discriminate the fix, or restate it?" as a lens. Step 4's stash-proof
+answers this for a *missing* implementation, not for an expectation derived from
+the implementation that is present.
+
+The pack run read 9 files in 12 calls with **zero** orientation greps — the
+budget went into tracing rather than searching, and it found a class of defect
+self-review had not: a per-operation timeout being reasoned about as if it were
+a per-probe timeout. Cost is roughly flat versus the no-pack baseline; what
+changed is what the tokens bought. Treat 70–80k as the expected price of this
+step on a ~35KB diff, and the *orientation-call count* (target: 0) as the number
+to watch, since it does not drift with diff size.
+
+**A round-7 addition: the fix's own change of policy is a defect class, and it is
+the one self-review is worst at.** Round 7 replaced a fail-open Redis lock with a
+fail-closed one, and the pass's top finding was a regression the fix had
+introduced rather than anything the review round had asked about: the old
+fail-open path returned the token it had just sent, so the route's
+compare-and-delete cleaned up whenever the write had actually landed, and raising
+instead of returning discarded that token. The fault the fix reasoned about
+(`maxmemory` + `noeviction`, where the write does not land) was real but was not
+the only one — a reset connection or a failover can leave the write **applied**
+with its reply lost, and then the orphaned lock wedged the resource for its whole
+TTL. Two lenses worth naming in the pack from now on:
+
+- **"What did the code you replaced do that yours no longer does?"** A behaviour
+  change is not only what it adds. This one deleted a cleanup path nobody had
+  written down as a feature.
+- **"Enumerate the fault, don't pick one."** A store fault has several shapes
+  (write refused, write applied and reply lost, read-only, credential rejected),
+  and a fix justified against one of them silently assumes the others behave the
+  same. The tests inherit that assumption: this round's first cut injected a fault
+  that *failed* the write, so no test could see the applied-then-lost case.
+
+The cost was 127k over 19 calls, roughly double the r2–r6 band, on a ~30KB diff
+that included 8 changed test files. Still zero orientation greps. The extra spend
+went into the pass verifying its own claims by running the suite against probe
+fakes it wrote — which is what made the top finding arrive as a reproduction
+rather than a hypothesis, and is worth the money on a diff that changes a
+concurrency policy.
 
 Triage findings, fix the real ones **with regression-proven tests** (step 4),
 re-run the suite, then present the approval gate.
