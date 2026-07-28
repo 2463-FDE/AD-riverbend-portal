@@ -18,6 +18,7 @@ import sys
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from conftest import load_module
 
@@ -404,6 +405,40 @@ _UNUSABLE_BODIES = {
         # did not come from it.
         "facts": {**DOWNSTREAM_OK["facts"], "insurance_id": "aetn1224"},
     },
+    # Round 7: SHAPE was not enough. Every value below is upper-case ASCII and
+    # passed the old `^[A-Z0-9-]+$` check, and none of them can come out of
+    # `_extract_insurance_ids` — so persisting one bypasses the closed-catalog
+    # false-positive control, and a later `recheck` uses the stored id DIRECTLY for
+    # a payer lookup, where a 404 renders as a definitive "no active coverage".
+    "insurance_id_off_catalog": {
+        **DOWNSTREAM_OK,
+        "facts": {**DOWNSTREAM_OK["facts"], "insurance_id": "ABC1234"},
+    },
+    "insurance_id_hyphenated": {
+        # A catalogued prefix is not enough: the recogniser emits prefix+digits
+        # with nothing between them.
+        **DOWNSTREAM_OK,
+        "facts": {**DOWNSTREAM_OK["facts"], "insurance_id": "AETN-1224"},
+    },
+    "insurance_id_too_few_digits": {
+        **DOWNSTREAM_OK,
+        "facts": {**DOWNSTREAM_OK["facts"], "insurance_id": "AETN12"},
+    },
+    "insurance_id_letters_after_the_prefix": {
+        **DOWNSTREAM_OK,
+        "facts": {**DOWNSTREAM_OK["facts"], "insurance_id": "AETNXYZ1224"},
+    },
+    "insurance_id_trailing_newline": {
+        # Python's `$` also matches immediately before a trailing newline, which is
+        # why the check is a fullmatch — the value goes to the payer verbatim.
+        **DOWNSTREAM_OK,
+        "facts": {**DOWNSTREAM_OK["facts"], "insurance_id": "AETN1224\n"},
+    },
+    "insurance_id_arabic_indic_digits": {
+        # `re.ASCII`, not decoration: bare `\d` matches these.
+        **DOWNSTREAM_OK,
+        "facts": {**DOWNSTREAM_OK["facts"], "insurance_id": "AETN١٢٣٤"},
+    },
     # Bounds, so a widened one cannot pass unnoticed.
     "insurance_id_too_long": {
         **DOWNSTREAM_OK,
@@ -498,6 +533,121 @@ def test_a_poisoned_member_id_never_reaches_the_store_so_the_visit_survives(
 
     assert r.status_code == 200
     assert healthy[0]["facts"]["insurance_id"] == MEMBER_ID
+
+
+# --- the stored id must be one the RECOGNISER could have produced (round 7) ---
+def test_an_off_catalog_member_id_never_starts_a_visit(redis, monkeypatch):
+    # The other half of the table above: on a FIRST turn there is no record to
+    # compare, so the property is that nothing is written at all.
+    _fanout_returning(monkeypatch, _UNUSABLE_BODIES["insurance_id_off_catalog"])
+
+    assert _chat().status_code == 502
+    assert not [key for key in redis.store if key.startswith("visit:")]
+
+
+@pytest.mark.parametrize("prefix", gw.settings.ai_member_id_prefixes)
+def test_every_catalogued_prefix_is_still_stored(redis, monkeypatch, prefix):
+    # The quantifier in the other direction, so the fix cannot pass by rejecting
+    # everything: every prefix the recogniser can match is still persistable —
+    # including the ones that are a prefix of another (AETN/AETNA), which a
+    # careless alternation truncates.
+    stored_id = f"{prefix}1224"
+    _fanout_returning(
+        monkeypatch,
+        {
+            **DOWNSTREAM_OK,
+            "facts": {"insurance_id": stored_id, "last_eligibility": None},
+        },
+    )
+
+    r = _chat()
+
+    assert r.status_code == 200
+    assert _stored(redis, r.json()["visit_id"])["facts"]["insurance_id"] == stored_id
+
+
+def test_an_empty_catalog_refuses_the_endpoint_rather_than_trusting_any_id(
+    redis, fanout, monkeypatch
+):
+    # Mirrors ai-assistant's own guard. With no catalog this service cannot tell a
+    # recognised id from a token that merely looks like one, so the misconfiguration
+    # is named as a 503 before any spend instead of 502-ing every id-bearing turn.
+    monkeypatch.setattr(gw, "_STORED_MEMBER_ID_RE", None)
+
+    r = _chat()
+
+    assert r.status_code == 503
+    assert fanout == []
+    assert not [k for k in redis.counts if k.startswith("ratelimit:ai:global")]
+
+
+def test_an_empty_catalog_compiles_no_pattern_and_rejects_ids(monkeypatch):
+    # The round-1 empty-catalog hole, one service over: joining zero prefixes
+    # yields `^(?:)\d{3,9}$`, which accepts any run of digits. None is the only
+    # safe answer, and the validator must reject rather than wave through when the
+    # endpoint guard above is bypassed.
+    assert gw._build_stored_member_id_re(()) is None
+
+    monkeypatch.setattr(gw, "_STORED_MEMBER_ID_RE", None)
+    with pytest.raises(ValidationError):
+        gw._VisitChatFacts.model_validate(
+            {"insurance_id": "1224", "last_eligibility": None}
+        )
+
+
+def test_a_non_ascii_prefix_cannot_widen_what_may_be_stored(monkeypatch):
+    # `re.ASCII` constrains `\d` and `\b` and says NOTHING about a literal
+    # non-ASCII character inside a prefix, so the flag alone left the gateway wider
+    # than the old shape check had been. ai-assistant's VisitFacts rejects a
+    # non-ASCII stored id, so persisting one 422s every later turn and the visit is
+    # dead until its TTL with no path that repairs it.
+    monkeypatch.setattr(
+        gw, "_STORED_MEMBER_ID_RE", gw._build_stored_member_id_re(("MÉDI",))
+    )
+
+    with pytest.raises(ValidationError):
+        gw._VisitChatFacts.model_validate(
+            {"insurance_id": "MÉDI1224", "last_eligibility": None}
+        )
+
+
+@pytest.mark.parametrize(
+    "digits,accepted",
+    [(2, False), (3, True), (9, True), (10, False)],
+)
+def test_the_stored_id_digit_bound_is_exactly_the_recognisers(digits, accepted):
+    # Hardcoded boundary numbers, not a re-derivation of the pattern: the `\d{3,9}`
+    # in this service is a MIRROR of the recogniser's, and the drift that matters
+    # is one side widening or narrowing it — the recogniser then emits an id the
+    # gateway 502s (and charges for). The two literals are pinned equal by
+    # tests/test_eligibility_budget_alignment.py; these numbers are what makes a
+    # change here deliberate.
+    token = f"AETN{'1' * digits}"
+
+    assert bool(gw._STORED_MEMBER_ID_RE.fullmatch(token)) is accepted
+
+
+def test_a_malformed_body_is_a_422_even_while_the_catalog_is_missing(
+    redis, fanout, monkeypatch
+):
+    # Ordering: the client's error is reported as the client's error. Reporting a
+    # bad body as "assistant is not configured" would hide every client mistake
+    # behind a server fault for the whole misconfiguration.
+    monkeypatch.setattr(gw, "_STORED_MEMBER_ID_RE", None)
+
+    r = client.post("/ai/visit-chat", json={"message": "hi", "bogus": 1})
+
+    assert r.status_code == 422
+    assert fanout == []
+
+
+def test_a_prefix_is_escaped_so_the_catalog_cannot_widen():
+    # Operator input: an unescaped `.` admits ABC1234 — precisely the value this
+    # round's finding was about.
+    pattern = gw._build_stored_member_id_re(("A.C",))
+
+    assert pattern.fullmatch("A.C1234")
+    assert not pattern.fullmatch("ABC1234")
 
 
 def test_a_verdict_key_nothing_reads_is_not_carried_into_the_store(
@@ -623,6 +773,173 @@ def test_the_lock_is_released_even_when_the_fanout_fails(redis, monkeypatch, fan
     assert _chat("again?", visit_id=visit_id).status_code == 502
 
     assert f"visitlock:{visit_id}" not in redis.store
+
+
+def _break_all_writes(redis, monkeypatch):
+    """Every SET fails, GETs still answer — the `maxmemory` + `noeviction` shape."""
+    def _fail(key, value, nx=False, ex=None):
+        raise RuntimeError("OOM command not allowed when used memory > 'maxmemory'")
+
+    monkeypatch.setattr(redis, "set", _fail)
+
+
+def _lock_write_lands_then_faults(redis, monkeypatch):
+    """The OTHER ordinary fault: the SET is applied and its reply is lost.
+
+    A reset connection, a read timeout, or a failover mid-command. The key exists
+    afterwards, so a token discarded here orphans it — which is why the token
+    rides on VisitLockUnavailable. Returns a callable that heals the store, so a
+    test can assert what a retry sees once Redis recovers.
+    """
+    original_set = redis.set
+
+    def _set(key, value, nx=False, ex=None):
+        result = original_set(key, value, nx=nx, ex=ex)
+        if key.startswith("visitlock:"):
+            raise RuntimeError("Connection reset by peer")
+        return result
+
+    monkeypatch.setattr(redis, "set", _set)
+    return lambda: monkeypatch.setattr(redis, "set", original_set)
+
+
+# The lock guards STATE, so it does not fail open (Codex PR #14 round 7). Most
+# cases below narrow the injection to the `visitlock:` keys, which ISOLATES the
+# lock: the visit record's own write faults have their own tests further down, and
+# a blanket fault on GET too would 503 at the memory read and prove nothing about
+# the lock. `_break_all_writes` then covers the full store-side fault, because a
+# property that only holds for the narrowed injection is an artifact of the fake
+# (pre-push review, round 7).
+def test_a_lock_write_fault_on_an_existing_visit_is_a_503(redis, fanout):
+    visit_id = _start_visit(fanout)
+    before = _stored(redis, visit_id)
+    redis.fail_on.add("visitlock:")
+
+    r = _chat("is it still active?", visit_id=visit_id)
+
+    assert r.status_code == 503
+    assert len(fanout) == 1, "the turn never fanned out"
+    assert _stored(redis, visit_id) == before, "and the record is untouched"
+
+
+def test_two_turns_on_one_visit_cannot_both_proceed_without_a_lock(redis, fanout):
+    # The finding itself. With a synthetic token handed back on the fault, BOTH
+    # turns believed they held the lock: both read this record, both would spend a
+    # PHI-bearing payer call, and whichever saved second would drop the other's
+    # appended turns and facts — the confirmed member id and verdict live nowhere
+    # else. Sequential requests are the same read-modify-write the concurrent pair
+    # performs; what is asserted is that no second turn is ever admitted.
+    visit_id = _start_visit(fanout)
+    before = _stored(redis, visit_id)
+    redis.fail_on.add("visitlock:")
+
+    first = _chat("is it still active?", visit_id=visit_id)
+    second = _chat("still active?", visit_id=visit_id)
+
+    assert [first.status_code, second.status_code] == [503, 503]
+    assert len(fanout) == 1, "neither turn reached ai-assistant or the payer"
+    assert _stored(redis, visit_id) == before
+
+
+def test_a_lock_fault_costs_no_spend(redis, fanout, monkeypatch):
+    # 503 is raised before _reserve_ai_budget, so there is nothing to refund and
+    # a store fault cannot walk the shared daily ceiling to its cap.
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 5)
+    visit_id = _start_visit(fanout)
+    redis.fail_on.add("visitlock:")
+
+    assert _chat("again?", visit_id=visit_id).status_code == 503
+
+    charged = [k for k in redis.counts if k.startswith("ratelimit:ai:global")]
+    assert charged and redis.counts[charged[0]] == 1, "only the first turn charged"
+
+
+def test_a_lock_fault_names_itself_in_the_log_without_a_value(redis, fanout, caplog):
+    # A guard the operator cannot see firing is a green dashboard over a dead
+    # feature. The cause is named; the visit id and the member id are not.
+    visit_id = _start_visit(fanout)
+    redis.fail_on.add("visitlock:")
+
+    with caplog.at_level("DEBUG"):
+        assert _chat("again?", visit_id=visit_id).status_code == 503
+
+    assert "visit lock unavailable" in caplog.text
+    assert visit_id not in caplog.text
+
+
+def test_a_lost_lock_reply_does_not_wedge_the_visit(redis, fanout, monkeypatch):
+    # The fault the `noeviction` shape does not cover, and the one a discarded
+    # token turns into an outage: the SET LANDED and the reply was lost. The lock
+    # key then exists with a token nobody holds, and for the whole lock TTL (75s
+    # by default) every retry answers 429 "already processing" — falsifying the
+    # 503's own promise that the retry resumes the conversation.
+    visit_id = _start_visit(fanout)
+    heal = _lock_write_lands_then_faults(redis, monkeypatch)
+
+    assert _chat("again?", visit_id=visit_id).status_code == 503
+
+    heal()
+    r = _chat("still active?", visit_id=visit_id)
+
+    assert r.status_code == 200, "a healthy retry resumes the visit, never 429"
+    assert f"visitlock:{visit_id}" not in redis.store
+
+
+def test_a_lost_lock_reply_on_a_first_turn_is_cleared_with_the_turn(
+    redis, fanout, monkeypatch
+):
+    # Same fault, unlocked branch: the token still has to reach the `finally`, or
+    # the visit this turn just created is wedged from its second message onward.
+    heal = _lock_write_lands_then_faults(redis, monkeypatch)
+
+    body = _chat().json()
+
+    assert body["visit_id"] is not None
+    heal()
+    assert f"visitlock:{body['visit_id']}" not in redis.store
+    assert _chat("again?", visit_id=body["visit_id"]).status_code == 200
+
+
+def test_an_all_writes_fault_still_refuses_an_existing_visit(
+    redis, fanout, monkeypatch
+):
+    # Not an artifact of failing one key prefix: under the full store-side fault
+    # the record still LOADS (so ownership is verified) and the turn is still
+    # refused before any fan-out.
+    visit_id = _start_visit(fanout)
+    before = _stored(redis, visit_id)
+    _break_all_writes(redis, monkeypatch)
+
+    assert _chat("again?", visit_id=visit_id).status_code == 503
+    assert len(fanout) == 1
+    assert _stored(redis, visit_id) == before
+
+
+def test_a_first_turn_under_an_all_writes_fault_degrades_honestly(
+    redis, fanout, monkeypatch
+):
+    # The unlocked first turn is not claimed to preserve a conversation: with every
+    # SET failing it answers once and SAYS so, rather than handing back a visit id
+    # that 404s on the clerk's next message (round 2's rule, unchanged by round 7).
+    _break_all_writes(redis, monkeypatch)
+
+    body = _chat().json()
+
+    assert body["visit_id"] is None
+    assert body["visit_memory"] == "unavailable"
+
+
+def test_a_first_turn_survives_a_lock_write_fault(redis, fanout):
+    # Nothing to serialise against: the id was minted inside this request and no
+    # client has ever seen it, so failing closed here would be an outage for new
+    # visits that buys no state safety.
+    redis.fail_on.add("visitlock:")
+
+    r = _chat()
+
+    assert r.status_code == 200
+    assert r.json()["visit_memory"] == "ok"
+    assert len(fanout) == 1
 
 
 # --- visit lifecycle + ownership -------------------------------------------

@@ -164,8 +164,10 @@ def test_visit_memory_writes_cannot_reach_an_unauthenticated_store(clean_client)
 
 # --- the refusal must reach the caller, not a swallow (review round 2) --------
 # Seven helpers wrap _redis() in a bare `except Exception` so a Redis BLIP does
-# not become an outage — two of them (the single-flight locks) deliberately fail
-# OPEN and hand back a token. A configuration refusal is a different animal: if
+# not become an outage — one of them (ai_singleflight_acquire) deliberately fails
+# OPEN and hands back a token, while the per-visit lock now raises
+# VisitLockUnavailable instead, because it guards STATE rather than spend (round
+# 7). A configuration refusal is a different animal: if
 # it is swallowed, a gateway pointed at an unauthenticated store keeps serving,
 # spends Bedrock budget, and loses mutual exclusion, with nothing logged. Today
 # no unauthenticated route reaches these, but that is dependency ordering, not a

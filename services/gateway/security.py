@@ -744,6 +744,29 @@ def visit_memory_save(
     return True
 
 
+class VisitLockUnavailable(Exception):
+    """The per-visit lock could not be consulted or written.
+
+    Deliberately distinct from "somebody else holds it" (``None``), which is a
+    legitimate concurrent turn the route answers with 429. This is the state
+    where the guard itself is absent, and the caller must not act as though it
+    were held — see ``visit_lock_acquire``.
+
+    Carries the token the failed ``SET`` used, and the caller must pass it back to
+    ``visit_lock_release``. "The write did not land" is only ONE of the two faults
+    here: a reset connection, a read timeout, or a failover can leave the ``SET``
+    applied server-side with its reply lost, and a token discarded in that case
+    orphans the key for its whole TTL (75s by default) — every later turn in that
+    visit answering 429 "already processing" against a lock nobody holds. The
+    compare-and-delete release removes the key only if OUR ``SET`` is what landed,
+    so passing the token back is safe in both cases (pre-push review, round 7).
+    """
+
+    def __init__(self, reason: str, token: str | None = None):
+        super().__init__(reason)
+        self.token = token
+
+
 def visit_lock_acquire(visit_id: str, lock_ttl_seconds: int) -> str | None:
     """Serialise concurrent turns within ONE visit (ADR 0011 §3).
 
@@ -754,9 +777,28 @@ def visit_lock_acquire(visit_id: str, lock_ttl_seconds: int) -> str | None:
     make two paid calls for one clerk.
 
     Returns a unique owner token to the winner and None to anyone who finds the
-    lock held. Fails OPEN on a Redis fault, matching ai_singleflight_acquire: the
-    authoritative spend guard is the fail-CLOSED budget ceiling, and a lost turn
-    is a smaller harm than turning a Redis blip into an outage.
+    lock held. A Redis fault raises ``VisitLockUnavailable``: this lock does NOT
+    fail open, and that is the one place it departs from ``ai_singleflight_acquire``
+    (Codex PR #14 round 7).
+
+    Single-flight only dedupes paid work, and the authoritative guard behind it is
+    the fail-CLOSED budget ceiling, so failing it open costs at most a duplicate
+    call. This lock guards STATE, and nothing else guards that state: two turns
+    that both believe they hold it read the same record, both fan out to a
+    PHI-bearing payer lookup, and whichever save lands second silently drops the
+    other's appended turns and facts — and the confirmed member id and the payer
+    verdict live nowhere else. Nor can the fault be assumed to have stopped the
+    write that does the damage: the realistic shape here is Redis at
+    ``maxmemory`` with ``noeviction``, where GET succeeds (so the record loads,
+    and ownership IS verified) and SET fails, and a fault that clears between the
+    lock and the save leaves both writers live.
+
+    Policy stays with the route, which is the only caller that knows which turn
+    this is, and which owes the release either way (see the exception): 503 for an
+    existing visit, and proceed unlocked for a FIRST turn,
+    whose id was minted microseconds earlier and is not yet known to any client,
+    so there is nothing to serialise against and failing it closed would turn a
+    blip into an outage for no gain.
     """
     token = uuid.uuid4().hex
     try:
@@ -766,8 +808,11 @@ def visit_lock_acquire(visit_id: str, lock_ttl_seconds: int) -> str | None:
         return token if got else None
     except RedisUnauthenticated:
         raise
-    except Exception:
-        return token
+    except Exception as e:
+        # Type name only, and no chained context: the same no-value rule
+        # visit_memory_get follows. The token rides along — the write may have
+        # landed with its reply lost, and only this token can clear it.
+        raise VisitLockUnavailable(type(e).__name__, token=token) from None
 
 
 def visit_lock_release(visit_id: str, token: str | None) -> None:

@@ -871,6 +871,144 @@ the gateway may believe about ai-assistant's.
    our spend either. The error line now names the kept charge explicitly, so the
    drain is attributable in the logs even though it is deliberate.
 
+## Round 7 corrections (2026-07-27)
+
+Adversarial review round 7 found two findings. Both are the same mistake in
+different clothing: a control copied from a neighbouring path kept the
+neighbour's failure policy, when this path's failure had a different cost.
+
+1. **The per-visit lock failed OPEN, on the exact state it exists to protect.**
+   `visit_lock_acquire` was written as the ADR-0007 single-flight pattern
+   re-keyed to a visit, and it inherited single-flight's Redis-fault behaviour —
+   hand back a synthetic token and continue — with the same justification copied
+   into its docstring. That justification does not transfer. Single-flight only
+   dedupes *paid* work and sits in front of the fail-CLOSED budget ceiling, so
+   failing it open costs at most one duplicate call. This lock is the only guard
+   on the visit record, and nothing sits behind it: two turns that both believe
+   they hold it read the same record, both fan out to a PHI-bearing payer
+   lookup, and whichever save lands second silently drops the other's appended
+   turns and facts — the confirmed member id and the payer verdict, which live
+   nowhere else. A double-click or a client retry is enough.
+
+   It was also wrong to assume the fault that broke the lock had already stopped
+   the damaging write. The realistic shape is Redis at `maxmemory` with
+   `noeviction`: `GET` succeeds — so the record loads and ownership *is*
+   verified — while every `SET` fails. A blip that clears between the lock and
+   the save leaves both writers live.
+
+   `visit_lock_acquire` now raises a typed `VisitLockUnavailable` on a Redis
+   fault, and the **route** decides, because it is the only caller that knows
+   which turn this is:
+
+   - **existing visit → 503**, record untouched, so a retry resumes the
+     conversation. 503 and not 429, because nothing is processing this visit —
+     our guard is down. It is raised before `_reserve_ai_budget`, so there is no
+     spend to refund and a store fault cannot walk the shared ceiling.
+   - **first turn → proceed unlocked.** The id was minted microseconds earlier
+     inside that request and no client has ever seen it, so there is nothing to
+     serialise against; failing closed there would turn a blip into an outage
+     for new visits and buy no state safety. Logged at warning, since the guard
+     is absent even though the turn is safe.
+
+   The asymmetry is the design, so it is pinned in both directions: the
+   fail-closed tests are red against the returned-token version, and the
+   first-turn test is red against an unconditional fail-closed route.
+
+2. **The gateway accepted member ids the recogniser could never have produced.**
+   Round 6 closed the unknown-KEY door and the invalid-VALUE door on
+   `facts.insurance_id` — but only as far as ai-assistant's *storage* validator
+   (upper-case, ASCII). The recogniser is stricter than that by design: it
+   matches a **closed payer-prefix catalog**, because a false positive is not
+   safe (eligibility-service maps a payer 404 onto a definitive `active: false`,
+   §5). An upper-case shape check accepted `ABC1234`, the gateway persisted it,
+   and ai-assistant then uses a *stored* `VisitFacts.insurance_id` directly for a
+   `recheck` lookup **without** passing back through `_extract_insurance_ids` —
+   so the catalog control was bypassed and a token nobody recognised could come
+   back as a confident "no active coverage".
+
+   The gateway now validates a persisted id against the catalog itself
+   (`AI_MEMBER_ID_PREFIXES`, the same env var and default ai-assistant reads),
+   as a full match with no `IGNORECASE` and with `re.ASCII` — the single
+   canonical form the recogniser emits, and nothing else. A hyphen is no longer
+   accepted either; the recogniser cannot emit one.
+
+   Two consequences accepted deliberately:
+
+   - **A second copy of a default is a mirror**, which is the round-4 failure if
+     left unpinned. Three controls hold it: `test_eligibility_budget_alignment.py`
+     asserts the two defaults are equal, `test_compose_topology.py` asserts
+     neither service pins the var in its own `environment:` block (so an
+     operator override lands in the shared `.env` and reaches both ends at
+     once), and both services read that shared file. `.env.example` deliberately
+     does **not** set the var — a third copy of the value would be a third thing
+     to keep in sync.
+   - **A gateway that has not learned a prefix ai-assistant knows 502s that
+     turn**, record untouched, and the turn succeeds once the config matches.
+     That is the fail-closed direction for a value that is used on a payer call,
+     and it is a louder failure than persisting an id whose subject we cannot
+     attribute.
+
+   An **empty** catalog at the gateway refuses `/ai/visit-chat` with 503 —
+   mirroring ai-assistant's `_require_member_id_catalog`, and for the same reason
+   the empty catalog is not clamped to a default anywhere: joining zero prefixes
+   yields `^(?:)\d{3,9}$`, which accepts any run of digits. There is no safest
+   catalog, only no catalog, and that state has to be loud.
+
+   **What a skew costs, traced rather than asserted.** The 502 takes round 6's
+   keep-the-charge path, so a catalogued-prefix skew *spends*: five turns at a
+   `AI_RATE_LIMIT_GLOBAL_PER_DAY` of 5 exhaust the tenant's shared daily AI
+   ceiling and `/ai/intake-instructions` then 429s for the rest of the day.
+   Keeping the charge is still right — ai-assistant ran the whole turn, so a
+   Bedrock call really did happen, and refunding real spend is the r3/r5 mistake —
+   but the exposure is worth stating plainly, because two ordinary ops actions
+   open it: both services compile the catalog **at import**, so onboarding a payer
+   prefix leaves a skew window until both containers have restarted, and
+   *removing* a prefix makes every in-flight visit holding such an id 502 on every
+   turn until its `AI_VISIT_TTL_SECONDS` expires the record. The r6 error line
+   names the failing field (`facts`) and the kept charge, so the drain is
+   attributable in the logs; there is no cheaper mitigation that does not either
+   erase a confirmed id or persist one whose subject we cannot attribute. Roll a
+   catalog change with both services restarted together.
+
+### Pre-push review of the round-7 fix (four findings, all closed here)
+
+The adversarial pass on our own fix found four, and the first was a **regression
+introduced by the fix**, which is the reason that pass exists:
+
+1. **Raising the lock error threw the token away.** The pre-fix fail-open path
+   returned the token it had just sent, so the route's `finally` compare-and-delete
+   cleaned up whenever the `SET` had actually landed. The first cut of this fix
+   raised without it — and "the write did not land" is only one of the two faults
+   here. A reset connection, a read timeout, or a failover can leave the `SET`
+   **applied** with its reply lost, and the orphaned key then wedges the visit for
+   the whole 75s lock TTL: every retry answers 429 "already processing" against a
+   lock nobody holds, which falsifies the 503's own promise that a retry resumes
+   the conversation. `VisitLockUnavailable` now carries the token, the existing-visit
+   branch releases it before the 503, and the first-turn branch carries it into the
+   `finally`. Compare-and-delete makes that safe in both cases: it clears the key
+   only if our own write is what landed.
+2. **`re.ASCII` does not make a non-ASCII PREFIX safe.** The flag constrains `\d`
+   and `\b`; a literal `MÉDI` in an operator catalog still matches `MÉDI1224`, a
+   value the *old* shape check rejected — so on that config the fix was a strict
+   widening, and ai-assistant's `VisitFacts` rejects non-ASCII, so the stored id
+   would 422 every later turn until the TTL. The validator now carries the same
+   explicit ASCII belt `_extract_insurance_ids` does.
+3. **The catalog guard ran before body validation**, so during a misconfiguration
+   every malformed request was reported as `503 assistant is not configured`
+   instead of the no-echo 422. A client error costs nothing to reject and should be
+   named as the client's; the guard moved after validation.
+4. **Two of the new pins could not fail on the drift they claimed to catch.** The
+   catalog tuples being equal says nothing about the `\d{3,9}` bound each service
+   compiles around them — widen one side and the recogniser emits an id the other
+   502s, with every test green. And the compose pin checked per-service
+   `environment:` blocks while compose also lets a *scoped* `env_file` override the
+   shared one (the gateway loads `.env.redis`, ai-assistant does not). Added: a
+   source pin on the digit bound at both ends, explicit boundary cases (2/3/9/10)
+   on the gateway pattern, and a template pin that no `.env.*.example` may set the
+   catalog. A fifth, smaller one: an `assert MEMBER_ID not in caplog.text` on the
+   lock path could not fail — no log statement there has the facts in scope — and
+   was removed rather than kept as decoration.
+
 ## Consequences
 
 - **New endpoints.** `POST /ai/visit-chat` on the gateway

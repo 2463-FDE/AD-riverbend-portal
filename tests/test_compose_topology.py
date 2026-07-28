@@ -328,3 +328,46 @@ def test_the_probe_memo_expires_well_inside_the_poll_interval(monkeypatch):
         f"the probe memo ({security._PROBE_MEMO_SECONDS}s) must expire well inside "
         f"the healthcheck interval ({interval}s) so every poll gets a fresh verdict"
     )
+
+
+# --- the member-id catalog must reach both ends from ONE place (round 7) -------
+# The gateway now validates the ids a downstream 200 asks it to persist against
+# the same closed payer-prefix catalog ai-assistant recognises them with. Two
+# services reading one env var only stays consistent if the var reaches them from
+# the SHARED .env: a per-service `environment:` entry (or a scoped env_file) would
+# let an operator add a payer prefix at one end only, and the skew is silent —
+# ai-assistant recognises the new id and the gateway 502s that turn.
+CATALOG_KEY = "AI_MEMBER_ID_PREFIXES"
+CATALOG_SERVICES = {"gateway", "ai-assistant"}
+
+
+def test_the_member_id_catalog_is_never_set_per_service():
+    for name, svc in _all_services().items():
+        assert CATALOG_KEY not in _environment_keys(svc), (
+            f"{name} must not pin {CATALOG_KEY} in its own `environment:` block: "
+            "the gateway and ai-assistant have to hold the SAME catalog, so it "
+            "belongs in the shared .env where one edit reaches both"
+        )
+
+
+def test_both_catalog_holders_read_the_shared_env_file():
+    for name in CATALOG_SERVICES:
+        assert ".env" in _env_file_paths(_service(name)), (
+            f"{name} must load the shared .env: it is the single place "
+            f"{CATALOG_KEY} can be overridden without skewing the two ends"
+        )
+
+
+def test_no_scoped_env_template_can_skew_the_catalog():
+    # The other override vector, and the one the shared-.env check above does not
+    # cover (pre-push review, round 7): compose lets a LATER env_file entry beat an
+    # earlier one, and the two holders load different scoped files — gateway also
+    # loads .env.redis. A catalog assignment in a scoped template therefore skews
+    # one end alone, silently. The generated files come from these templates, so the
+    # templates are where the assertion belongs.
+    for template in COMPOSE.parent.glob(".env.*.example"):
+        assert not re.search(rf"^\s*{CATALOG_KEY}\s*=", template.read_text(), re.MULTILINE), (
+            f"{template.name} must not set {CATALOG_KEY}: a scoped env file reaches "
+            "only some services, and both the gateway and ai-assistant have to hold "
+            "the same catalog — it belongs in the shared .env template or nowhere"
+        )

@@ -22,6 +22,7 @@ that satisfies the invariant proves nothing if the template overrides it with a
 value that does not — the fail-closed lesson from PR #5 r5.
 """
 import os
+import pathlib
 import re
 
 from conftest import load_module
@@ -263,4 +264,59 @@ def test_verdict_reuse_cannot_outlive_visit_memory_retention():
         assert min(configured, ceiling) <= retention, (
             f"[{label}] the effective reuse window ({min(configured, ceiling)}s) must "
             f"be <= visit-memory retention ({retention}s)"
+        )
+
+
+# --- 5. the member-id catalog must mean the same thing at both ends -----------
+# Added with the round-7 fix. ai-assistant RECOGNISES member ids against a closed
+# payer-prefix catalog; the gateway decides which ids may be PERSISTED into visit
+# memory, and a stored id is used directly for a payer lookup on a later recheck
+# turn without passing back through the recogniser. So the gateway needs the same
+# catalog — and two copies of a default is exactly the unpinned mirror this file
+# exists to catch. Runtime identity comes from a different control: both services
+# read AI_MEMBER_ID_PREFIXES from the SHARED .env (tests/test_compose_topology.py
+# pins that neither overrides it per-service), so an operator's change reaches both
+# ends at once. This test covers the defaults, which is what a deploy that never
+# sets the var actually runs on.
+def test_the_member_id_catalog_defaults_match_across_the_two_services():
+    assert _gw.ai_member_id_prefixes == _ai.ai_member_id_prefixes, (
+        "the gateway's member-id catalog default has drifted from ai-assistant's. "
+        "A prefix ai-assistant recognises but the gateway does not 502s that turn; "
+        "a prefix the gateway accepts but the recogniser never emits is an id that "
+        "reached visit memory by some other route, which is what round 7 closed"
+    )
+
+
+def test_an_empty_catalog_is_not_clamped_back_to_the_default_at_either_end(monkeypatch):
+    # Neither service treats "" as "use the defaults": there is no safest catalog,
+    # only no catalog, and that state must be loud (both endpoints 503) rather than
+    # silently permissive. Reloading with the var set proves the parse, not the
+    # comment.
+    monkeypatch.setenv("AI_MEMBER_ID_PREFIXES", "")
+    gw_blank = load_module("services/gateway/config.py", "gw_config_blank_catalog")
+    ai_blank = load_module("services/ai-assistant/config.py", "ai_config_blank_catalog")
+
+    assert gw_blank.settings.ai_member_id_prefixes == ()
+    assert ai_blank.settings.ai_member_id_prefixes == ()
+
+
+def test_the_recognised_member_id_LENGTH_is_pinned_at_both_ends():
+    # The catalog is not the only mirror this round created: each service compiles
+    # its own regex around the same `\d{3,9}` bound, and the tuple comparison above
+    # cannot see that. Widen one side and the other 502s an id the recogniser
+    # legitimately emits — the exact failure round 7 closed — while every other
+    # test still passes (pre-push review). A source scan rather than an import,
+    # because the two patterns live in app modules whose imports pull in a database
+    # engine and a Bedrock client; the values, not the machinery, are what drift.
+    root = pathlib.Path(__file__).resolve().parent.parent
+    bounds = {
+        name: set(re.findall(r"\\d\{(\d+),(\d+)\}", (root / name).read_text()))
+        for name in ("services/gateway/app.py", "services/ai-assistant/app.py")
+    }
+    for name, found in bounds.items():
+        assert found == {("3", "9")}, (
+            f"{name} changed the member-id digit bound to {found}. It is a mirror of "
+            "the other service's: the recogniser decides which ids exist and the "
+            "gateway decides which ids may be stored, so a one-sided change makes a "
+            "legitimate id unstorable (502, and the ai budget charge is kept)"
         )

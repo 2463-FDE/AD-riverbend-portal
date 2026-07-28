@@ -297,13 +297,28 @@ def test_a_stale_holder_cannot_release_a_newer_lock(redis):
     assert security.visit_lock_acquire(visit_id, 75)
 
 
-def test_lock_fails_open_on_a_redis_fault(redis):
-    # Matches ai_singleflight_acquire: the authoritative spend guard is the
-    # fail-CLOSED budget ceiling, so failing the lock closed would turn a blip
-    # into an outage for no spend-safety gain.
+def test_lock_fails_closed_on_a_redis_fault(redis):
+    # Codex round 7. This lock is NOT ai_singleflight_acquire: single-flight only
+    # dedupes paid work behind a fail-closed budget ceiling, while this one is the
+    # only guard on the visit record. Handing back a synthetic token said "you
+    # hold the lock" when nothing was written, so two turns could both read the
+    # same record, both spend a payer call, and the second save could drop the
+    # first's turns and facts.
     redis.fail = True
 
-    assert security.visit_lock_acquire(security.new_visit_id(), 75)
+    with pytest.raises(security.VisitLockUnavailable):
+        security.visit_lock_acquire(security.new_visit_id(), 75)
+
+
+def test_the_lock_fault_carries_no_value(redis):
+    # Same no-echo rule visit_memory_get follows: the route logs this exception,
+    # and a driver's message can carry connection detail.
+    redis.fail = True
+
+    with pytest.raises(security.VisitLockUnavailable) as excinfo:
+        security.visit_lock_acquire(security.new_visit_id(), 75)
+
+    assert str(excinfo.value) == "RuntimeError"
 
 
 def test_releasing_without_a_token_is_a_noop(redis):

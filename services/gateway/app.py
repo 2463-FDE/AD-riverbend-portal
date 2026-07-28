@@ -10,6 +10,7 @@ Inherited shortcomings (left as-is from the handoff):
   * Sessions never expire (see security.create_session / auth.yaml).
   * One role for everyone; no per-action authorization beyond "is logged in".
 """
+import re
 import time
 from enum import Enum
 from typing import Optional
@@ -37,6 +38,7 @@ from models import User
 from security import (
     RedisUnauthenticated,
     RedisUnreachable,
+    VisitLockUnavailable,
     VisitMemoryUnavailable,
     ai_cache_get,
     ai_cache_key,
@@ -674,6 +676,54 @@ def _validate_visit_chat_request(payload: dict) -> dict:
     return model.model_dump(mode="json")
 
 
+def _build_stored_member_id_re(prefixes: tuple[str, ...]) -> "re.Pattern[str] | None":
+    """Compile the catalog into the set of ids the RECOGNISER could have produced.
+
+    The gateway is not a recogniser — it never reads free text for ids — so this
+    pattern is deliberately narrower than ai-assistant's: FULL match, no
+    IGNORECASE, on the one canonical form that service stores (a catalogued
+    prefix, upper case, plus 3-9 ASCII digits). Anything else did not come out of
+    `_extract_insurance_ids`, and is therefore not something the gateway will
+    persist and hand back for a later payer lookup (Codex PR #14 round 7).
+
+    `re.ASCII` for the same reason ai-assistant needs it and not as a style
+    choice: bare `\\d` matches Arabic-Indic digits, and `AETN١٢٣٤` reaching the
+    payer is a 404 rendered as a definitive denial.
+
+    None for an EMPTY catalog, never a pattern. Joining zero prefixes yields
+    `^(?:)\\d{3,9}$`, which accepts any run of digits — the round-1 empty-catalog
+    hole one boundary over. Callers treat None as "recognise nothing" and
+    `_require_member_id_catalog` turns the state into a loud 503.
+
+    Each prefix is escaped because the catalog is operator input: an unescaped `.`
+    would silently WIDEN the accepted set (`A.C` admitting `ABC1234`, which is the
+    exact value this finding was about).
+    """
+    if not prefixes:
+        return None
+    return re.compile(
+        r"^(?:%s)\d{3,9}$" % "|".join(re.escape(prefix) for prefix in prefixes),
+        re.ASCII,
+    )
+
+
+_STORED_MEMBER_ID_RE = _build_stored_member_id_re(settings.ai_member_id_prefixes)
+
+
+def _require_member_id_catalog() -> None:
+    """Refuse /ai/visit-chat when the gateway's own catalog is empty.
+
+    Mirrors ai-assistant's guard of the same name, and for the same reason: with
+    no catalog this service cannot tell an id the recogniser produced from one it
+    would never have trusted, so every id-bearing turn would 502 anyway. 503
+    before the spend ceiling names the misconfiguration instead, and 503 is a
+    status the caller can retry once config is fixed.
+    """
+    if _STORED_MEMBER_ID_RE is None:
+        log.error("/ai/visit-chat refused: AI_MEMBER_ID_PREFIXES is empty")
+        raise HTTPException(status_code=503, detail="assistant is not configured")
+
+
 class _VisitChatVerdict(BaseModel):
     """The projected coverage verdict, closed at the gateway boundary.
 
@@ -726,6 +776,16 @@ class _VisitChatFacts(BaseModel):
     that turn and every one after it — a visit bricked until its TTL. Dropping
     costs the new field during the deploy window and nothing after it.
 
+    ``insurance_id`` mirrors the RECOGNISER, not merely ai-assistant's storage
+    validator (Codex PR #14 round 7). An upper-case-alnum shape check accepted
+    `ABC1234` — a value no catalogued payer prefix can produce — and the gateway
+    persisted it; ai-assistant then accepts a stored `VisitFacts.insurance_id` and
+    uses it DIRECTLY for a `recheck` lookup without going back through
+    `_extract_insurance_ids`, so the closed-catalog false-positive control was
+    bypassed and a payer 404 on a token nobody recognised renders as a confident
+    "no active coverage". The check is therefore the catalog itself, and a hyphen
+    is no longer accepted either: the recogniser cannot emit one.
+
     ``insurance_id`` mirrors the CONSTRAINT, not just the field name. Mirroring
     only the name is how the first cut of this class shipped the bug it was
     written to prevent: ``VisitFacts`` carries a validator that upper-cases and
@@ -740,8 +800,38 @@ class _VisitChatFacts(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    insurance_id: Optional[str] = Field(default=..., max_length=64, pattern="^[A-Z0-9-]+$")
+    insurance_id: Optional[str] = Field(default=..., max_length=64)
     last_eligibility: Optional[_VisitChatVerdict]
+
+    @field_validator("insurance_id")
+    @classmethod
+    def _must_be_a_catalogued_member_id(cls, value: Optional[str]) -> Optional[str]:
+        """Reject any id the recogniser could not have produced.
+
+        `fullmatch`, not `match`, even though the pattern is anchored: Python's
+        `$` also matches immediately before a trailing newline, so `AETN1224\\n`
+        would otherwise pass and be stored — and a stored id goes to the payer
+        verbatim.
+
+        No pattern (empty catalog) rejects rather than accepts. `/ai/visit-chat`
+        503s in that state before ever reaching here, so this is the belt to that
+        braces — the same fail-closed direction `_extract_insurance_ids` takes.
+
+        The explicit ASCII test is the second belt, and it is not redundant with
+        `re.ASCII` (pre-push review, round 7). That flag constrains `\\d` and `\\b`;
+        it says nothing about a literal non-ASCII character inside a PREFIX, so an
+        operator catalog carrying `MÉDI` would match `MÉDI1224` here — a value the
+        old shape check rejected, and one ai-assistant's own `VisitFacts` rejects,
+        so storing it 422s every later turn and the visit is dead until its TTL.
+        `_extract_insurance_ids` carries the same belt for the same reason.
+        """
+        if value is None:
+            return None
+        if not value.isascii():
+            raise ValueError("insurance_id must be ASCII")
+        if _STORED_MEMBER_ID_RE is None or not _STORED_MEMBER_ID_RE.fullmatch(value):
+            raise ValueError("insurance_id is not a recognisable member id")
+        return value
 
 
 class _VisitChatDownstream(BaseModel):
@@ -857,7 +947,14 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
     neither idempotent nor safely shareable, and its key would have to derive
     from PHI-bearing free text (ADR 0011 §6).
     """
+    # Request validation FIRST, then config: with no member-id catalog the gateway
+    # cannot tell a recognised id from a token that merely looks like one, so it
+    # cannot safely persist facts at all (round 7) — but a malformed body is the
+    # client's error and costs nothing to reject, and reporting it as
+    # "assistant is not configured" would hide every client mistake behind a
+    # server fault for the duration of the misconfiguration (pre-push review).
     body = _validate_visit_chat_request(payload)
+    _require_member_id_catalog()
     owner = session.get("username") or "unknown"
     visit_id = body.get("visit_id")
     record = None
@@ -881,13 +978,47 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
 
     # Serialise turns within this visit: two concurrent turns would read-modify-
     # write the same record (dropping one) and make two paid calls for one clerk.
-    lock_token = visit_lock_acquire(visit_id, settings.ai_singleflight_lock_ttl_seconds)
-    if not lock_token:
-        raise HTTPException(
-            status_code=429,
-            detail="this visit is already processing a message; please retry shortly",
-            headers={"Retry-After": "1"},
-        )
+    try:
+        lock_token = visit_lock_acquire(visit_id, settings.ai_singleflight_lock_ttl_seconds)
+    except VisitLockUnavailable as e:
+        # Fail CLOSED for a visit that already has state, because the lock is the
+        # ONLY guard on it and this is where a fail-open answer was worse than an
+        # outage (Codex PR #14 round 7): the record loads under `maxmemory` +
+        # `noeviction` while the lock write fails, so both concurrent turns would
+        # read the same record, both spend a PHI-bearing payer call, and the
+        # second save would drop the first's turns and facts. 503 rather than 429:
+        # nothing is processing this visit — our guard is down, and the record is
+        # untouched, so a retry resumes the conversation. Raised before
+        # _reserve_ai_budget, so there is no spend to refund.
+        #
+        # The release is what MAKES that "retry resumes the conversation" true
+        # (pre-push review, round 7): the fault may be a lost reply on a SET that
+        # landed, and an unreleased token would wedge this visit for the whole lock
+        # TTL — every retry answering 429 "already processing" against a lock
+        # nobody holds. Compare-and-delete clears only our own write, and the
+        # release swallows its own faults, where the TTL is the backstop.
+        if record is not None:
+            visit_lock_release(visit_id, e.token)
+            log.error("visit lock unavailable: %s", e)
+            raise HTTPException(
+                status_code=503, detail="assistant is temporarily unavailable"
+            )
+        # A FIRST turn has nothing to serialise against — the id was minted a few
+        # microseconds ago in this function and no client has ever seen it — so
+        # failing closed here would turn a Redis blip into an outage for new
+        # visits and buy no state safety. The token still rides through to the
+        # `finally`, for the lost-reply case above: if the SET landed, this turn
+        # really does hold the lock and must clear it on the way out (and the
+        # release is a no-op when there is nothing to clear).
+        log.warning("visit lock unavailable on a first turn (%s); proceeding unlocked", e)
+        lock_token = e.token
+    else:
+        if not lock_token:
+            raise HTTPException(
+                status_code=429,
+                detail="this visit is already processing a message; please retry shortly",
+                headers={"Retry-After": "1"},
+            )
     try:
         turns = (record or {}).get("turns") or []
         facts = (record or {}).get("facts") or {}

@@ -158,6 +158,35 @@ class Settings:
     # timeout, which is exactly the property a lock around this fan-out needs (a
     # TTL under the fan-out bound would let a second turn overlap the first).
 
+    # The member-id prefix CATALOG — the SAME env var and the same default as
+    # ai-assistant's recogniser reads (Codex PR #14 round 7). The gateway needs it
+    # because it is the service that decides what a downstream 200 may PERSIST,
+    # and a stored member id is used directly for a payer lookup on a later
+    # `recheck` turn without passing back through the recogniser. Validating only
+    # the SHAPE here (upper-case alnum) let an off-catalog id like `ABC1234` into
+    # visit memory, where it bypasses the closed-catalog false-positive control
+    # entirely and a payer 404 renders as a definitive "no active coverage".
+    #
+    # Two services holding the same default is a mirror, and an unpinned mirror is
+    # the round-4 failure — so tests/test_eligibility_budget_alignment.py asserts
+    # the two defaults are equal, and tests/test_compose_topology.py asserts
+    # neither service overrides the var in a per-service `environment:` block, so
+    # an operator's override lands in the shared .env and reaches both ends
+    # identically. A gateway that has not learned a prefix ai-assistant knows 502s
+    # that turn with the record untouched; the turn succeeds once the config
+    # matches, which is the fail-closed direction for a value used on a payer call.
+    #
+    # Empty is NOT clamped back to this default, for the same reason ai-assistant
+    # does not clamp it: there is no "safest catalog", only "no catalog", and that
+    # state has to be loud — app.py compiles no pattern and /ai/visit-chat 503s.
+    ai_member_id_prefixes = tuple(
+        prefix.strip().upper()
+        for prefix in os.getenv(
+            "AI_MEMBER_ID_PREFIXES", "AETN,AETNA,BCBS,BLUE,CIGN,KAIS,MEDI,UNIT"
+        ).split(",")
+        if prefix.strip()
+    )
+
     @property
     def db_url(self) -> str:
         return (
