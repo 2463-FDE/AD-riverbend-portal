@@ -18,7 +18,14 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
@@ -667,6 +674,177 @@ def _validate_visit_chat_request(payload: dict) -> dict:
     return model.model_dump(mode="json")
 
 
+class _VisitChatVerdict(BaseModel):
+    """The projected coverage verdict, closed at the gateway boundary.
+
+    Declares exactly the keys something READS — `active`/`status` decide reuse,
+    `payer`/`checked_at`/`observed_at` are rendered or measured — and drops the
+    rest. `raw_status` and `reason` are written by `eligibility_client` and read
+    by nothing, so they are not carried into a PHI store; that is the same
+    projection rule that keeps the downstream `error` string out of visit memory.
+
+    Closing it is a size control as much as a shape one. `Optional[dict]` accepted
+    an arbitrarily large, arbitrarily nested object straight into a `SET
+    visit:<id> … EX ttl` on the store that also holds sessions — the request side
+    is bounded (`ai_visit_max_message_chars`, `ai_visit_max_turns`) and the
+    response side was not. It is also a PHI control: `VisitFacts`' own
+    `extra="forbid"` closes the fact KEYS, but a name or a DOB nested inside an
+    unvalidated verdict was persisted at rest all the same, and
+    `tests/test_visit_chat_phi.py` structurally cannot catch that because it
+    drives the one renderer guaranteed not to do it.
+
+    Every field is optional: a verdict legitimately arrives without
+    `observed_at` (written by an older ai-assistant — round 4 makes that "not
+    reusable", which is the safe answer), and rejecting it would fail a turn over
+    a field whose absence the design already handles.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    active: Optional[bool] = None
+    status: Optional[str] = Field(default=None, pattern="^[a-z_]{1,32}$")
+    payer: Optional[str] = Field(default=None, max_length=253)
+    checked_at: Optional[str] = Field(default=None, max_length=64)
+    observed_at: Optional[str] = Field(default=None, max_length=64)
+
+
+class _VisitChatFacts(BaseModel):
+    """Mirror of ai-assistant ``schemas.VisitFacts`` — the only shape allowed to
+    overwrite a visit's memory.
+
+    Both fields are REQUIRED and nullable, which is the load-bearing part. A
+    response_model-serialised body always carries both keys, explicitly null when
+    empty, so `{}` is not "an empty visit" — it is a body our renderer did not
+    produce, and treating it as empty state is what silently erased a confirmed
+    `insurance_id` (Codex PR #14 round 6).
+
+    ``extra="ignore"`` rather than ``forbid``, and the asymmetry with VisitFacts'
+    own ``forbid`` is deliberate. Forbidding here would 502 every turn of a
+    rolling deploy in which a newer ai-assistant adds a fact. Passing an unknown
+    key THROUGH is worse than dropping it: the gateway echoes stored facts back
+    on the next turn, and ai-assistant's own ``extra="forbid"`` would then 422
+    that turn and every one after it — a visit bricked until its TTL. Dropping
+    costs the new field during the deploy window and nothing after it.
+
+    ``insurance_id`` mirrors the CONSTRAINT, not just the field name. Mirroring
+    only the name is how the first cut of this class shipped the bug it was
+    written to prevent: ``VisitFacts`` carries a validator that upper-cases and
+    rejects non-ASCII precisely because a stored id is used directly for a payer
+    lookup on a later turn, and a value that fails it — `AETN1224K`, which
+    survives `.upper()` — would have been persisted here, then 422'd by
+    ai-assistant on every subsequent turn, bricking the visit until its TTL with
+    no path that repairs the record. The pattern accepts every id the recogniser
+    can produce (upper-case ASCII, from a configured payer-prefix catalog) and
+    nothing a human typed.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    insurance_id: Optional[str] = Field(default=..., max_length=64, pattern="^[A-Z0-9-]+$")
+    last_eligibility: Optional[_VisitChatVerdict]
+
+
+class _VisitChatDownstream(BaseModel):
+    """Mirror of the ai-assistant ``/visit-chat`` fields the gateway PERSISTS or
+    ANSWERS WITH (Codex PR #14 round 6).
+
+    `_post_checked` proves only that a non-error JSON body came back. It cannot
+    prove the body came from our renderer, and a 200 from a misroute, a rolling
+    deploy, or an intermediary was being trusted with the visit record: a missing
+    `facts` key coerced to `{}` overwrote a confirmed `insurance_id` and the
+    stored payer verdict, which live nowhere else, so the next turn re-asked for
+    an id the patient had already given and re-spent a PHI-bearing payer call.
+
+    What is validated is exactly what the gateway acts on:
+
+      * ``facts`` — written into Redis, so it gets the closed shape above;
+      * ``intent`` / ``status`` — written into the METADATA-ONLY transcript. The
+        constraint is a SHAPE (snake_case, bounded), not a copy of the enums, so
+        it cannot go stale when a new intent is added — while free text a clerk
+        typed cannot satisfy it, which is the property the transcript's
+        no-PHI-at-rest guarantee actually needs;
+      * ``reply`` / ``disclaimer`` / ``eligibility`` — the answer handed to the
+        clerk. A catalog-rendered reply is bounded by construction (a verdict
+        line plus at most MAX_ITEMS fixed strings); an order of magnitude past
+        that is not our renderer.
+
+    Deliberately ABSENT: ``llm_egress`` and ``assistant``. Both are our own
+    accounting and health reporting, and both already degrade conservatively — an
+    ambiguous spend flag keeps the charge, an unrecognised health value reads
+    "unknown". Failing a turn over either would discard a coverage verdict that
+    a payer call already paid for, which is the mistake round 3 fixed. A field
+    that cannot corrupt state and cannot mislead a clerk is not worth a 502.
+
+    ``eligibility`` belongs to that same category and is validated but NOT fatal.
+    It is answer-only — never persisted, never fed back — and the verdict it
+    reports is already in `reply` as server-rendered text. Failing the turn over
+    it would throw away `facts.last_eligibility`, the verdict the payer call this
+    turn already paid for, and make the next turn buy it again. An unusable value
+    degrades to null.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    reply: str = Field(min_length=1, max_length=4000)
+    intent: str = Field(pattern="^[a-z_]{1,32}$")
+    status: str = Field(pattern="^[a-z_]{1,32}$")
+    facts: _VisitChatFacts
+    disclaimer: str = Field(min_length=1, max_length=1000)
+    eligibility: Optional[_VisitChatVerdict] = None
+
+    @field_validator("eligibility", mode="before")
+    @classmethod
+    def _degrade_unusable_verdict(cls, value: object) -> object:
+        """Answer-only, so an unusable value is dropped rather than fatal."""
+        if value is None:
+            return None
+        try:
+            return _VisitChatVerdict.model_validate(value)
+        except ValidationError:
+            return None
+
+
+def _validate_visit_chat_downstream(result: dict) -> _VisitChatDownstream:
+    """Parse a downstream 200, or fail the turn without touching visit memory.
+
+    502, because the fault is downstream's and the caller can retry: the visit
+    record is exactly as it was, so a retry resumes the conversation rather than
+    restarting it. Nothing is refunded on this path — an unparseable body says
+    nothing about whether Bedrock was called, and over-counting toward the
+    ceiling is the safe direction (ADR 0007).
+
+    Neither the body nor the parse error is logged. Both are unvalidated
+    downstream content on a path whose whole premise is that we do not know what
+    produced them, and a `reply` legitimately carries a payer name and a member's
+    coverage verdict.
+    """
+    if not isinstance(result, dict):
+        log.error("visit-chat downstream returned a non-object body")
+        raise HTTPException(status_code=502, detail="assistant returned an unusable response")
+    try:
+        model = _VisitChatDownstream.model_validate(result)
+    except ValidationError as e:
+        # Field NAMES only — they are ours, from the model above; values are not.
+        # The reserved slot is named explicitly: under a version skew EVERY turn
+        # takes this branch, so the shared daily ceiling drains at full rate, and
+        # the operator symptom is /ai/intake-instructions 429-ing for the rest of
+        # the day. Keeping the charge is deliberate (a body we refuse to parse
+        # cannot be trusted about our own spend either); being unable to attribute
+        # it is not.
+        log.error(
+            "visit-chat downstream failed validation; visit memory left unchanged "
+            "and the reserved ai budget slot stays charged (fields=%s)",
+            sorted({str(err["loc"][0]) for err in e.errors() if err.get("loc")}),
+        )
+        raise HTTPException(status_code=502, detail="assistant returned an unusable response")
+    dropped = len(set(result.get("facts") or {}) - set(_VisitChatFacts.model_fields))
+    if dropped:
+        # Not fatal (see _VisitChatFacts), but a silently dropped fact is a
+        # feature quietly not working during a deploy — count only, never keys.
+        log.warning("visit-chat downstream sent %d unknown fact field(s); dropped", dropped)
+    return model
+
+
 @app.post("/ai/visit-chat")
 def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limited)):
     """One turn of the front-desk eligibility chat.
@@ -730,6 +908,13 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
                 _refund_ai_budget(budget_reservation)
             raise
 
+        # Before anything is refunded, answered, or written: a 200 is not proof
+        # the body came from our renderer (round 6). Raises 502 with the visit
+        # record untouched, so a retry resumes the visit instead of restarting a
+        # conversation whose only copy of the payer verdict this path would
+        # otherwise have overwritten.
+        downstream = _validate_visit_chat_downstream(result)
+
         # A 200 from /visit-chat is NOT proof of a paid call (Codex PR #14 round
         # 3). The endpoint answers with the deterministic action list rather than
         # discarding a coverage verdict it already computed, so a local
@@ -749,15 +934,14 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
         # storing it would be PHI at rest with no consumer, and unmaskable PHI at
         # that — a typed patient name defeats any pattern filter. Both values
         # below are closed vocabulary ai-assistant derived server-side.
-        reply = str(result.get("reply") or "")
         new_turns = turns + [
-            {"role": "user", "intent": result.get("intent"), "status": None},
-            {"role": "assistant", "intent": None, "status": result.get("status")},
+            {"role": "user", "intent": downstream.intent, "status": None},
+            {"role": "assistant", "intent": None, "status": downstream.status},
         ]
         persisted = visit_memory_save(
             visit_id,
             owner,
-            result.get("facts") or {},
+            downstream.facts.model_dump(mode="json"),
             new_turns,
             settings.ai_visit_ttl_seconds,
             settings.ai_visit_max_turns,
@@ -791,9 +975,15 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
             # and starts fresh, which is the honest outcome of a lost first write.
             "visit_id": visit_id if resolvable else None,
             "visit_memory": "ok" if persisted else ("stale" if resolvable else "unavailable"),
-            "reply": reply,
-            "disclaimer": result.get("disclaimer"),
-            "eligibility": result.get("eligibility"),
+            "reply": downstream.reply,
+            "disclaimer": downstream.disclaimer,
+            # Dumped, not handed over as a model: the portal contract is a plain
+            # JSON object or null, unchanged by validating it on the way through.
+            "eligibility": (
+                downstream.eligibility.model_dump(mode="json")
+                if downstream.eligibility is not None
+                else None
+            ),
             # "ok" | "degraded" | "unknown". Forwarded for the same reason
             # `visit_memory` is: before this PR an LLM fault reached the caller
             # as a 503, and now it reaches them as a normal-looking 200 with a

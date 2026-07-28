@@ -355,6 +355,233 @@ def test_an_unrecognised_health_value_is_unknown_never_ok(redis, monkeypatch, va
         assert value not in r.text.replace('"unknown"', "")
 
 
+# --- a 200 is not proof the body came from our renderer (round 6) -----------
+# _post_checked proves only "non-error JSON". A misroute, a rolling deploy, or an
+# intermediary can return a 200 the gateway then wrote over visit memory with —
+# and the visit record is the ONLY copy of the confirmed member id and the payer
+# verdict, so a bad write costs a re-ask and a fresh PHI-bearing payer call.
+def _stored(redis, visit_id):
+    return json.loads(redis.store[f"visit:{visit_id}"])
+
+
+_UNUSABLE_BODIES = {
+    # The finding's shape: no facts at all, previously coerced to {}.
+    "facts_missing": {k: v for k, v in DOWNSTREAM_OK.items() if k != "facts"},
+    # The subtler one: facts PRESENT but empty. A response_model-serialised body
+    # always carries both keys (null when unset), so {} is drift, not "no state" —
+    # and reading it as state is what erases a confirmed insurance_id.
+    "facts_empty": {**DOWNSTREAM_OK, "facts": {}},
+    # Half a facts object erases the other half just as effectively.
+    "facts_partial": {**DOWNSTREAM_OK, "facts": {"insurance_id": MEMBER_ID}},
+    "facts_not_an_object": {**DOWNSTREAM_OK, "facts": "AETN1224"},
+    "reply_missing": {k: v for k, v in DOWNSTREAM_OK.items() if k != "reply"},
+    "reply_empty": {**DOWNSTREAM_OK, "reply": ""},
+    "disclaimer_missing": {k: v for k, v in DOWNSTREAM_OK.items() if k != "disclaimer"},
+    # intent/status are persisted into the metadata-only transcript, so a value
+    # that is not closed vocabulary must never reach the store. Free text is the
+    # adversarial case: this is exactly where a clerk's typed prose would sit if
+    # anything upstream ever echoed it.
+    "intent_free_text": {**DOWNSTREAM_OK, "intent": "patient Jane Doe wants a check"},
+    "status_free_text": {**DOWNSTREAM_OK, "status": "SSN 123-45-6789 on file"},
+    "intent_not_a_string": {**DOWNSTREAM_OK, "intent": {"name": "check_eligibility"}},
+    # The value door, not the key door. `insurance_id` is used directly for a
+    # payer lookup on a later turn and is validated at ai-assistant's edge, so a
+    # value that fails THERE must not be stored HERE — persisting it 422s every
+    # subsequent turn and the visit is dead until its TTL.
+    "insurance_id_free_text": {
+        **DOWNSTREAM_OK,
+        "facts": {**DOWNSTREAM_OK["facts"], "insurance_id": "Jane Doe 123-45-6789"},
+    },
+    "insurance_id_non_ascii": {
+        **DOWNSTREAM_OK,
+        # U+212A KELVIN SIGN — survives .upper(), which is why ai-assistant
+        # rejects rather than folds it.
+        "facts": {**DOWNSTREAM_OK["facts"], "insurance_id": "AETN1224K"},
+    },
+    "insurance_id_lower_case": {
+        **DOWNSTREAM_OK,
+        # ai-assistant normalises to upper at its own edge, so a lower-case id
+        # did not come from it.
+        "facts": {**DOWNSTREAM_OK["facts"], "insurance_id": "aetn1224"},
+    },
+    # Bounds, so a widened one cannot pass unnoticed.
+    "insurance_id_too_long": {
+        **DOWNSTREAM_OK,
+        "facts": {**DOWNSTREAM_OK["facts"], "insurance_id": "A" * 65},
+    },
+    "reply_too_long": {**DOWNSTREAM_OK, "reply": "x" * 4001},
+    "disclaimer_too_long": {**DOWNSTREAM_OK, "disclaimer": "x" * 1001},
+    "intent_too_long": {**DOWNSTREAM_OK, "intent": "a" * 33},
+    "last_eligibility_not_an_object": {
+        **DOWNSTREAM_OK,
+        "facts": {**DOWNSTREAM_OK["facts"], "last_eligibility": "active"},
+    },
+    "last_eligibility_oversized_value": {
+        **DOWNSTREAM_OK,
+        "facts": {
+            **DOWNSTREAM_OK["facts"],
+            "last_eligibility": {"status": "active", "payer": "p" * 254},
+        },
+    },
+}
+
+
+@pytest.mark.parametrize("body", _UNUSABLE_BODIES.values(), ids=list(_UNUSABLE_BODIES))
+def test_an_unusable_downstream_200_is_a_502_that_never_touches_visit_memory(
+    redis, fanout, monkeypatch, body
+):
+    visit_id = _start_visit(fanout)
+    before = _stored(redis, visit_id)
+    _fanout_returning(monkeypatch, body)
+
+    r = _chat("is it still active?", visit_id=visit_id)
+
+    assert r.status_code == 502
+    # The record is byte-identical: not the facts, not the transcript, not even
+    # the sliding TTL's updated_at. A retry resumes the visit rather than
+    # restarting a conversation whose verdict lives nowhere else.
+    assert _stored(redis, visit_id) == before
+    assert before["facts"]["insurance_id"] == MEMBER_ID
+
+
+def test_a_first_turn_with_an_unusable_response_stores_nothing(redis, monkeypatch):
+    _fanout_returning(monkeypatch, _UNUSABLE_BODIES["facts_missing"])
+
+    assert _chat().status_code == 502
+    assert not [key for key in redis.store if key.startswith("visit:")]
+
+
+def test_an_unusable_response_keeps_the_charge_even_if_it_claims_otherwise(
+    redis, monkeypatch
+):
+    # A body we refuse to parse cannot be trusted about our own spend either. The
+    # conservative direction is to over-count toward the ceiling, never to refund
+    # a Bedrock call that may really have happened.
+    _fanout_returning(
+        monkeypatch, {**_UNUSABLE_BODIES["facts_missing"], "llm_egress": False}
+    )
+    monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 5)
+
+    assert _chat().status_code == 502
+
+    charged = [k for k in redis.counts if k.startswith("ratelimit:ai:global")]
+    assert charged and redis.counts[charged[0]] == 1
+
+
+def test_the_rejected_body_is_never_echoed_or_logged(redis, monkeypatch, caplog):
+    phi = "Jane Doe SSN 123-45-6789"
+    _fanout_returning(monkeypatch, {**DOWNSTREAM_OK, "intent": phi, "reply": phi})
+
+    with caplog.at_level("DEBUG"):
+        r = _chat()
+
+    assert r.status_code == 502
+    assert phi not in r.text
+    assert phi not in caplog.text
+    # Field names are ours and are worth having; values are not.
+    assert "intent" in caplog.text
+
+
+def test_a_poisoned_member_id_never_reaches_the_store_so_the_visit_survives(
+    redis, fanout, monkeypatch
+):
+    # The whole point of rejecting the value: the next turn still works. Storing
+    # an id ai-assistant's own edge refuses would 422 every later turn, and no
+    # code path repairs the record — the visit would be dead until its TTL.
+    visit_id = _start_visit(fanout)
+    _fanout_returning(monkeypatch, _UNUSABLE_BODIES["insurance_id_non_ascii"])
+    assert _chat("is it still active?", visit_id=visit_id).status_code == 502
+
+    # A healthy turn afterwards resumes the visit, on the id that was confirmed.
+    healthy = _fanout_returning(monkeypatch, DOWNSTREAM_OK)
+    r = _chat("is it still active?", visit_id=visit_id)
+
+    assert r.status_code == 200
+    assert healthy[0]["facts"]["insurance_id"] == MEMBER_ID
+
+
+def test_a_verdict_key_nothing_reads_is_not_carried_into_the_store(
+    redis, monkeypatch
+):
+    # The store holds only what the feature reads back. `reason` and `raw_status`
+    # are written by eligibility_client and read by nothing, and an unvalidated
+    # dict was also an unbounded write into the store that holds sessions.
+    _fanout_returning(
+        monkeypatch,
+        {
+            **DOWNSTREAM_OK,
+            "facts": {
+                **DOWNSTREAM_OK["facts"],
+                "last_eligibility": {
+                    "active": True,
+                    "status": "active",
+                    "payer": "edi.example.com",
+                    "checked_at": "2026-07-26T10:00:00Z",
+                    "raw_status": "1",
+                    "reason": None,
+                    "note": "patient Jane Doe, dob 1985-03-12",
+                    "blob": "x" * 100_000,
+                },
+            },
+        },
+    )
+
+    r = _chat()
+
+    assert r.status_code == 200
+    stored = json.dumps(_stored(redis, r.json()["visit_id"]))
+    for dropped in ("raw_status", "reason", "note", "Jane Doe", "1985-03-12", "x" * 100):
+        assert dropped not in stored
+    assert "edi.example.com" in stored, "the keys the feature READS must survive"
+
+
+def test_an_unusable_eligibility_degrades_to_null_and_never_fails_the_turn(
+    redis, monkeypatch
+):
+    # Answer-only: never persisted, never fed back, and the verdict is already in
+    # `reply` as server-rendered text. Failing the turn over it would discard
+    # facts.last_eligibility — the verdict THIS turn's payer call already paid
+    # for — and make the next turn buy it again.
+    _fanout_returning(monkeypatch, {**DOWNSTREAM_OK, "eligibility": "active"})
+
+    r = _chat()
+
+    assert r.status_code == 200
+    assert r.json()["eligibility"] is None
+    stored = _stored(redis, r.json()["visit_id"])
+    assert stored["facts"]["last_eligibility"]["status"] == "active"
+
+
+def test_a_newer_downstream_still_answers_and_its_extra_fact_is_dropped(
+    redis, monkeypatch, caplog
+):
+    # The other direction, and the reason facts are `extra="ignore"` rather than
+    # `forbid`: mid-rolling-deploy a newer ai-assistant sends a field this
+    # gateway has never heard of. Rejecting would 502 every turn of the deploy;
+    # persisting it would be worse, since the next turn echoes stored facts back
+    # and ai-assistant's own extra="forbid" would 422 the visit until its TTL.
+    _fanout_returning(
+        monkeypatch,
+        {
+            **DOWNSTREAM_OK,
+            "facts": {**DOWNSTREAM_OK["facts"], "plan_type": "PPO"},
+            "brand_new_top_level_field": {"anything": True},
+        },
+    )
+
+    with caplog.at_level("DEBUG"):
+        r = _chat()
+
+    assert r.status_code == 200
+    stored = _stored(redis, r.json()["visit_id"])
+    assert stored["facts"]["insurance_id"] == MEMBER_ID
+    assert "plan_type" not in stored["facts"]
+    # The drop is the ONLY signal that a deploy is quietly losing a fact, so it
+    # is a log line, not a silent success — a count, never the key itself.
+    assert "unknown fact field" in caplog.text
+    assert "plan_type" not in caplog.text
+
+
 # --- no response cache on this path ----------------------------------------
 def test_identical_messages_are_not_collapsed_by_a_cache(redis, fanout):
     visit_id = _start_visit(fanout)

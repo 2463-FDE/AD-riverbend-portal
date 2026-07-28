@@ -763,6 +763,114 @@ as round 4's: an expensive call on the path a common input makes the default.
    line. This is the round-1 "a control with no observable signal reads as a
    green dashboard" lesson, applied to a saving rather than to a guard.
 
+## Round 6 corrections (2026-07-27)
+
+Adversarial review round 6 found one finding, and it is the trust boundary the
+previous five rounds kept circling from the other side: what ai-assistant may
+believe about eligibility-service's answer (rounds 3–5) applies equally to what
+the gateway may believe about ai-assistant's.
+
+1. **A malformed downstream 200 could erase the visit's only copy of the payer
+   verdict.** `_post_checked` proves one thing — a non-error status with a JSON
+   body. It cannot prove the body came from our renderer. `proxy_visit_chat`
+   then trusted it: `result.get("facts") or {}` was written straight into the
+   visit record, so a 200 missing `facts` — a misroute, an intermediary, a
+   rolling deploy serving an older or newer shape — wrote `{}` over a confirmed
+   `insurance_id` and the stored verdict. Those live nowhere else, so the next
+   turn asked the patient for an id they had already produced and re-spent a
+   PHI-bearing payer call to answer a question already answered. `reply` had the
+   same shape of hole, coerced to `""`, handing the clerk a blank turn with a
+   200.
+
+   `_VisitChatDownstream` now validates the body before anything is refunded,
+   answered, or written, and an invalid one is a **502 with the visit record
+   untouched** — so a retry resumes the conversation rather than restarting it.
+   Nothing is refunded on that path: an unparseable body says nothing about
+   whether Bedrock was called, and over-counting toward the ADR 0007 ceiling is
+   the safe direction. Neither the body nor the parse error is logged, only the
+   field NAMES that failed, which are ours; a `reply` legitimately carries a
+   payer name and a coverage verdict, and the premise of the whole branch is
+   that we do not know what produced the rest.
+
+   Four choices inside it are load-bearing:
+
+   - **`facts`' two fields are required and nullable.** A `response_model`
+     serialisation always carries both keys, explicitly null when unset, so `{}`
+     is not "an empty visit" — it is drift, and reading it as state is the
+     erasure itself. A partial `{"insurance_id": …}` erases `last_eligibility`
+     just as effectively, so neither key may be optional here even though both
+     are optional at ai-assistant's end.
+   - **`extra="ignore"`, deliberately asymmetric with `VisitFacts`' own
+     `extra="forbid"`.** Forbidding would 502 every turn of a rolling deploy in
+     which a newer ai-assistant adds a fact. Passing an unknown key *through* is
+     worse than dropping it: the gateway echoes stored facts back on the next
+     turn, and ai-assistant's `forbid` would 422 that turn and every one after
+     it — a visit bricked until its TTL. Dropping costs the new field for the
+     length of the deploy and nothing after. It is logged (a count, never keys),
+     because a silently dropped fact is a feature quietly not working.
+   - **`intent`/`status` are constrained by SHAPE, not by a copy of the enums.**
+     `^[a-z_]{1,32}$` cannot go stale when a new intent is added, and free text a
+     clerk typed cannot satisfy it — which is the property the metadata-only
+     transcript's no-PHI-at-rest guarantee actually needs. A duplicated enum
+     would have been a second unpinned mirror of another service's constants,
+     the exact failure round 4 had to fix in `test_eligibility_budget_alignment.py`.
+   - **`llm_egress` and `assistant` are deliberately NOT validated**, against the
+     reviewer's recommendation. Both are our own accounting and health
+     reporting, and both already degrade conservatively: an ambiguous spend flag
+     keeps the charge (`is False` and nothing else refunds), an unrecognised
+     health value reads `unknown`. Failing a turn over either would discard a
+     coverage verdict a payer call already paid for — the mistake round 3
+     existed to fix — and the existing tests that pin `["false", 0, "", "no"]` to
+     *200 plus keep-the-charge* encode that decision. A field that can neither
+     corrupt state nor mislead a clerk is not worth a 502. `eligibility` is in
+     that same category — answer-only, never persisted, and the verdict it
+     reports is already in `reply` as server-rendered text — so it is validated
+     but degrades to null rather than failing the turn.
+
+2. **Mirroring a field name is not mirroring its constraint (found by the
+   pre-push pass, on the fix above).** The first cut declared
+   `insurance_id: Optional[str]` and called itself a mirror of `VisitFacts`. It
+   was not: `VisitFacts` carries a validator that upper-cases and rejects
+   non-ASCII, and its docstring says why — a stored id is used *directly* for a
+   payer lookup on a later turn, without passing back through the recogniser. So
+   the first cut closed the unknown-KEY door on `facts` and left the
+   invalid-VALUE door open on the same field, with a worse outcome than the bug
+   it was fixing: `AETN1224K` (U+212A, which survives `.upper()`) would have been
+   persisted, then 422'd by ai-assistant on *every* later turn, and since the 422
+   path never writes, nothing repairs the record — the visit is dead until its
+   TTL. The mirror now carries a shape (`^[A-Z0-9-]+$`, ≤64) that accepts every
+   id the recogniser can produce and nothing a human typed.
+
+3. **The two unbounded fields were the persisted one and the echoed one.** Every
+   scalar got a bound in the first cut; `last_eligibility` and `eligibility`
+   stayed bare `dict`. That is an unbounded `SET visit:<id> … EX ttl` into the
+   store that also holds **sessions** — the request side of this feature is
+   bounded (`ai_visit_max_message_chars`, `ai_visit_max_turns`) and the response
+   side was not, which is the asymmetry that matters under the very threat model
+   the round was addressing. It was also a PHI hole: `VisitFacts`' `extra="forbid"`
+   closes the fact KEYS, but a name nested inside an unvalidated verdict was
+   persisted at rest regardless, and `tests/test_visit_chat_phi.py` structurally
+   cannot catch that because it drives the one renderer guaranteed not to do it.
+
+   `_VisitChatVerdict` now closes the verdict at the boundary, declaring exactly
+   the keys something reads — `active`/`status` decide reuse, `payer`/
+   `checked_at`/`observed_at` are rendered or measured — and dropping the rest.
+   `raw_status` and `reason` are written by `eligibility_client` and read by
+   nothing, so they stop being carried into a PHI store; that is the same
+   projection rule that already keeps the downstream `error` string out. Every
+   field is optional, because a verdict legitimately arrives without
+   `observed_at` (an older ai-assistant wrote it — round 4 makes that "not
+   reusable", which is the safe answer) and failing a turn over it would be
+   worse than the absence the design already handles.
+
+4. **The un-refunded 502 needed attribution, not a refund.** Under a version skew
+   every turn takes the reject branch, so the shared daily ceiling drains at full
+   rate and the operator symptom is `/ai/intake-instructions` 429-ing for the
+   rest of the day with no visible cause. Refunding on the body's own
+   `llm_egress` was rejected: a body we refuse to parse cannot be trusted about
+   our spend either. The error line now names the kept charge explicitly, so the
+   drain is attributable in the logs even though it is deliberate.
+
 ## Consequences
 
 - **New endpoints.** `POST /ai/visit-chat` on the gateway
