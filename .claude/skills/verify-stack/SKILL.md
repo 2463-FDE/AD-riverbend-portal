@@ -290,6 +290,7 @@ Measurements so far:
 | PR #14 r4 fixes (2026-07-27) | `general-purpose` + pack, BOTH lenses | 73k | 7 | 6 (2 high + 1 high pre-existing), all real, all fixed |
 | PR #14 r5 fixes (2026-07-27) | `general-purpose` + pack | 66k | 8 | 4 (3 medium + 1 low), all real, 3 fixed + 1 accepted-and-documented |
 | PR #14 r6 fixes (2026-07-27) | `general-purpose` + pack | 69k | 5 | 5 (2 high), all real, all fixed |
+| PR #14 r7 fixes (2026-07-27) | `general-purpose` + pack | 127k | 19 | 4, all real, all fixed — incl. a regression the fix itself introduced |
 
 Two things that table settles.
 
@@ -325,6 +326,34 @@ a per-probe timeout. Cost is roughly flat versus the no-pack baseline; what
 changed is what the tokens bought. Treat 70–80k as the expected price of this
 step on a ~35KB diff, and the *orientation-call count* (target: 0) as the number
 to watch, since it does not drift with diff size.
+
+**A round-7 addition: the fix's own change of policy is a defect class, and it is
+the one self-review is worst at.** Round 7 replaced a fail-open Redis lock with a
+fail-closed one, and the pass's top finding was a regression the fix had
+introduced rather than anything the review round had asked about: the old
+fail-open path returned the token it had just sent, so the route's
+compare-and-delete cleaned up whenever the write had actually landed, and raising
+instead of returning discarded that token. The fault the fix reasoned about
+(`maxmemory` + `noeviction`, where the write does not land) was real but was not
+the only one — a reset connection or a failover can leave the write **applied**
+with its reply lost, and then the orphaned lock wedged the resource for its whole
+TTL. Two lenses worth naming in the pack from now on:
+
+- **"What did the code you replaced do that yours no longer does?"** A behaviour
+  change is not only what it adds. This one deleted a cleanup path nobody had
+  written down as a feature.
+- **"Enumerate the fault, don't pick one."** A store fault has several shapes
+  (write refused, write applied and reply lost, read-only, credential rejected),
+  and a fix justified against one of them silently assumes the others behave the
+  same. The tests inherit that assumption: this round's first cut injected a fault
+  that *failed* the write, so no test could see the applied-then-lost case.
+
+The cost was 127k over 19 calls, roughly double the r2–r6 band, on a ~30KB diff
+that included 8 changed test files. Still zero orientation greps. The extra spend
+went into the pass verifying its own claims by running the suite against probe
+fakes it wrote — which is what made the top finding arrive as a reproduction
+rather than a hypothesis, and is worth the money on a diff that changes a
+concurrency policy.
 
 Triage findings, fix the real ones **with regression-proven tests** (step 4),
 re-run the suite, then present the approval gate.
