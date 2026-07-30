@@ -1,12 +1,21 @@
 # ADR 0008 — Frontend date entry: adopt `react-day-picker`
 
-**Status:** Accepted
+**Status:** Superseded in part by ADR 0012 (2026-07-30) — the **dependency choice** is void, the
+**finding is not.** ADR 0012 rebuilds the portal on SvelteKit, so `react-day-picker` cannot be
+consumed. What stands: month-by-month traversal to a 1974 birth year is unusable for a DOB field,
+which is still owed by `FE-R7` and must now be re-implemented natively. The native `<input type="date">` option this ADR rejected returns to scope on its own
+merits. Fully superseded once the Next.js portal is retired (ADR 0012, "Future").
 **Date:** 2026-07-20
 **Author:** Riverbend engagement team
 **Relates to:** ADR 0001 (monorepo & stack — "frontend has zero UI/form
 dependencies; plain global CSS"). This ADR records the deliberate first break of
-that zero-UI-dependency posture. Surfaced by the frontend UX audit (2026-07,
-`docs/ux-audit-2026-07.md`, finding **F3**).
+that zero-UI-dependency posture. Surfaced by the frontend UX audit (2026-07), finding **F3**.
+
+> **Citation corrected 2026-07-30:** this line pointed at `docs/ux-audit-2026-07.md`, which was
+> never committed — `git log --all` has no record of it, and it is not gitignored. The F1–F8
+> findings exist only in project memory and in the PR bodies that shipped their fixes (F3 → PR #9).
+> Writing the audit doc is tracked as `docs/todo.md` TODO-16; the reference is removed rather than
+> left dangling.
 
 ## Context
 

@@ -309,7 +309,8 @@ than a rule anyone has to follow. The drift check this section used to prescribe
 (`git diff main...HEAD -- .claude/`) is meaningless now and has been removed; so has the
 requirement that process changes ride their own `docs(process)` / `chore(tooling)` commit,
 since there is nothing left to commit. The seven commits that touched `.claude/` before this
-date remain in history and are the only versioned record of it.
+date remain in history and are the only versioned record of it inside this repo; ongoing
+versioning now lives in the snapshot repo described two paragraphs down.
 
 **What that gives up, recorded so the trade is not re-discovered later.** An earlier draft of
 this section argued hard for keeping `.claude/` tracked, on two grounds. The first — that the
@@ -317,16 +318,54 @@ process is part of a training engagement's deliverable and must be visible to a 
 now served better by the `/insights` reports, which describe the process as actually practised
 rather than as written down. That is what retired the argument. The second ground still stands
 and is simply accepted: `verify-stack` §6's measurements table (which review agent found what,
-at what cost) is harder-won than most of the code here, and untracked it is unreviewable,
-invisible to a fresh clone, and one `rm -rf` from gone. Nothing backs it up. If that matters
-later, the fix is a git repo inside `.claude/` or a sibling tooling repo — not re-tracking it
-here, and never `git update-index --skip-worktree`, which silently discards local edits on a
-pull conflict.
+at what cost) is harder-won than most of the code here, and untracked it is unreviewable and
+invisible to a fresh clone. It is **no longer unbacked** — see the next block. Do not solve
+this by re-tracking `.claude/` here, and never with `git update-index --skip-worktree`, which
+silently discards local edits on a pull conflict.
+
+**`.claude/` is backed up outside the project (added 2026-07-30, same day, after the accident
+below).** Canonical backup: `../.riverbend-tooling-snapshots/` — its own git repo, deliberately
+outside this directory so nothing run inside the project can reach it. `snapshot.sh` mirrors
+`.claude/` into it and commits when anything changed; it is wired to fire on Claude Code
+**SessionEnd** in `.claude/settings.local.json`, so it needs no one to remember it. Restore with
+`../.riverbend-tooling-snapshots/restore.sh` (takes a git ref, so point-in-time recovery works,
+not just "last state"). It also covers the two other things nothing else backed up: the memory
+base under `~/.claude/projects/…/memory/`, and `scripts/`, gitignored by the same PR #20 and so
+removed by `git clean -xfd`. Secrets (`.env*`) are deliberately excluded. That repo's
+`README.md` owns the mechanics, guards and caveats — do not restate them here. It also holds the canonical copy of the `.git/hooks/pre-commit` guard, since
+`.git/hooks/` is outside `.claude/` and therefore outside the snapshot.
+
+**This file is snapshotted too**, under `project/`, because it is edited mid-process as tooling
+and a commit chore per edit breaks flow. That is a safety net, not a substitute for committing:
+`CLAUDE.md` is tracked, so a `git checkout`/`stash`/`reset --hard`/branch-switch still reverts
+the working copy to `origin/main`'s version — the snapshot only makes that recoverable. Let the
+commit ride the next PR rather than opening one per edit; `snapshot.sh` nags while it is
+uncommitted so the divergence does not go unnoticed.
+
+**Untracking a path never deletes it: use `git rm --cached`, never `git rm`.** This is not
+hypothetical. PR #20 (`d49b0db`) untracked `.claude/` with plain `git rm` and wiped the entire
+tooling tree from disk — `verify-stack`, `pr-open`, `address-review`, `memory-lint`,
+`/dashboard`, `/feature-start`, the `phi-secret-guard` PreToolUse hook and `settings.json`'s
+hook wiring all vanished, and went unnoticed until the next session found no commands. Both
+forms stage an identical deletion, so the diff and the review look the same; only `git rm` also
+unlinks the file. It was recoverable solely because the files were still tracked at that
+instant — which, by construction, is the last moment that is ever true.
+
+So, whenever a path is added to `.gitignore`:
+
+- Untrack with `git rm -r --cached <path>`, then **verify the files are still on disk** before
+  committing. A `.git/hooks/pre-commit` guard blocks the destructive combination (staged
+  deletion + newly ignored + absent from the working tree) and prints the recovery recipe;
+  bypass with `ALLOW_IGNORE_DELETE=1` when the deletion is genuinely intended. Local hooks are
+  advisory by construction (see below) — the rule is the real protection.
+- Remember that **`git clean -xfd` deletes ignored files**, so it removes all of `.claude/`.
+  That is now survivable, but only as far back as the last snapshot commit.
 
 Two consequences to work with, not against:
 
 - **A fresh clone has no tooling.** Skills, hooks and commands do not arrive with the repo.
-  A new machine or a new contributor needs `.claude/` copied across by hand.
+  On this machine, `../.riverbend-tooling-snapshots/restore.sh` puts them back. A new machine
+  or a new contributor needs that snapshot repo copied across, then `restore.sh` run.
 - **CI cannot see or run any of it.** Anything that must gate a merge belongs in
   `.github/workflows/` or the `Makefile`, both of which are still tracked. A check that
   exists only as a hook is advisory by construction.

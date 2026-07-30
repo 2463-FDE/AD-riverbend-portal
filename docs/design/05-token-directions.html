@@ -1,0 +1,627 @@
+<style>
+/* =============================================================================
+   P0.5 token directions — shareable review page.
+
+   This file is a BODY-ONLY fragment on purpose: it is both the local Chrome
+   preview and the source published as an Artifact, so there is one copy and it
+   cannot drift. Do not add <!doctype>/<html>/<head>/<body> wrappers.
+
+   Page chrome is deliberately quiet and theme-aware. The seven specimens keep
+   FIXED colours in both light and dark themes — they are the thing under
+   review, so the viewer's theme must not repaint them. Only direction G is
+   dark, and that is its proposal, not the page's theme.
+   ============================================================================= */
+
+:root {
+  --pg-bg: #f6f8f8;
+  --pg-surface: #ffffff;
+  --pg-surface-2: #eef3f3;
+  --pg-border: #dde5e7;
+  --pg-ink: #16242a;
+  --pg-dim: #5a6b72;
+  --pg-accent: #0f6d80;
+  --pg-accent-soft: #e2f0f3;
+  --pg-cost: #8a5a08;
+  --pg-shadow: 0 1px 2px rgba(20, 40, 45, .06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pg-bg: #10161a;
+    --pg-surface: #172026;
+    --pg-surface-2: #1d282e;
+    --pg-border: #26333a;
+    --pg-ink: #e6eef0;
+    --pg-dim: #9db0b8;
+    --pg-accent: #63c8db;
+    --pg-accent-soft: #17323a;
+    --pg-cost: #e0b36a;
+    --pg-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+  }
+}
+:root[data-theme="dark"] {
+  --pg-bg: #10161a;
+  --pg-surface: #172026;
+  --pg-surface-2: #1d282e;
+  --pg-border: #26333a;
+  --pg-ink: #e6eef0;
+  --pg-dim: #9db0b8;
+  --pg-accent: #63c8db;
+  --pg-accent-soft: #17323a;
+  --pg-cost: #e0b36a;
+  --pg-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+}
+:root[data-theme="light"] {
+  --pg-bg: #f6f8f8;
+  --pg-surface: #ffffff;
+  --pg-surface-2: #eef3f3;
+  --pg-border: #dde5e7;
+  --pg-ink: #16242a;
+  --pg-dim: #5a6b72;
+  --pg-accent: #0f6d80;
+  --pg-accent-soft: #e2f0f3;
+  --pg-cost: #8a5a08;
+  --pg-shadow: 0 1px 2px rgba(20, 40, 45, .06);
+}
+
+* { box-sizing: border-box; }
+
+.pg {
+  background: var(--pg-bg); color: var(--pg-ink);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  padding: 26px 20px 72px; margin: 0;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 26px; }
+@media (max-width: 620px) { .pg { padding: 18px 13px 56px; } .wrap { gap: 20px; } }
+
+.pg h1 { font-size: clamp(21px, 5vw, 27px); line-height: 1.2; margin: 0; letter-spacing: -.02em; text-wrap: balance; }
+.pg h2 { font-size: 15.5px; margin: 0; letter-spacing: -.01em; }
+.pg h3 { font-size: 12px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--pg-dim); }
+.pg p { margin: 0; max-width: 68ch; }
+.pg code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9em; background: var(--pg-surface-2); padding: 1px 5px; border-radius: 4px; }
+.pg a { color: var(--pg-accent); }
+.eyebrow { font-size: 11.5px; text-transform: uppercase; letter-spacing: .12em; color: var(--pg-accent); font-weight: 650; }
+.dim { color: var(--pg-dim); font-size: 13.5px; }
+
+.panel { background: var(--pg-surface); border: 1px solid var(--pg-border); border-radius: 12px; padding: 16px; box-shadow: var(--pg-shadow); }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+
+/* the ask — the reason this page is being shared at all */
+.ask ol { margin: 0; padding-left: 1.15em; display: flex; flex-direction: column; gap: 11px; }
+.ask li { padding-left: 2px; }
+.ask li b { display: block; }
+.ask li span { color: var(--pg-dim); font-size: 13.5px; }
+.heads-up { border-left: 3px solid var(--pg-accent); background: var(--pg-accent-soft); padding: 10px 13px; border-radius: 0 8px 8px 0; font-size: 13.5px; }
+
+/* inherited brand tokens */
+.brand { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: center; }
+.brand .chip { display: flex; align-items: center; gap: 8px; }
+.brand .chip i { width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--pg-border); display: block; flex: none; }
+.brand .chip b { display: block; font-size: 11.5px; font-family: ui-monospace, Menlo, monospace; }
+.brand .chip span { display: block; font-size: 10.5px; color: var(--pg-dim); font-variant-numeric: tabular-nums; }
+
+/* density switch */
+.den { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.den button {
+  font: inherit; font-size: 13px; padding: 7px 13px; border-radius: 999px; cursor: pointer;
+  background: var(--pg-surface); color: var(--pg-ink); border: 1px solid var(--pg-border);
+  appearance: none; -webkit-appearance: none;
+}
+.den button[aria-pressed="true"] { background: var(--pg-ink); color: var(--pg-bg); border-color: var(--pg-ink); font-weight: 650; }
+.den button:focus-visible { outline: 3px solid var(--pg-accent); outline-offset: 2px; }
+
+/* ---------- specimen layer: variable-driven, theme-independent ---------- */
+.dir { border: 1px solid var(--pg-border); border-radius: 12px; overflow: hidden; background: var(--pg-surface); }
+.dir > header { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--pg-border); }
+.dir > header .t { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.dir > header .tag { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--pg-accent); border: 1px solid var(--pg-accent); border-radius: 999px; padding: 2px 8px; }
+.dir > header p { font-size: 13.5px; color: var(--pg-dim); }
+.dir > header p.cost { color: var(--pg-cost); }
+
+.spec { background: var(--bg); color: var(--text); font-family: var(--font); }
+.spec .in { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.spec .cols { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 900px) { .spec .cols { grid-template-columns: 1fr; } }
+@media (max-width: 620px) { .spec .in { padding: 12px; } }
+
+.spec .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin: 0 0 7px; }
+.spec .sws { display: flex; flex-wrap: wrap; gap: 5px; }
+.spec .sw { width: 86px; flex: none; }
+.spec .sw i { display: block; height: 26px; border-radius: 5px; border: 1px solid rgba(128,128,128,.28); }
+.spec .sw b { display: block; font-size: 9.5px; font-weight: 700; margin-top: 3px; }
+.spec .sw code { display: block; font-size: 9px; color: var(--muted); font-variant-numeric: tabular-nums; font-family: ui-monospace, Menlo, monospace; }
+.spec .sw em { display: block; font-size: 9px; font-style: normal; font-variant-numeric: tabular-nums; }
+.spec .sw em.aaa { color: var(--ok); } .spec .sw em.aa { color: var(--muted); } .spec .sw em.fail { color: var(--alert); font-weight: 700; }
+
+.spec .card { background: var(--surface); border: var(--bw) solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
+.spec .pad { padding: 13px; }
+
+.spec .top { display: flex; align-items: center; gap: 9px; min-height: var(--topbar-h); padding: 6px 12px; background: var(--chrome-bg); color: var(--chrome-text); border-bottom: var(--bw) solid var(--chrome-border); }
+.spec .top .wordmark { font-family: var(--display); font-size: 14px; font-weight: 700; letter-spacing: var(--wordmark-ls); text-transform: var(--wordmark-tt); }
+.spec .top .badge { font-size: 11px; font-weight: 650; padding: 2px 9px; border-radius: var(--pill); background: var(--badge-bg); color: var(--badge-ink); border: 1px solid var(--badge-border); white-space: nowrap; }
+.spec .top .who { margin-left: auto; font-size: 11.5px; opacity: .85; }
+
+.spec .ptx { padding: 10px 12px; background: var(--ptx-bg); border-bottom: var(--bw) solid var(--border); }
+.spec .ptx .idrow { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.spec .ptx .nm { font-family: var(--display); font-size: var(--fs-name); font-weight: 650; letter-spacing: -.01em; }
+.spec .ptx .id { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; font-family: var(--numeric); }
+.spec .alert {
+  margin-top: 8px; display: flex; gap: 8px; align-items: center; font-size: 12.5px; font-weight: 650;
+  color: var(--alert); background: var(--alert-bg); border: var(--alert-bw) solid var(--alert-border);
+  border-radius: var(--radius-sm); padding: 6px 9px;
+}
+.spec .unavail { margin-top: 6px; font-size: 11.5px; color: var(--muted); font-style: var(--unavail-style); }
+
+/* the queue scrolls inside its own box — the page body never scrolls sideways */
+.spec .tscroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.spec table { width: 100%; min-width: 430px; border-collapse: collapse; font-size: 12.5px; }
+.spec thead th { text-align: left; padding: 6px 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; white-space: nowrap; color: var(--th-ink); background: var(--th-bg); border-bottom: var(--th-bw) solid var(--th-border); }
+.spec tbody tr { height: var(--row-h); border-bottom: 1px solid var(--border); }
+.spec tbody tr:last-child { border-bottom: 0; }
+.spec tbody tr:nth-child(even) { background: var(--zebra); }
+.spec tbody td { padding: 0 12px; white-space: nowrap; font-variant-numeric: tabular-nums; font-family: var(--numeric); }
+.spec tbody td.txt { font-family: var(--font); }
+/* Status is the column staff scan first, so it carries three redundant signals:
+   a filled chip (position + size), a shape glyph (colour-blind safe), and colour.
+   Ink/fill/border are derived per direction in JS from that direction's own
+   ok/warn/muted and surface, then the ink is darkened (or lightened, on a dark
+   surface) until it clears 7:1 against its own fill. Nothing here is asserted. */
+.spec .st {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  min-width: 112px; height: 21px; padding: 0 9px;
+  font-weight: 700; font-size: 11.5px; text-transform: var(--status-tt); letter-spacing: var(--status-ls);
+  border: var(--bw) solid transparent; border-radius: var(--pill);
+}
+.spec .st .g { font-size: 10px; line-height: 1; flex: none; }
+.spec .st.ok   { color: var(--st-ok-ink);   background: var(--st-ok-bg);   border-color: var(--st-ok-bd); }
+.spec .st.warn { color: var(--st-warn-ink); background: var(--st-warn-bg); border-color: var(--st-warn-bd); }
+.spec .st.none { color: var(--st-none-ink); background: var(--st-none-bg); border-color: var(--st-none-bd); border-style: dashed; }
+/* the previous treatment, kept switchable so the change can be judged against it */
+.spec[data-st="text"] .st { display: inline; min-width: 0; height: auto; padding: 0; background: none; border: 0; font-weight: 650; font-size: 12px; }
+.spec[data-st="text"] .st .g { display: none; }
+.spec[data-st="text"] .st.ok { color: var(--ok); }
+.spec[data-st="text"] .st.warn { color: var(--warn); }
+.spec[data-st="text"] .st.none { color: var(--muted); }
+.spec[data-st="text"] .stleg { display: none; } /* those ratios describe the chip fills */
+
+.spec .stleg { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-top: 9px; }
+.spec .stleg > span { display: flex; align-items: center; gap: 6px; }
+.spec .stleg em { font-size: 9px; font-style: normal; font-variant-numeric: tabular-nums; }
+.spec .stleg em.aaa { color: var(--ok); } .spec .stleg em.aa { color: var(--muted); } .spec .stleg em.fail { color: var(--alert); font-weight: 700; }
+
+.spec .ts .d { font-family: var(--display); letter-spacing: -.015em; }
+.spec label.f { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; }
+.spec button.b, .spec input.field { appearance: none; -webkit-appearance: none; }
+.spec .field, .spec input.field {
+  height: var(--ctrl-h); padding: 0 11px; display: flex; align-items: center; width: 100%;
+  font: inherit; font-size: 13.5px; font-family: var(--numeric); font-variant-numeric: tabular-nums;
+  border: var(--bw) solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text);
+}
+.spec .field.focus { border-color: var(--accent); box-shadow: var(--focus); outline: var(--focus-outline); outline-offset: 2px; font-family: var(--font); }
+.spec .field.bad { border-color: var(--alert); background: var(--alert-bg); color: var(--alert); font-family: var(--font); font-weight: var(--bad-weight); }
+.spec .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.spec button.b {
+  height: var(--ctrl-h); padding: 0 14px; font: inherit; font-size: 13.5px; font-weight: 650; cursor: default;
+  border-radius: var(--radius-sm); border: var(--bw) solid transparent;
+  text-transform: var(--btn-tt); letter-spacing: var(--btn-ls);
+}
+.spec button.b.pri { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.spec button.b.sec { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+.spec button.b.dis { background: var(--dis-bg); color: var(--dis-ink); border-color: var(--dis-border); border-style: var(--dis-bstyle); }
+.spec .stack-s { display: flex; flex-direction: column; gap: 9px; }
+
+.notes ul { margin: 0; padding-left: 1.15em; display: flex; flex-direction: column; gap: 7px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="pg">
+<div class="wrap">
+
+  <header class="stack">
+    <span class="eyebrow">Riverbend Community Health · staff portal rebuild · design review</span>
+    <h1>Seven visual directions for the staff portal — which one would you trust with a chart?</h1>
+    <p class="dim">This is a rebuild of the portal that front-desk staff, clinicians, schedulers and records clerks use. Patients never log into it. Everything below shows the <strong>same screen</strong> seven different ways: the patient identity strip, an allergy banner, a records-request queue, and one form field. Only the colour, type and spacing change.</p>
+  </header>
+
+  <section class="panel ask stack">
+    <h3>What I'd like your read on</h3>
+    <ol>
+      <li><b>Does the allergy banner read as urgent — without becoming noise?</b>
+        <span>It's the one red thing on the screen by design. Too quiet is dangerous; too loud and it gets tuned out by 10am.</span></li>
+      <li><b>Can you decide from the status column at a glance, without reading it?</b>
+        <span>This is the one that changed since you last saw the page: status is now a chip with a shape in it, not coloured words. Judge whether you can spot every Pending in a queue at arm's length — and whether the colours match what you'd expect, and whether “Not answered” reads as different from “declined”, which are genuinely different things in records work.</span></li>
+      <li><b>Row height: which would you actually want on a shared workstation?</b>
+        <span>Use the Dense / Comfortable switch below. Dense fits about 8 rows where Comfortable fits 6. Dense sees more at once; Comfortable is harder to misclick.</span></li>
+      <li><b>Is name + date of birth + MRN the right set, in that order, to confirm you're on the right patient?</b>
+        <span>It stays pinned at the top of every screen. If you'd reorder it or want something else in it, that's useful to know now.</span></li>
+      <li><b>Which of these looks like a clinical tool, and which looks like a marketing site?</b>
+        <span>Blunt answers welcome. Direction G is dark — worth saying whether you'd ever want that in an exam room.</span></li>
+    </ol>
+    <p class="heads-up"><strong>On a phone, judge the colour, type and urgency — not the layout.</strong> These are desktop screens shrunk down; on a real workstation they're about three times this wide. The queue tables slide sideways with a finger. All the patient details are invented test data.</p>
+  </section>
+
+  <section class="panel stack">
+    <h3>The brand colour already exists</h3>
+    <div class="brand">
+      <div class="chip"><i style="background:#0f7c91"></i><div><b>primary</b><span>#0f7c91</span></div></div>
+      <div class="chip"><i style="background:#0a5d6e"></i><div><b>primary dark</b><span>#0a5d6e</span></div></div>
+      <div class="chip"><i style="background:#103b46"></i><div><b>nav</b><span>#103b46</span></div></div>
+      <div class="chip"><i style="background:#e3f1f4"></i><div><b>tint</b><span>#e3f1f4</span></div></div>
+    </div>
+    <p class="dim">Riverbend's teal is inherited from the portal that's live today, where it's commented “calm medical teal/blue”. All seven directions are built from these values rather than replacing them — what differs is how much work the teal is asked to do.</p>
+  </section>
+
+  <section class="panel stack">
+    <h3>These switches change every specimen at once</h3>
+    <div class="den">
+      <button type="button" data-den="dense" aria-pressed="true">Dense · 32px rows</button>
+      <button type="button" data-den="comfy" aria-pressed="false">Comfortable · 44px rows</button>
+    </div>
+    <div class="den">
+      <button type="button" data-st="chip" aria-pressed="true">Status as chips</button>
+      <button type="button" data-st="text" aria-pressed="false">Status as plain text · previous</button>
+    </div>
+    <p class="dim">Status was coloured text before — one weak signal doing all the work. Now the three states are deliberately <strong>unequal</strong>, so the column has one thing to look for instead of three: <strong>Pending is a solid block</strong> of the attention colour because it is the only one that needs a person, <strong>Released is a quiet tint</strong>, and <strong>Not answered is a dashed outline</strong> because nothing has come back yet. Each also carries a shape — ● pending, ✓ released, ○ not answered — which survives greyscale and every form of colour blindness. Flip between the two and say whether the chips earn their weight.</p>
+  </section>
+
+  <div id="out" class="wrap" style="max-width:none; padding:0;"></div>
+
+  <footer class="panel notes stack">
+    <h3>Notes</h3>
+    <ul>
+      <li><strong>Real proposals:</strong> colours, contrast ratios, type sizes, row heights, border weights, focus rings. Every contrast ratio on this page is calculated by the page itself, against that direction's own background.</li>
+      <li><strong>Not a proposal:</strong> the arrangement of the screen. That was settled earlier and is reused here only so the colours sit on real content.</li>
+      <li><strong>Deliberately unfinished everywhere:</strong> a dark counterpart for each palette, loading and empty states, and the wording review that makes sure no screen talks to staff as though they were the patient.</li>
+      <li><strong>Status chips are derived, not drawn:</strong> every chip is built from that direction's own attention/success/neutral colour by one rule — Pending fills solid, Released tints the surface, Not answered stays unfilled — and then the text is darkened (lightened, on the dark direction) until it clears 7:1 against whatever it ends up sitting on, the zebra stripe included. The ratio printed under each queue is measured on the chip you're looking at, so a direction can't pass by being described as passing.</li>
+      <li><strong>Contrast floor:</strong> body text at 7:1 or better, secondary text and accents at 4.5:1 or better. A red <strong>FAIL</strong> badge means that pairing can't ship as text — three colours in the current live portal fail it, which is a finding, not a rendering fault.</li>
+      <li>Add <code>#only=A,B</code> to this page's address to see just two directions side by side.</li>
+    </ul>
+  </footer>
+
+</div>
+</div>
+
+<script>
+/* WCAG contrast, computed rather than asserted */
+const lum = hex => {
+  const c = [1,3,5].map(i => parseInt(hex.slice(i,i+2),16)/255)
+    .map(v => v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4));
+  return 0.2126*c[0] + 0.7152*c[1] + 0.0722*c[2];
+};
+const ratio = (a,b) => { const l = [lum(a), lum(b)].sort((p,q) => q-p); return (l[0]+0.05)/(l[1]+0.05); };
+const grade = r => r >= 7 ? ['aaa','AAA'] : r >= 4.5 ? ['aa','AA'] : ['fail','FAIL'];
+
+/* colour arithmetic, so status chips are derived from each direction's own palette
+   rather than hand-picked seven times (which would drift the moment a token moves) */
+const rgb = h => [1,3,5].map(i => parseInt(h.slice(i,i+2),16));
+const hex = c => '#' + c.map(v => Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('');
+const mix = (a, b, t) => hex(rgb(a).map((v,i) => v + (rgb(b)[i] - v) * t));
+const isDark = h => lum(h) < 0.32;
+/* push the ink away from every background it may sit on until the WORST of them
+   clears `target`, then stop. An unfilled chip lands on plain and zebra rows
+   alike, so both count. */
+const fixInk = (ink, bgs, target = 7) => {
+  const list = [].concat(bgs);
+  const toward = isDark(list[0]) ? '#ffffff' : '#000000';
+  const worst = c => Math.min(...list.map(b => ratio(c, b)));
+  let out = ink;
+  for (let t = 0.05; t <= 0.75 && worst(out) < target; t += 0.05) out = mix(ink, toward, t);
+  return out;
+};
+/* Emphasis is tiered on purpose, so the column has ONE thing to look for rather
+   than three competing ones: Pending — the only state that needs a human — is a
+   solid block of the attention colour; Released is a quiet tint; Not answered is
+   an outline, because nothing has come back. All three still clear 7:1 against
+   whatever they sit on. `stFill: 'none'` drops the soft tint for a direction
+   (direction E does that and leans on 2px borders instead); Pending stays solid
+   everywhere, because a block of colour is the strongest signal on offer. */
+function statusTokens(v, stFill) {
+  const surface = v['--surface'], dark = isDark(surface);
+  const flat = stFill === 'none';
+  const states = {
+    ok: { c: v['--ok'], tier: 'tint' },
+    warn: { c: v['--warn'], tier: 'solid' },
+    /* "Not answered" is a real state, not an absence — its ink is pulled out of
+       --muted toward --text so it stops reading as disabled text. */
+    none: { c: mix(v['--muted'], v['--text'], 0.5), tier: 'outline' },
+  };
+  /* an unfilled chip lands on plain rows and zebra rows alike, so it is measured
+     against both and reported at the worse of the two */
+  const rows = [surface, v['--zebra']];
+  const out = {};
+  for (const [k, { c, tier }] of Object.entries(states)) {
+    /* even the fill-nothing direction keeps Pending solid — a block of colour is
+       the most legible signal available, which is that direction's whole argument */
+    if (tier === 'solid') {
+      /* solid: the state colour IS the fill. Take whichever extreme ink reads
+         better on it, then push the fill away until that pairing clears 7:1. */
+      let bg = c;
+      const ink = ['#ffffff', '#0c1114'].sort((a, b) => ratio(b, bg) - ratio(a, bg))[0];
+      const away = isDark(ink) ? '#ffffff' : '#000000';
+      for (let t = 0.05; t <= 0.6 && ratio(ink, bg) < 7; t += 0.05) bg = mix(c, away, t);
+      out[k] = { ink, bg, bd: bg, r: ratio(ink, bg) };
+    } else if (tier === 'outline' || flat) {
+      /* no fill: transparent, so the zebra stripe still shows through the chip */
+      const ink = fixInk(c, rows);
+      out[k] = { ink, bg: 'transparent', bd: ink, r: Math.min(...rows.map(b => ratio(ink, b))) };
+    } else {
+      const bg = mix(surface, c, dark ? 0.24 : 0.15);
+      const ink = fixInk(c, bg);
+      out[k] = { ink, bg, bd: mix(surface, c, dark ? 0.55 : 0.45), r: ratio(ink, bg) };
+    }
+  }
+  return out;
+}
+const GLYPH = { ok: '✓', warn: '●', none: '○' };
+const STATE_LABEL = { warn: 'Pending', ok: 'Released', none: 'Not answered' };
+
+const BASE = {
+  '--font': "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+  '--display': 'var(--font)', '--numeric': 'var(--font)',
+  '--radius': '10px', '--radius-sm': '6px', '--pill': '999px', '--bw': '1px',
+  '--shadow': 'none', '--topbar-h': '44px', '--fs-name': '15.5px',
+  '--wordmark-ls': '-.01em', '--wordmark-tt': 'none',
+  '--status-tt': 'none', '--status-ls': '0', '--btn-tt': 'none', '--btn-ls': '0',
+  '--alert-bw': '1px', '--unavail-style': 'italic', '--bad-weight': '400',
+  '--focus-outline': 'none', '--th-bw': '1px', '--th-bg': 'transparent', '--dis-bstyle': 'solid',
+};
+
+const DIRECTIONS = [
+{
+  key: 'A', name: 'Brand-faithful, corrected', tags: ['closest to today'],
+  blurb: "The colours the portal already uses, kept as they are — with only the ones that fail a legibility check raised until they pass, plus proper alignment on numbers and a visible focus ring.",
+  cost: 'Cost: it looks like the portal that already exists, so a rebuild behind it is invisible.',
+  v: {
+    '--bg':'#eef2f5','--surface':'#ffffff','--zebra':'#f7fafc','--border':'#dce5ea','--border-strong':'#c3d0d8',
+    '--text':'#1f2d36','--muted':'#54636e','--accent':'#0f7c91','--accent-ink':'#ffffff',
+    '--chrome-bg':'#103b46','--chrome-text':'#ffffff','--chrome-border':'#103b46',
+    '--badge-bg':'#0f7c91','--badge-ink':'#ffffff','--badge-border':'#0f7c91','--ptx-bg':'#f7fafc',
+    '--ok':'#276b47','--warn':'#8a5c00','--alert':'#b02a1c','--alert-bg':'#fbe9e7','--alert-border':'#f3c6c0',
+    '--th-ink':'#54636e','--th-border':'#dce5ea',
+    '--dis-bg':'#eef2f5','--dis-ink':'#8a9aa5','--dis-border':'#dce5ea',
+    '--radius':'8px','--shadow':'0 1px 3px rgba(16,59,70,.10)','--focus':'0 0 0 3px rgba(15,124,145,.32)',
+  },
+  sws: [['bg','#eef2f5'],['surface','#ffffff'],['text','#1f2d36','#eef2f5'],['muted','#54636e','#eef2f5'],['accent','#0f7c91','#ffffff'],['nav','#103b46','#ffffff'],['ok','#276b47','#ffffff'],['warn','#8a5c00','#ffffff'],['alert','#b02a1c','#ffffff']],
+},
+{
+  key: 'B', name: 'Deep-teal frame, white canvas', tags: ['brand as structure'],
+  blurb: "The dark teal stops being a sidebar tint and becomes the frame around a white working area. The patient identity strip sits inside that frame, so who you're looking at reads as part of the window rather than as another row of content.",
+  cost: 'Cost: a heavy frame eats vertical space — on a small laptop the queue loses about a row to it.',
+  v: {
+    '--bg':'#f4f7f8','--surface':'#ffffff','--zebra':'#f7fafb','--border':'#d7e2e6','--border-strong':'#b6c7cd',
+    '--text':'#14252c','--muted':'#4e6169','--accent':'#0a5d6e','--accent-ink':'#ffffff',
+    '--chrome-bg':'#103b46','--chrome-text':'#e8f4f7','--chrome-border':'#0a2b33',
+    '--badge-bg':'rgba(255,255,255,.14)','--badge-ink':'#cfe3e7','--badge-border':'rgba(207,227,231,.45)',
+    '--ptx-bg':'#e3f1f4',
+    '--ok':'#1f6142','--warn':'#845400','--alert':'#a52418','--alert-bg':'#fdeceb','--alert-border':'#f0bfba',
+    '--th-ink':'#4e6169','--th-border':'#b6c7cd',
+    '--dis-bg':'#eef4f5','--dis-ink':'#8ba0a8','--dis-border':'#d7e2e6',
+    '--topbar-h':'50px','--fs-name':'16.5px','--shadow':'0 1px 2px rgba(16,59,70,.07)','--focus':'0 0 0 3px rgba(10,93,110,.34)',
+  },
+  sws: [['bg','#f4f7f8'],['frame','#103b46','#ffffff'],['text','#14252c','#f4f7f8'],['muted','#4e6169','#f4f7f8'],['accent','#0a5d6e','#ffffff'],['tint','#e3f1f4'],['ok','#1f6142','#ffffff'],['warn','#845400','#ffffff'],['alert','#a52418','#ffffff']],
+},
+{
+  key: 'C', name: 'Ink-first, teal rationed', tags: ['teal = you can act on it'],
+  blurb: "Almost no colour at all. Teal appears in exactly three places — the main button, whatever has keyboard focus, and the selected part of the menu — so anything teal on the screen is something you can act on, and nothing else competes with the patient's data.",
+  cost: 'Cost: rations the brand nearly out of existence. A screenshot of this reads as a generic tool, not as Riverbend.',
+  v: {
+    '--bg':'#ffffff','--surface':'#ffffff','--zebra':'#fafbfc','--border':'#e6e9ec','--border-strong':'#c9cfd5',
+    '--text':'#0d1114','--muted':'#5a646d','--accent':'#0f7c91','--accent-ink':'#ffffff',
+    '--chrome-bg':'#ffffff','--chrome-text':'#0d1114','--chrome-border':'#e6e9ec',
+    '--badge-bg':'#f2f4f6','--badge-ink':'#3c454d','--badge-border':'#dfe3e7','--ptx-bg':'#ffffff',
+    '--ok':'#2c6a4a','--warn':'#7d5700','--alert':'#a92a1d','--alert-bg':'#fff5f4','--alert-border':'#f0c9c4',
+    '--th-ink':'#5a646d','--th-border':'#e6e9ec',
+    '--dis-bg':'#f7f8f9','--dis-ink':'#9aa3ab','--dis-border':'#e6e9ec',
+    '--radius':'12px','--radius-sm':'8px','--topbar-h':'48px','--fs-name':'16.5px',
+    '--numeric':"ui-monospace, 'SF Mono', Menlo, monospace",
+    '--focus':'0 0 0 3px rgba(15,124,145,.30)',
+  },
+  sws: [['bg','#ffffff'],['border','#e6e9ec'],['text','#0d1114','#ffffff'],['muted','#5a646d','#ffffff'],['accent','#0f7c91','#ffffff'],['ok','#2c6a4a','#ffffff'],['warn','#7d5700','#ffffff'],['alert','#a92a1d','#ffffff']],
+},
+{
+  key: 'D', name: 'Teal structure, amber for attention', tags: ['two colours, two jobs'],
+  blurb: "Teal holds the furniture together; a warm amber means “this needs someone” — a request still pending, coverage not yet verified, a consent nobody answered. Red is kept strictly for the allergy warning, so it never has to compete.",
+  cost: 'Cost: two accents means two chances to misuse one. Needs a written rule for amber versus red.',
+  v: {
+    '--bg':'#f5f7f8','--surface':'#ffffff','--zebra':'#f8fafb','--border':'#dde5e9','--border-strong':'#bfcbd2',
+    '--text':'#16242b','--muted':'#516169','--accent':'#0f7c91','--accent-ink':'#ffffff',
+    '--chrome-bg':'#0f4a58','--chrome-text':'#e6f3f6','--chrome-border':'#0b3641',
+    '--badge-bg':'#b9791a','--badge-ink':'#ffffff','--badge-border':'#a06714','--ptx-bg':'#fbfcfd',
+    '--ok':'#226b46','--warn':'#9a5f06','--alert':'#a8241a','--alert-bg':'#fdecea','--alert-border':'#efc0bb',
+    '--th-ink':'#516169','--th-border':'#dde5e9',
+    '--dis-bg':'#f1f4f6','--dis-ink':'#93a1a9','--dis-border':'#dde5e9',
+    '--radius':'9px','--topbar-h':'46px','--fs-name':'16px','--shadow':'0 1px 2px rgba(16,59,70,.06)','--focus':'0 0 0 3px rgba(15,124,145,.30)',
+  },
+  sws: [['bg','#f5f7f8'],['frame','#0f4a58','#ffffff'],['text','#16242b','#f5f7f8'],['muted','#516169','#f5f7f8'],['teal','#0f7c91','#ffffff'],['amber','#9a5f06','#ffffff'],['ok','#226b46','#ffffff'],['alert','#a8241a','#ffffff']],
+},
+{
+  key: 'E', name: 'Maximum legibility', tags: ['built for a bad monitor'],
+  stFill: 'none',
+  blurb: "For hour nine of a shift on a monitor nobody has calibrated since 2019. Every colour clears the strictest legibility standard, corners are square, borders are heavy, status and buttons are capitalised. Nothing here is decorative.",
+  cost: 'Cost: loud. Reads as industrial control panel, and “disabled” needs a signal other than colour because there is no grey background to fade into.',
+  v: {
+    '--bg':'#ffffff','--surface':'#ffffff','--zebra':'#ffffff','--border':'#0d2b33','--border-strong':'#0d2b33',
+    '--text':'#000000','--muted':'#33434b','--accent':'#084956','--accent-ink':'#ffffff',
+    '--chrome-bg':'#084956','--chrome-text':'#ffffff','--chrome-border':'#000000',
+    '--badge-bg':'#ffffff','--badge-ink':'#084956','--badge-border':'#ffffff','--ptx-bg':'#ffffff',
+    '--ok':'#0d5535','--warn':'#6b4700','--alert':'#8c1d13','--alert-bg':'#ffffff','--alert-border':'#8c1d13',
+    '--th-ink':'#000000','--th-border':'#0d2b33',
+    '--dis-bg':'#ffffff','--dis-ink':'#5c666d','--dis-border':'#8b959b',
+    '--radius':'0px','--radius-sm':'0px','--pill':'0px','--bw':'2px','--th-bw':'2px','--alert-bw':'2px',
+    '--wordmark-tt':'uppercase','--wordmark-ls':'.04em','--status-tt':'uppercase','--status-ls':'.04em',
+    '--btn-tt':'uppercase','--btn-ls':'.04em','--unavail-style':'normal','--bad-weight':'700','--dis-bstyle':'dashed',
+    '--focus':'none','--focus-outline':'3px solid #084956',
+  },
+  sws: [['bg','#ffffff'],['border','#0d2b33','#ffffff'],['text','#000000','#ffffff'],['muted','#33434b','#ffffff'],['accent','#084956','#ffffff'],['ok','#0d5535','#ffffff'],['warn','#6b4700','#ffffff'],['alert','#8c1d13','#ffffff']],
+},
+{
+  key: 'F', name: 'Warm and institutional', tags: ['community clinic, not SaaS'],
+  blurb: "Warm paper background and a serif for headings, so it reads as a community health centre rather than a software product — with the accent still taken from Riverbend's own teal, which sits naturally against warm paper.",
+  cost: 'Cost: the warm background lowers effective contrast in dense tables, so the serif is kept out of queue rows.',
+  v: {
+    '--bg':'#f9f7f3','--surface':'#ffffff','--zebra':'#fdfbf8','--border':'#e5ded4','--border-strong':'#cdc3b5',
+    '--text':'#1a1c1c','--muted':'#635c52','--accent':'#0f6d80','--accent-ink':'#ffffff',
+    '--chrome-bg':'#123b44','--chrome-text':'#f2ece2','--chrome-border':'#0c2b32',
+    '--badge-bg':'rgba(255,255,255,.15)','--badge-ink':'#f2ece2','--badge-border':'rgba(242,236,226,.4)',
+    '--ptx-bg':'#fdfcfa',
+    '--ok':'#1f6142','--warn':'#8a5a08','--alert':'#a02a24','--alert-bg':'#fdeeec','--alert-border':'#eec7c2',
+    '--th-ink':'#635c52','--th-border':'#e5ded4',
+    '--dis-bg':'#f4f1ec','--dis-ink':'#a09788','--dis-border':'#e5ded4',
+    '--topbar-h':'48px','--fs-name':'18px',
+    '--display':"ui-serif, 'Iowan Old Style', Palatino, Georgia, serif",
+    '--shadow':'0 1px 2px rgba(60,50,35,.07)','--focus':'0 0 0 3px rgba(15,109,128,.30)',
+  },
+  sws: [['bg','#f9f7f3'],['surface','#ffffff'],['frame','#123b44','#ffffff'],['text','#1a1c1c','#f9f7f3'],['muted','#635c52','#f9f7f3'],['accent','#0f6d80','#ffffff'],['ok','#1f6142','#ffffff'],['alert','#a02a24','#ffffff']],
+},
+{
+  key: 'G', name: 'Night shift', tags: ['dark on purpose'],
+  blurb: "Dark as the normal state rather than an afterthought: the deep teal becomes the background and a brighter teal carries the buttons. The question this one asks is whether evening clinic hours and dim exam rooms deserve dark as the default.",
+  cost: 'Cost: worse for long reading and for printing, and most clinical rooms are brightly lit. Also the biggest departure from anything the client has seen.',
+  v: {
+    '--bg':'#0d1e23','--surface':'#132a31','--zebra':'#163037','--border':'#25454e','--border-strong':'#31575f',
+    '--text':'#e8f1f3','--muted':'#9db4bb','--accent':'#3fb6cf','--accent-ink':'#04222a',
+    '--chrome-bg':'#0a171b','--chrome-text':'#dff0f3','--chrome-border':'#25454e',
+    '--badge-bg':'#17323a','--badge-ink':'#7fd3e2','--badge-border':'#2d5760','--ptx-bg':'#132a31',
+    '--ok':'#5fc98f','--warn':'#e3b25f','--alert':'#ff8a7a','--alert-bg':'#33191a','--alert-border':'#6b2f2c',
+    '--th-ink':'#9db4bb','--th-border':'#25454e',
+    '--dis-bg':'#16292f','--dis-ink':'#5f767d','--dis-border':'#25454e',
+    '--topbar-h':'46px','--fs-name':'16.5px','--shadow':'0 1px 3px rgba(0,0,0,.4)','--focus':'0 0 0 3px rgba(63,182,207,.35)',
+  },
+  sws: [['bg','#0d1e23'],['surface','#132a31'],['text','#e8f1f3','#0d1e23'],['muted','#9db4bb','#0d1e23'],['accent','#3fb6cf','#0d1e23'],['ok','#5fc98f','#0d1e23'],['warn','#e3b25f','#0d1e23'],['alert','#ff8a7a','#0d1e23']],
+},
+];
+
+const ROWS = [
+  ['ROI-1043','full chart','2026-07-27 09:14','warn','Pending'],
+  ['ROI-1041','labs only','2026-07-26 16:02','ok','Released'],
+  ['ROI-1039','imaging','2026-07-26 11:47','none','Not answered'],
+  ['ROI-1036','full chart','2026-07-25 14:20','warn','Pending'],
+  ['ROI-1034','labs only','2026-07-25 10:05','ok','Released'],
+  ['ROI-1031','imaging','2026-07-24 15:41','ok','Released'],
+  ['ROI-1029','full chart','2026-07-24 08:58','none','Not answered'],
+  ['ROI-1027','labs only','2026-07-23 13:12','warn','Pending'],
+];
+
+const swatchHtml = sws => sws.map(([name, hex, on]) => {
+  let g = '';
+  if (on) { const r = ratio(hex, on); const [cls, txt] = grade(r); g = `<em class="${cls}">${r.toFixed(1)}:1 ${txt}</em>`; }
+  return `<div class="sw"><i style="background:${hex}"></i><b>${name}</b><code>${hex}</code>${g}</div>`;
+}).join('');
+
+const stHtml = (k, label) =>
+  `<span class="st ${k}"><span class="g" aria-hidden="true">${GLYPH[k]}</span>${label}</span>`;
+
+const specHtml = d => `
+<div class="in">
+  <div class="sws">${swatchHtml(d.sws)}</div>
+  <div class="cols">
+    <div>
+      <p class="lbl">The screen — identity strip, allergy warning, records queue</p>
+      <div class="card">
+        <div class="top">
+          <span class="wordmark">Riverbend</span>
+          <span class="badge">Front desk</span>
+          <span class="who">frontdesk ▾</span>
+        </div>
+        <div class="ptx">
+          <div class="idrow">
+            <span class="nm">Okonkwo, Mariam</span>
+            <span class="id">DOB 1974-03-02 · 52y</span>
+            <span class="id">MRN 004821</span>
+          </div>
+          <div class="alert"><span aria-hidden="true">⚠</span><span>Allergy — Penicillin (severe)</span></div>
+          <div class="unavail">Immunisations unavailable for this patient — said plainly, not left blank</div>
+        </div>
+        <div class="tscroll">
+          <table>
+            <thead><tr><th>Request</th><th>Scope</th><th>Received</th><th>Status</th></tr></thead>
+            <tbody>${ROWS.map(r => `<tr>
+              <td>${r[0]}</td><td class="txt">${r[1]}</td><td>${r[2]}</td>
+              <td class="txt">${stHtml(r[3], r[4])}</td></tr>`).join('')}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="stleg"><span class="lbl" style="margin:0">measured contrast of each chip's text on what it sits on</span>${['warn','ok','none'].map(k =>
+        `<span>${stHtml(k, STATE_LABEL[k])}<em class="${grade(d.st[k].r)[0]}">${d.st[k].r.toFixed(1)}:1 ${grade(d.st[k].r)[1]}</em></span>`).join('')}</div>
+    </div>
+    <div class="stack-s">
+      <div>
+        <p class="lbl">Text sizes</p>
+        <div class="card pad ts">
+          <div class="d" style="font-size:29px; line-height:1.15; font-weight:700;">Page title</div>
+          <div class="d" style="font-size:23px; line-height:1.2; font-weight:650;">Section</div>
+          <div class="d" style="font-size:19px; line-height:1.3; font-weight:650;">Card heading</div>
+          <div style="font-size:15px; line-height:1.5;">Body — patient name, main values</div>
+          <div style="font-size:13.5px; line-height:1.5; color:var(--muted);">Secondary — table cells, hints</div>
+          <div style="font-size:11px; line-height:1.45; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-weight:700;">Labels and column heads</div>
+          <div style="font-size:13.5px; margin-top:8px; font-family:var(--numeric); font-variant-numeric:tabular-nums;">MRN 004821 · 1974-03-02 · 09:14</div>
+        </div>
+      </div>
+      <div>
+        <p class="lbl">A form field, and what it looks like when things go wrong</p>
+        <div class="card pad stack-s">
+          <label class="f" for="dob-${d.key}">Date of birth</label>
+          <input class="field" id="dob-${d.key}" value="1974-03-02" readonly>
+          <div class="field focus">while you're typing in it</div>
+          <div class="field bad">that date isn't valid</div>
+          <div class="btns">
+            <button type="button" class="b pri">Register patient</button>
+            <button type="button" class="b sec">Cancel</button>
+            <button type="button" class="b dis" disabled>Disabled</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>`;
+
+/* `#only=E,F` renders just those directions. No hash renders all seven. */
+const only = (location.hash.match(/only=([A-G,]+)/i) || [])[1];
+const SHOWN = only ? DIRECTIONS.filter(d => only.toUpperCase().split(',').includes(d.key)) : DIRECTIONS;
+
+/* chips are derived before markup, because the legend prints their real ratios */
+SHOWN.forEach(d => { d.st = statusTokens({...BASE, ...d.v}, d.stFill); });
+
+const out = document.getElementById('out');
+out.innerHTML = SHOWN.map(d => `<section class="dir" data-key="${d.key}">
+    <header>
+      <div class="t"><h2>${d.key} · ${d.name}</h2>${d.tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>
+      <p>${d.blurb}</p>
+      <p class="cost">${d.cost}</p>
+    </header>
+    <div class="spec">${specHtml(d)}</div>
+  </section>`).join('');
+
+/* Token values are applied with setProperty, never through a generated style="..."
+   attribute: font stacks contain quotes that terminate the attribute early and
+   silently drop every property after it. */
+SHOWN.forEach(d => {
+  const el = out.querySelector(`section[data-key="${d.key}"] .spec`);
+  const st = {};
+  for (const [k, c] of Object.entries(d.st)) {
+    st[`--st-${k}-ink`] = c.ink; st[`--st-${k}-bg`] = c.bg; st[`--st-${k}-bd`] = c.bd;
+  }
+  Object.entries({...BASE, ...d.v, ...st}).forEach(([k, v]) => el.style.setProperty(k, v));
+});
+addEventListener('hashchange', () => location.reload());
+
+const DEN = { dense: { '--row-h':'32px', '--ctrl-h':'36px' }, comfy: { '--row-h':'44px', '--ctrl-h':'44px' } };
+function setDensity(k) {
+  document.querySelectorAll('.spec').forEach(el =>
+    Object.entries(DEN[k]).forEach(([p,v]) => el.style.setProperty(p, v)));
+  document.querySelectorAll('[data-den]').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.den === k)));
+}
+document.querySelectorAll('[data-den]').forEach(b =>
+  b.addEventListener('click', () => setDensity(b.dataset.den)));
+setDensity('dense');
+
+function setStatusStyle(k) {
+  document.querySelectorAll('.spec').forEach(el => el.dataset.st = k);
+  document.querySelectorAll('[data-st]:not(.spec)').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.st === k)));
+}
+document.querySelectorAll('button[data-st]').forEach(b =>
+  b.addEventListener('click', () => setStatusStyle(b.dataset.st)));
+setStatusStyle('chip');
+</script>
