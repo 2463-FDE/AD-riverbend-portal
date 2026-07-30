@@ -66,6 +66,7 @@ adr/                   # 0001 stack · 0002 data/compliance · 0003 auth/session
                        # 0005 MPI match key · 0006 LangSmith observability · 0007 AI abuse controls
                        # 0008 date-picker dep · 0009 Bedrock provider · 0010 eligibility resilience
                        # 0011 eligibility agent + visit memory
+  _template.md         #   copy this for a new ADR — it owns the required sections
 docs/
   runbook.md           # operations + recovery
   debt-log.md          # D1–D14 debt register (the taxonomy the capstone must align to)
@@ -73,10 +74,11 @@ docs/
   review-loop-metrics.md# A/B/C labels on every review finding + the measured baseline the
                        #   address-review design gate is justified by. Append, don't re-derive.
   specs/wN.md          # per-week engagement specs (client ask, scope, requirements)
+  specs/_template.md   # copy this for a new spec — it owns the EARS rules and ID scheme
   handover/            # jira-tickets.md (the client asks), breach policy, auditor Q, payer status, portal.har
 tests/                 # pytest; integration tests marked and need live infra
-.claude/               # this project's own tooling: skills, hooks, settings. Tracked in git —
-                       # see §10 for why it must never diverge by branch.
+.claude/               # this project's own tooling: skills, hooks, settings. NOT tracked —
+                       # gitignored, so it is identical on every branch. See §10.1.
 ```
 
 - **Entry points:** each service is `app.py` (FastAPI app + routers). Frontend boots via Next.js.
@@ -284,7 +286,7 @@ week whose deliverable targets that gap (curriculum arc mirrored in project memo
 > there is now exactly one. It was renamed to `../WORKSPACE-NOTES.md`, which Claude Code
 > does not auto-load; nothing was deleted.
 
-### 10.1 One source of truth per instruction, and it must not depend on the branch
+### 10.1 One source of truth per instruction
 
 **What actually went wrong on 2026-07-27:** `verify-stack` §6 correctly said "do not use
 `cavecrew-reviewer` as a pre-push gate" — on this branch *and* on `main`. The retired
@@ -301,33 +303,33 @@ So the primary rule is about ownership:
   disagreement is a bug to fix immediately in whichever file is behind — do not just pick
   one and move on, which is precisely what failed here.
 
-`.claude/` is tracked in git, so a process change committed to a feature branch does not
-exist on `main` or on the next branch. **Detect that; do not try to prevent it.**
+**`.claude/` is no longer tracked (decided 2026-07-30).** It is gitignored, so tooling is
+the same on every branch and at every commit — branch-independence is now structural rather
+than a rule anyone has to follow. The drift check this section used to prescribe
+(`git diff main...HEAD -- .claude/`) is meaningless now and has been removed; so has the
+requirement that process changes ride their own `docs(process)` / `chore(tooling)` commit,
+since there is nothing left to commit. The seven commits that touched `.claude/` before this
+date remain in history and are the only versioned record of it.
 
-- Starting a session on a feature branch, check for drift before relying on a skill:
-  `git diff main...HEAD -- .claude/`. One command, and it is the whole control.
-- Process/tooling changes go in their **own** `docs(process)` / `chore(tooling)` commit,
-  then ride the PR like anything else. The drift window is the PR's lifetime, which the
-  check above covers.
+**What that gives up, recorded so the trade is not re-discovered later.** An earlier draft of
+this section argued hard for keeping `.claude/` tracked, on two grounds. The first — that the
+process is part of a training engagement's deliverable and must be visible to a trainer — is
+now served better by the `/insights` reports, which describe the process as actually practised
+rather than as written down. That is what retired the argument. The second ground still stands
+and is simply accepted: `verify-stack` §6's measurements table (which review agent found what,
+at what cost) is harder-won than most of the code here, and untracked it is unreviewable,
+invisible to a fresh clone, and one `rm -rf` from gone. Nothing backs it up. If that matters
+later, the fix is a git repo inside `.claude/` or a sibling tooling repo — not re-tracking it
+here, and never `git update-index --skip-worktree`, which silently discards local edits on a
+pull conflict.
 
-An earlier draft of this section required process commits to land on `main` *promptly*,
-ahead of the feature branch carrying them. That is removed deliberately, and re-adding it
-needs new evidence. It was written as a precaution against a drift incident that has never
-occurred — the 2026-07-27 failure above was duplication, and the drift example first cited
-to justify the rule turned out to be false on inspection (`main` already had the correct
-guidance). What the rule reliably produced was a cherry-pick-and-merge ritual around
-two-line edits. Measured 2026-07-27: five commits have ever touched `.claude/`, four of
-them pure tooling with no code mixed in, across 751 lines in 8 files. The hygiene problem
-the rule policed was not happening.
+Two consequences to work with, not against:
 
-Keep `.claude/` **tracked**, and resist gitignoring it when the bookkeeping feels tedious.
-This is a training engagement: the process is part of the deliverable, and `verify-stack`
-§6's measurements table — which agent found what, at what cost — is harder-won than most
-of the code. Untracked, it is invisible to CI and a fresh clone, unreviewable, and one
-`rm -rf` from gone. If branch-independence ever genuinely becomes worth engineering, the
-mature answer is a symlink into a sibling repo (the dotfile-manager pattern), which keeps
-history and review; `git update-index --skip-worktree` is not that answer and silently
-discards local edits on a pull conflict.
+- **A fresh clone has no tooling.** Skills, hooks and commands do not arrive with the repo.
+  A new machine or a new contributor needs `.claude/` copied across by hand.
+- **CI cannot see or run any of it.** Anything that must gate a merge belongs in
+  `.github/workflows/` or the `Makefile`, both of which are still tracked. A check that
+  exists only as a hook is advisory by construction.
 
 ### 10.2 Delegating to subagents
 

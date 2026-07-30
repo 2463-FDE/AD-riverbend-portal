@@ -22,5 +22,19 @@ dist/
 *.log.2
 .venv/
 
-# Claude Code local (machine-specific) settings
-.claude/settings.local.json
+# Claude Code tooling (skills, hooks, commands, settings) — untracked as of
+# 2026-07-30 so it stays identical across branches and commits. Rationale and the
+# accepted trade-offs are in CLAUDE.md §10.1. Note the consequences: a fresh clone
+# arrives with no tooling, and CI cannot run any of it, so anything that must gate a
+# merge belongs in .github/workflows/ or the Makefile instead.
+.claude/
+
+# Local-only helper scripts (status dashboard generator, renderers). Same reasoning as
+# .claude/ above: they are personal tooling, not a project deliverable, so they stay out
+# of git. `make status` guards on their absence rather than failing obscurely.
+scripts/
+
+# Status dashboard — derived from docs/specs/, docs/todo.md and docs/debt-log.md by
+# `make status`. The inputs are tracked; the render is not, so it cannot drift from them.
+docs/status/dashboard.html
+docs/status/snapshot.json

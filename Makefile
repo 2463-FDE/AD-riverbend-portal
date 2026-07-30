@@ -1,4 +1,4 @@
-.PHONY: up down logs ps build seed seed-gen psql test test-docker frontend-dev config
+.PHONY: up down logs ps build seed seed-gen psql test test-docker frontend-dev config status
 
 # Scoped gateway->ai-assistant secret file. Compose refuses to parse when a
 # listed env_file is missing, so every compose target depends on this. The
@@ -62,3 +62,18 @@ frontend-dev:  ## run the Next.js dev server
 
 config: .env.ai-proxy .env.redis ## validate the compose file
 	docker compose config -q && echo "compose OK"
+
+# Derives docs/status/dashboard.html from docs/specs/frontend-rebuild.md,
+# docs/status/fe-verdicts.md, docs/todo.md and docs/debt-log.md. Reads only; stdlib only, so
+# it runs under the system Python (3.8) without the test container. OPEN=1 opens the page.
+#
+# LOCAL-ONLY. scripts/ is gitignored (local tooling, CLAUDE.md §10.1), so this target
+# does not work in a fresh clone — hence the guard rather than a confusing traceback.
+# Two of its doc inputs (docs/status/fe-verdicts.md, docs/todo.md) are untracked too.
+status:        ## regenerate the status dashboard (local only; needs scripts/status.py)
+	@test -f scripts/status.py || { \
+	  echo "make status: scripts/status.py is absent."; \
+	  echo "  It is local-only tooling and is gitignored, so it does not ship with a clone."; \
+	  exit 1; }
+	python3 scripts/status.py
+	@if [ -n "$(OPEN)" ]; then open docs/status/dashboard.html; fi
