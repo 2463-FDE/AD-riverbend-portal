@@ -7,6 +7,14 @@ import { defineConfig } from 'vitest/config';
 // session token (ADR 0014), so a Node server has to exist at runtime. It also
 // gives ORIGIN as a runtime environment variable rather than a build constant
 // (ADR 0015 §3).
+//
+// There is deliberately no `portal/svelte.config.js`. SvelteKit 2.x accepts the
+// whole config inline through the `sveltekit()` Vite plugin, and that is the
+// shape `sv create` scaffolds now; the separate file is the older surface, not a
+// requirement. Review round 1 read the absence as a broken build; it is not.
+// Proof, from a clean tree: `rm -rf build .svelte-kit && npm run build`
+// prints "Using @sveltejs/adapter-node" and emits `build/index.js`, and
+// `docker compose build --no-cache portal` does the same inside the image.
 export default defineConfig({
 	plugins: [
 		sveltekit({

@@ -86,6 +86,16 @@ of this file.
 
 <!-- append below -->
 
+PR #25 r1 — 1 finding: 0 A / 0 B / 0 C, 1 refuted · "no `portal/svelte.config.js`, so the
+adapter is misconfigured and the build cannot emit `build/`" — false. SvelteKit 2.x takes
+the config inline through the `sveltekit()` Vite plugin. Disproved by clean-tree
+`npm run build` and `docker compose build --no-cache portal`, both printing "Using
+@sveltejs/adapter-node" and emitting `build/index.js`; the built server answers `/` and
+`/healthz` with 200. Closed with a comment at the anchor line, no code change. First
+refuted finding in the log — worth watching whether scaffold-shaped PRs draw more of them,
+since the reviewer is reasoning from an older SvelteKit convention rather than from the
+build.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
