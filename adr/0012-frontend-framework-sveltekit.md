@@ -82,6 +82,17 @@ never expire (D10). It is nonetheless **out of scope here**, because `require_se
 cookie is a change to auth behaviour: CLAUDE.md §6 approval, and gate **G4** per `FE-R14`. Named
 explicitly so it is not smuggled in later as "how SvelteKit does auth."
 
+> **Amended 2026-07-31 — see `adr/0014-frontend-session-and-automatic-logoff.md`.** The invariant
+> above stands: the transport *to the gateway* is unchanged, and `require_session` is never asked to
+> accept a cookie. But the paragraph over-generalised from that hop to both hops, and was read
+> (including by this ADR's own author, and by `docs/specs/frontend-rebuild.md` §8 #12) as excluding
+> `httpOnly` cookies altogether. It does not: a cookie between the **browser and our own BFF**,
+> where the portal's server holds the token and still sends `Authorization: Bearer` onward, touches
+> no auth boundary. ADR 0014 takes that option, and the sentence "the token is held client-side"
+> above is superseded — under ADR 0014 the token is held **server-side**, which the portal→gateway
+> invariant in §2 is precisely what makes possible. Cookie-to-gateway remains excluded on the reason
+> stated above.
+
 ### 4. Configuration
 
 `GATEWAY_URL` is read **at request time, never as a module-level constant.** This is not a
