@@ -1,4 +1,4 @@
-.PHONY: up down logs ps build seed seed-gen psql test test-docker frontend-dev config status
+.PHONY: up down logs ps build seed seed-gen psql test test-docker test-frontend frontend-dev portal-dev config status
 
 # Scoped gateway->ai-assistant secret file. Compose refuses to parse when a
 # listed env_file is missing, so every compose target depends on this. The
@@ -57,8 +57,20 @@ test-docker:   ## run unit tests in the python:3.12 container (mirrors CI)
 	docker run --rm -v "$$PWD":/repo -w /repo riverbend-test:py312 \
 	  pytest $(if $(ARGS),$(ARGS),-m "not integration" -q)
 
-frontend-dev:  ## run the Next.js dev server
+# The JS gate, invocable the way the Python one is (ADR 0013 §5). It is a
+# convenience over the same commands the CI `portal` job runs, NOT a second
+# definition of the gate: this machine's Node is not the Node that deploys
+# (CI and the runtime image both pin 22), so a green run here is evidence and
+# CI is the proof. Needs `npx playwright install chromium` once for the
+# browser project.
+test-frontend: ## run the portal's JS gate (svelte-check, eslint, vitest)
+	cd portal && npm ci && npm run check && npm run lint && npm test
+
+frontend-dev:  ## run the legacy Next.js dev server (port 3070)
 	cd frontend && npm install && npm run dev
+
+portal-dev:    ## run the SvelteKit portal dev server (port 3071)
+	cd portal && npm install && npm run dev -- --port 3071
 
 config: .env.ai-proxy .env.redis ## validate the compose file
 	docker compose config -q && echo "compose OK"

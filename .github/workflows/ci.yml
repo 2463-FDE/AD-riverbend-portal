@@ -19,6 +19,40 @@ jobs:
       - run: npm install
       - run: npm run build
 
+  # The SvelteKit portal's gate (ADR 0013 §5). A sibling job rather than an edit
+  # to `frontend` above: that job sets working-directory at JOB level, so it
+  # cannot be parameterized per step, and the legacy portal must keep building
+  # unchanged for the FE-R15 coexistence window.
+  #
+  # Node 22 is the version that deploys (portal/Dockerfile). A JS gate proven
+  # only on a developer's Node is proven on a version nothing runs.
+  portal:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      # `npm ci`, not `npm install`: @vitest/browser-playwright peers vitest at an
+      # EXACT version, so the committed lockfile is what keeps the pair in step.
+      - run: npm ci
+      - name: Install Chromium for the browser project
+        run: npx playwright install --with-deps chromium
+      # FE-R17's accessible-name gate. --fail-on-warnings is load-bearing:
+      # without it svelte-check exits 0 on every a11y warning.
+      - name: Type and accessibility check
+        run: npm run check
+      - run: npm run lint
+      # Both projects: `client` in Chromium, `server` in Node under an ambient
+      # TZ that is deliberately not the clinic's (ADR 0013 §4).
+      - run: npm test
+      - run: npm run build
+
   services:
     runs-on: ubuntu-latest
     strategy:
@@ -78,7 +112,7 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
-    needs: [frontend, services, tests, secret-scan]
+    needs: [frontend, portal, services, tests, secret-scan]
     steps:
       - uses: actions/checkout@v4
       # .env and .env.ai-proxy are gitignored (untracked secret files). Compose

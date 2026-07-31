@@ -139,6 +139,11 @@ in the compiler and apply to every component by default. React's equivalent
 > satisfies it, the value is never evaluated); and `<div role="button">` with no name. So the gate
 > covers **buttons and links**, not "interactive elements" — see gap #5, `FE-R17`'s reworded scope in
 > `docs/specs/frontend-rebuild.md` §5, and ADR 0013's re-opened axe question.
+>
+> **Narrowed again 2026-07-31 by a second measurement — see §Implementation-round corrections.** "It
+> catches an icon-only `<button>` or `<a>`" is true of every icon shape *except* the commonest one: a
+> `<button>` or `<a>` whose only child is `<img alt="">` is **silent**. Read the sentence above as
+> catching *empty* buttons and links, plus ones whose only child is a `<span>` or `<svg>`.
 
 ### 6. What is dropped
 
@@ -323,3 +328,34 @@ question. Recorded in gap #5 and in spec §8 #15.
 portal→gateway invariant makes possible — one origin for staff and patients, or two — is decided in
 `adr/0015-portal-origin-and-audience-separation.md`. That ADR depends on §2 and changes nothing in
 this one.
+
+## Implementation-round corrections (2026-07-31)
+
+Measured while building the scaffold (P2 PR 1), on the versions the repository now pins
+(`svelte@5.56.8`, `svelte-check@4.7.4`, `--fail-on-warnings`). Append-only per `adr/_template.md`;
+§5 carries a marker so the earlier sentence cannot be read alone.
+
+**Finding 1 — the `FE-R17` gate is silent on the commonest icon-button shape.** A 9-case probe:
+
+| Markup | `a11y_consider_explicit_label` |
+|---|---|
+| `<button></button>` · `<a href></a>` | fires |
+| `<button><span></span></button>` | fires |
+| `<button><svg/></button>` · `<a href><svg/></a>` | fires |
+| **`<button><img alt=""/></button>`** | **silent** |
+| **`<a href><img alt=""/></a>`** | **silent** |
+| `<button>{''}</button>` | silent (an expression child reads as text — expected) |
+
+An `<img>` child satisfies the rule on the assumption that it carries an accessible name, and an
+explicitly decorative `alt=""` is not re-checked. So the gate catches the *empty* control and the
+`<svg>`/`<span>` icon, and misses the `<img>` icon — which is what a designer hands over. The
+§5 amendment's sentence is narrowed in place rather than deleted, because a reader arriving at §5
+would otherwise take a stale claim as measurement.
+
+This does **not** change the decision. Svelte's rules are still on by default for every component,
+which is the surviving discriminator, and `FE-R17` was never the only criterion. It changes the
+gate's size, which gap #5 already understates: the uncovered surface is now form controls, spread
+attributes, `role="button"` elements **and** `<img>`-icon buttons and links. `axe-core` in ADR 0013's
+`client` project (that ADR's gap #9, decided at P3 against real primitives) is still what closes it;
+until then, an `<img>`-only control needs an explicit `aria-label` written by hand and caught at
+review, and `FE-R17` must not be cited as covering it.

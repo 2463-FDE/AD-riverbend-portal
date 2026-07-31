@@ -371,3 +371,60 @@ def test_no_scoped_env_template_can_skew_the_catalog():
             "only some services, and both the gateway and ai-assistant have to hold "
             "the same catalog — it belongs in the shared .env template or nowhere"
         )
+
+
+# --- the SvelteKit portal's place in the topology (ADR 0012, 0015) ------------
+# Two frontends run side by side until FE-R1-FE-R3 pass on the new one
+# (FE-R15), which is a coexistence window with two failure modes worth holding
+# structurally: the legacy portal quietly stops being built/served, or the new
+# one arrives without the health surface its fail-closed startup guard needs
+# (ADR 0014's Consequences — a guard with no health signal shows a green
+# dashboard over a dead service).
+
+
+def _published_host_ports(svc):
+    return {str(p).split(":")[0] for p in svc.get("ports", [])}
+
+
+def test_both_portals_stay_separately_runnable():
+    frontend, portal = _service("frontend"), _service("portal")
+    assert "3070" in _published_host_ports(frontend), (
+        "the legacy Next.js portal must keep its own published port for the "
+        "FE-R15 coexistence window — it is replaced by deletion, not by being "
+        "quietly unplugged"
+    )
+    assert "3071" in _published_host_ports(portal)
+    assert frontend["build"] != portal["build"], (
+        "the two portals must build from their own directories: a SvelteKit app "
+        "cannot be a route group inside the Next.js one (ADR 0012 §1)"
+    )
+
+
+def test_portal_has_a_health_surface():
+    # ADR 0014 requires GET /healthz to report a missing/unusable cookie key,
+    # and ADR 0015 the same for a missing ORIGIN. Neither guard is worth
+    # anything if nothing polls it, so the healthcheck lands with the service
+    # rather than with the guard.
+    svc = _service("portal")
+    probe = " ".join(svc["healthcheck"]["test"])
+    assert "/healthz" in probe, (
+        "portal needs a compose healthcheck on /healthz so a fail-closed "
+        "startup shows as unhealthy in `make ps` instead of as up"
+    )
+
+
+def test_portal_origin_is_runtime_config_with_no_production_default():
+    # FE-R31 / ADR 0015 §3: the origin is resolved from the environment, and the
+    # only default anywhere is the local stack's. A hostname baked in here would
+    # be the same scar as a build-time GATEWAY_URL, one variable over.
+    origin = _service("portal")["environment"]["ORIGIN"]
+    assert origin.startswith("${ORIGIN"), (
+        "portal's ORIGIN must interpolate from the environment, not be pinned "
+        "to a literal — a deployment sets it, the image does not carry it"
+    )
+    assert "localhost" in origin, "the only in-repo default may be the local stack's"
+    for candidate in (origin, (COMPOSE.parent / ".env.example").read_text()):
+        assert "riverbend.example.com" not in candidate, (
+            "no production hostname belongs in a tracked default: an unset ORIGIN "
+            "must fail visibly rather than resolve to a plausible-looking guess"
+        )
