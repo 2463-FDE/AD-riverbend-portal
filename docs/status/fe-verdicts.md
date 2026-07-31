@@ -58,7 +58,7 @@
 | Gate | State | By | On | Note |
 |---|---|---|---|---|
 | G0 | met | user | 2026-07-30 | P0.1–P0.4 merged in PR #18; P0.5 tokens (direction F, `05-design-tokens.md`) written 2026-07-30. Signed with density and three other poll questions still unanswered (tokens §7, TODO-15) — the design set is accepted, those four are carried forward, not resolved |
-| G1 | met | user | 2026-07-30 | `adr/0012-frontend-framework-sveltekit.md` — SvelteKit. Next.js scored as a genuine option and lost on `FE-R17` + form ergonomics, won continuity. Stack separately approved by the trainer in the client role, same date. ADR stays `Proposed` until code lands |
+| G1 | met | user | 2026-07-30, re-affirmed 2026-07-31 | `adr/0012-frontend-framework-sveltekit.md` — SvelteKit. Next.js scored as a genuine option and lost on `FE-R17` + form ergonomics, won continuity. Stack separately approved by the trainer in the client role, 2026-07-30. **Re-affirmed by the user 2026-07-31** after the audit-round amendment narrowed `FE-R17` from "interactive element" to "button or link" (`svelte-check` is silent on form-control names and defeated by spread attributes) and corrected the Alternatives row scoring it — so the original signature's `FE-R17` rationale above is narrower than written, and the decision stands on rules-on-by-default vs opt-in, form ergonomics across five forms, and continuity as one criterion against several. ADR stays `Proposed` until code lands |
 | G2 | open | — | — | — |
 | G3 | open | — | — | — |
 | G4 | open | — | — | requires explicit human approval for an auth change (CLAUDE.md §6) |
