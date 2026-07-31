@@ -57,6 +57,9 @@ above; a frontend test harness with its ADR.
   explicitly **not** to be designed for now — no speculative abstractions, no dual-audience
   components. The one forward-compatibility cost worth paying: keep design tokens and primitives
   audience-neutral so a future patient app can reuse them, which costs nothing today.
+  **Amended 2026-07-31:** a patient surface is now a live question, tracked as §8 #16. It remains
+  out of scope for P2 and the no-speculative-abstraction rule stands unchanged; what changed is that
+  its prerequisite is named — **D11 session binding**, not any amount of frontend work.
 - Backend redesign of any kind. The portal → gateway → service invariant holds (CLAUDE.md §1).
 
 ## 3. Definitions
@@ -75,6 +78,10 @@ above; a frontend test harness with its ADR.
 2. **ADR: frontend framework choice** — scores at least two candidate stacks against §5's P0
    requirements and states the continuity cost of replacing Next.js. Partially supersedes ADR 0001.
 3. **ADR: frontend test harness** — written *after* the framework ADR, not before.
+   **Done 2026-07-30: `adr/0013-frontend-test-harness.md`** (Vitest, two projects — real-browser
+   component tests and Node contract tests; no E2E suite adopted, so the `driven repro` rows below
+   stay human-verified). It fixes where the `FE-R3` fixture lives — `tests/contracts/intake_payload.json`,
+   outside both frontends — and adds a `FE-R21` set-equality assertion over `ConsentKind`.
 4. The new frontend itself, phased per §6.
 5. A superseding note on ADR 0008 if `react-day-picker` is dropped.
 6. `docs/debt-log.md` entry for the intake contract break.
@@ -111,6 +118,9 @@ Phase column maps to §6. `insp.` = verified by inspection/documented repro, sta
 | `FE-R23` | WHERE role-driven navigation is derived from `users.role` without gateway enforcement, the portal shall present it as navigation only, and the absence of per-action authorization shall remain recorded in `docs/debt-log.md`. | insp. + debt-log entry | D8 | G3 |
 | `FE-R24` | The portal shall refer to the patient in the third person; no copy shall address the signed-in operator as the patient. | copy checklist in `docs/design/`, applied at review | D8 (surface of) | G3 |
 | `FE-R25` | WHILE a patient is selected, the portal shall retain that patient as context across chart, appointment and ROI surfaces without re-entry. | driven repro | — | G3 |
+| `FE-R27` | The portal shall not expose the gateway session token to client-side JavaScript; the token shall be held by the portal's own server layer and reach the browser only as an `httpOnly`, `Secure`, `SameSite` cookie. | adversarial test: after login, assert the token appears in neither `document.cookie` nor any web-storage value | D10 | G2 |
+| `FE-R28` | WHILE an operator session is active, IF no operator interaction occurs for 10 minutes, THEN the portal shall invalidate the session server-side via `POST /logout` and return the operator to the login surface. | unit test on the timer + driven repro; server-side invalidation confirmed by a subsequent request being rejected | D10 | G2 |
+| `FE-R29` | The portal shall not persist patient data to `localStorage`, `sessionStorage` or IndexedDB. | adversarial test: after a name search and a chart view, assert no storage key or value contains patient-shaped data | D1, D3 | G2 |
 
 ## 6. Checkpoints / gates
 
@@ -120,7 +130,7 @@ Phases are sequential; **G2 blocks everything after it.**
 |---|---|---|---|---|---|
 | **G0** | P0 Design: operators, tasks, IA, flows, wireframes, tokens | framework choice | `docs/design/` + Artifact | user review of the design set | user |
 | **G1** | P1 Framework decision | all implementation | framework ADR (+ harness ADR after it) | ADR review; Next.js must be a genuine option that loses on stated criteria | user |
-| **G2** | P2 Contract truth + harness | **every later phase** | contract fixture, both test jobs green, `FE-R1`–`R3`, `R15`, `R16` | `make test-docker` **and** driving the app; a 200 proves nothing here | user |
+| **G2** | P2 Contract truth + harness | **every later phase** | contract fixture, both test jobs green, `FE-R1`–`R3`, `R15`, `R16`, `R21`, `R22`, `R27`–`R29` | `make test-docker` **and** driving the app; a 200 proves nothing here | user |
 | **G3** | P3 Design system + P4 identity/search/forms | queue work | primitives + patient banner + name search | driven repro per `FE-R4`–`R7`, `R11`–`R13`, `R17`, `R20` | user |
 | **G4** | P5 Role-aware shell | — | role model decision | **explicit human approval for an auth change (CLAUDE.md §6)**; needs `config/roles.yaml` + `users` + session + gateway enforcement, and both `db/schema.sql` and a new hand-synced migration | user, explicitly |
 | **G5** | P6 Appointments/ROI queues | — | queue surfaces, tz fix | driven repro per `FE-R8`–`R10` | user |
@@ -149,17 +159,35 @@ touching auth/PHI/ROI; commits carry no `Co-Authored-By` trailer.
 
 | # | Decision | Blocks | Unblocked by |
 |---|---|---|---|
-| 1 | Intake contract break: own fix PR now, or folded into P2? It is a live client-facing defect, arguably W2/W5 territory. **Not a pure frontend fix** — see §8.1 below. **Standing open by user decision 2026-07-28: deferred past G0, because P0 decides what the intake form collects and therefore the consent set.** Mismatch is **inherited** from handoff commit `3663c4b`, not introduced by PRs #1–#17. | P2 sequencing | G0 output, then user call |
+| 1 | ~~Intake contract break: own fix PR now, or folded into P2?~~ **RESOLVED 2026-07-30: folded into P2**, and `ConsentKind` is **widened by two values** (§8.1). No separate fix PR; the Next.js portal is deliberately **not** patched in the interim. No new spec file and no gate re-staging — `FE-R1`, `R2`, `R3`, `R15`, `R16`, `R21`, `R22` already specify the fix and all seven already sit at G2. Two accepted costs, named so they are not re-argued: (a) the live defect survives on `main` until G2 — `FE-R15` keeps the old portal runnable, not correct; (b) widening the enum is a deliberate touch to a documented PHI control (CLAUDE.md §6), carrying the `FE-R22` re-proof. Mismatch is **inherited** from handoff commit `3663c4b`, not introduced by PRs #1–#21. | — | resolved |
 | 2 | ~~Framework: SvelteKit vs stay on Next.js.~~ **RESOLVED 2026-07-30: SvelteKit**, recorded in `adr/0012-frontend-framework-sveltekit.md` — scored against the discriminating requirements only, with Next.js as a genuine option that loses on `FE-R17` and form ergonomics and wins on continuity. Bundle size and "React caused the defects" are recorded there as **rejected** arguments. G1 still needs the ADR review. | — | resolved |
 | 3 | Does the trainer's leeway extend to the role model (D8)? Three tiers, costed in §8.3 below. Tier 2 needs no auth approval and no migration. **Standing open by user decision 2026-07-28: deferred past G0, because P0 decides which role-specific surfaces exist and therefore which tier is needed.** | G4 / `FE-R14`, `FE-R23` | G0 output, then user call; tier 3 only, explicit auth approval |
 | 9 | **Slot/appointment instants are stored wrong, so `FE-R8` cannot be satisfied frontend-side alone.** `db/seed/generate_seed.py:159,163,166` builds correct clinic wall-clock times (`08:00`, 8 per day) and emits them as bare strings into `timestamptz` with the Postgres session at `Etc/UTC` — so 8:00 AM ET is stored as `08:00Z` instead of `12:00Z` (EDT, UTC−4). Rendering then uses `toLocaleTimeString(undefined, …)`, i.e. the **viewer's** zone, which is why slots read 03:00 on a CDT machine. Two separate fixes: correct the seed/ingest conversion (data, backend) and render in clinic time (`FE-R8`). `FE-R26` forbids the tempting frontend offset hack. | `FE-R8`, any day view | user call on who owns the data fix |
 | 7 | **Queue surfaces have an unnamed backend dependency.** `GET /appointments` requires `patient_id`, so no day view / check-in queue is servable; a client-side fan-out is the D8 N+1 pattern. Either add a scoped read endpoint (additive, non-auth, at a seam) or descope the queues. Detail in `docs/design/01-operators-and-tasks.md` §4. | P6 / G5 | P0.2 IA |
 | 8 | ~~Is the portal staff-only, or do patients log in too?~~ **RESOLVED 2026-07-28: staff-only. Patients never log in. The patient voice is a bug throughout, not an audience.** A patient-facing portal for requesting personal records may be added later; it is explicitly not to be designed for now. See §2. | — | resolved |
 | 4 | ~~New frontend as a second compose service vs a route group behind a flag.~~ **RESOLVED 2026-07-30 by implication of #2: second compose service** (port 3071). A route group inside the existing Next.js app cannot host a SvelteKit application, so the option ceased to exist rather than losing on merit. ADR 0012 §1. | — | resolved |
-| 5 | Component gallery: Claude Design (`claude.ai/design`, needs the `/design-sync` skill which is not installed here, and is a second non-git source of truth) vs in-repo Histoire/Storybook (handoff-deliverable). Deferred until real primitives exist. | P3 | after G1 |
+| 5 | Component gallery: Claude Design (`claude.ai/design`, needs the `/design-sync` skill which is not installed here, and is a second non-git source of truth) vs in-repo Histoire/Storybook (handoff-deliverable). Deferred until real primitives exist. ADR 0013 §7 notes Storybook's Vitest integration would reuse the harness rather than replace it, so deferring costs nothing. | P3 | after G1 |
+| 10 | **E2E coverage for the five `driven repro` requirements** (`FE-R1`, `R6`, `R14`, `R20`, `R25`). ADR 0013 §2 adopts no E2E suite: against a stub it proves less than the contract fixture, and against a live stack it puts patient-shaped data into CI traces/screenshots — a PHI-boundary call, not a tooling one. **Decided twice on 2026-07-30**: deferral overturned by the user ("E2E will be essential"), then re-deferred by the user on recalling the artifact PHI surface. Not rejected on merit — E2E is the only level that sees a composition defect, which is exactly the intake break's shape — so this stays open with the triggers ADR 0013 §2 names. | nothing today; the gates absorb it | a P6 multi-step flow, or the driven-repro list outgrowing a reviewer; needs its own ADR for artifact retention |
 | 6 | Responsive behaviour is unverified — Chrome `resize_window` would not shrink below ~1500px this session, so F6 (mobile nav vanishing <720px) has unknown status. | P0 wireframes | re-test by another method |
 
-### 8.1 Why the intake fix is not frontend-only (verified 2026-07-28)
+**Pre-code decision set (added 2026-07-30).** Decisions #11–#15 below were being made implicitly at
+implementation time; they are registered so P2 does not start on unstated choices. Together with #1 they
+are the set that must close **before any frontend code is written** — the user's instruction, 2026-07-30:
+hold docs out of upstream until every pre-code decision is made. **The set is CLOSED: #1 on 2026-07-30,
+#12 then #11/#13/#14/#15 on 2026-07-31.** #12 produced three new requirements (`FE-R27`–`R29`), a new
+ADR (0014), an amendment to ADR 0012 §3, and a newly reopened decision **#16** (patient surface) that
+blocks nothing in P2. #3, #5, #6, #7, #9, #10 and #16 block their own later phase, not P2.
+
+| # | Decision | Blocks | Unblocked by |
+|---|---|---|---|
+| 11 | ~~SvelteKit adapter and Dockerfile shape.~~ **RESOLVED 2026-07-31: `adapter-node`, multi-stage Dockerfile.** Build stage runs `npm ci` + build; runtime stage installs with `npm ci --omit=dev` and copies only `build/`, so neither Vitest nor the Chromium binary reaches the shipped image — the promise ADR 0013's Consequences already made. `adapter-node` is now forced rather than presumptive: §8 #12's server-held session needs a Node server at runtime. The existing `frontend/Dockerfile` (bare `npm install`, devDependencies shipped) is **not** the template. | — | resolved |
+| 12 | ~~Auth token storage in the new app.~~ **RESOLVED 2026-07-31: the token is held by the portal's server layer and reaches the browser only in an `httpOnly` cookie** (`FE-R27`), with a 10-minute idle automatic logoff (`FE-R28`). Recorded in `adr/0014-frontend-session-and-automatic-logoff.md`. **This row previously said cookies were not an option — that exclusion was over-broad and is withdrawn.** ADR 0012 §3's stated reason is `require_session` *accepting* a cookie; that is the gateway hop, which still receives `Authorization: Bearer` unchanged. A cookie between the browser and our own BFF touches no auth boundary. §8.4 holds the reasoning; ADR 0012 §3 is amended. | — | resolved |
+| 13 | ~~New app's directory name, compose service name and Makefile targets.~~ **RESOLVED 2026-07-31: `portal`.** Directory `portal/`, compose service `portal` on 3071, Makefile target `make portal-dev`. Chosen because CLAUDE.md §1/§8 already calls this product "the portal", so `frontend` keeps meaning the legacy Next.js app for as long as both exist and no path is ambiguous. | — | resolved |
+| 14 | ~~What P2 actually builds.~~ **RESOLVED 2026-07-31: login plus the minimum intake path** — `FE-R1`–`R3`, `R15`, `R16`, `R21`, `R22`, and the new `FE-R27`–`R29`. Not the four-step wizard: G2 is contract truth and harness, and wizard UI decided before the P3 design system exists is UI built twice. | — | resolved |
+| 15 | ~~Lint gate: `svelte-check` alone, or eslint as well.~~ **RESOLVED 2026-07-31: both.** `svelte-check` for types and template correctness, eslint for what a compiler does not cover (unused bindings, import hygiene, the a11y rules the Svelte compiler does not emit). ADR 0012 scored `FE-R17` partly on compiler-level a11y; eslint is what makes `FE-R17` a gate rather than a subset of it. | — | resolved |
+| 16 | **Patient-facing surface — reopened 2026-07-31 by user, having been settled staff-only on 2026-07-28.** Not a re-litigation: the driver is a possible near-term client commitment, which is new information. The binding constraint is **not** frontend — it is **D11**. `GET /patients/{id}/records` checks only "is logged in" and IDs are sequential, so a patient account reads every other patient's chart; patient login therefore cannot ship before session→`patient_id` binding, which is W4 auth work behind CLAUDE.md §6 approval and G4. Three further consequences: unmanaged/family-shared devices make `FE-R28`'s automatic logoff non-negotiable rather than prudent; a shared origin means an XSS in the patient surface reaches staff credentials, which `FE-R27` contains and a separate origin would contain better; and "patient" is a different **principal class**, not a staff role, so §8.3's three tiers do not describe it and `config/roles.yaml` would gain a non-staff principal. §2's out-of-scope bullet is amended accordingly. | nothing in P2 — `FE-R27`–`R29` already survive it | D11 session binding (W4/G4), then a user call on audience separation and origin |
+
+### 8.1 Why the intake fix is not frontend-only (verified 2026-07-28, extended 2026-07-30)
 
 Two of the three mismatches are frontend-only: concatenate `name`, rename `carrier` → `payer_name`.
 `FE-R2`'s `detail`-body guard is frontend-only as well.
@@ -184,6 +212,47 @@ cheap one:
 
 The strictly-frontend alternative is to stop collecting those two consents until the backend can
 store them. Preferred: widen the enum rather than delete a legal attestation from the form.
+
+**CHOSEN 2026-07-30 (§8 #1): widen the enum.** The two new values, spelled here as the single
+source the code, the debt log and the fixture must all match:
+
+```
+financial_responsibility_ack
+communications_opt_in
+```
+
+Giving `ConsentKind` five members: `npp_ack`, `treatment_consent`, `roi_consent`,
+`financial_responsibility_ack`, `communications_opt_in`. Facts recorded so they are not
+re-derived under implementation pressure:
+
+- **No migration, confirmed against the code**, not assumed: `db/schema.sql:121` declares
+  `kind TEXT` with no `CHECK`, and `services/intake-service/models.py:44` mirrors it as
+  `Column(Text)`. Both carry a trailing comment listing the accepted kinds; **both must be
+  updated**, or the next reader trusts whichever is stale.
+- The enum docstring must still read as a PHI control after widening. The closed-set *reason* is
+  unchanged; only the set grew.
+- `FE-R22` is a **re-proof, not a re-run**: mutate `ConsentKind` to a bare `str` locally and
+  confirm `tests/test_intake_schemas.py:46` (`test_consents_reject_free_text_phi`) and `:54`
+  (`test_consents_reject_unknown_identifier`) both fail. A green suite against a widened set
+  proves nothing on its own. `tests/test_redaction.py:134` carries a note about the enum — check
+  it still reads true.
+- Whether the widening gets its own ADR or a section in P2's ADR is decided when that PR is
+  written (§6 requires an ADR per phase where a non-trivial decision was made).
+
+**A fourth mismatch, found 2026-07-30 and not in the table above.** `insurance.policy_holder` is
+collected and sent by the current form but has **no schema field and no DB column**
+(`services/intake-service/models.py`, `InsuranceCoverage`), so it is silently dropped — same class
+as the two consents, but not a consent. It is not dead: it feeds the AI checklist facts
+(`frontend/app/intake/page.tsx:147`). Whether the new form keeps it (with the debt log recording
+that it is never persisted) or drops it belongs to **decision #14**, not here.
+
+**Consents recording, worth knowing before the form is built.** `_record_consents`
+(`services/intake-service/app.py:158`) inserts one row per accepted kind, and the `consents` table
+has **no status column** — so "declined" and "never asked" are indistinguishable in the data by
+construction. Presence plus `signed_at` is the entire record. That is adequate for an attestation
+and is the second reason no migration is needed; it is also why `FE-R11` is a UI obligation the
+data cannot help with. The current Review step gets this wrong at
+`frontend/app/intake/page.tsx:372-373`. Adding a `status` column is **out of scope** for P2.
 
 ### 8.2 Reserved
 
@@ -217,6 +286,50 @@ condition is honesty about what it is: `require_session` still only checks "is l
 signed-in user can still reach any endpoint directly. `FE-R23` requires that be labelled
 navigation-only and kept on the debt register. Tier 2 does not close D8.
 
+### 8.4 Session handling — why the cookie exclusion was withdrawn (2026-07-31)
+
+The reasoning behind §8 #12 lives in `adr/0014-frontend-session-and-automatic-logoff.md`. Two things
+recorded here because they are corrections to this document rather than ADR content:
+
+**The exclusion was a conflation, not a judgement call.** §8 #12 and ADR 0012 §3 both ruled out
+`httpOnly` cookies as "auth behaviour → §6 approval + G4". ADR 0012 §3's own stated reason is
+`require_session` **accepting** a cookie. There are two hops, and only one of them is the auth
+boundary:
+
+```
+browser  ──httpOnly cookie──▶  portal (SvelteKit server)  ──Authorization: Bearer──▶  gateway
+         ^^^^^^^^^^^^^^^^^^                                ^^^^^^^^^^^^^^^^^^^^^^^
+         our own BFF; no auth boundary                     unchanged; require_session untouched
+```
+
+The gateway contract is byte-for-byte what it is today. Only the browser↔BFF hop changes, and the
+portal→gateway invariant (CLAUDE.md §1) already guarantees the browser never talks to the gateway,
+which is precisely what makes a server-held token possible. Cookies carrying auth to our own server
+introduce CSRF, which SvelteKit's `csrf.checkOrigin` covers by default — do not disable it.
+
+**What the external convention actually is,** so it is not re-searched: automatic logoff is
+45 CFR 164.312(a)(2)(iii), *addressable* — implement it or document an equivalent, with a risk-based
+interval and no mandated number (2–5 min shared screens, 10–15 min private offices is the practised
+range). Epic MyChart logs out at 10–15 minutes idle depending on the health system, which is the
+number an auditor anchors on; `FE-R28` picks **10**. OWASP's Authentication Cheat Sheet warns against
+session identifiers in `localStorage` (there is no `httpOnly` equivalent), and SMART on FHIR guidance
+for browser apps is explicit: short-lived tokens, never browser local storage, use `httpOnly` cookies
+or server-side session storage. Today's portal (`frontend/app/lib/session.ts:29`) does the named
+antipattern.
+
+**Two things `FE-R27`/`FE-R28` do not close.** D10 stays open: the Redis session still has no TTL, so
+`FE-R28` bounds the credential's life only for operators who go idle inside this app — a token
+captured before the timer fires is still valid forever, and only the gateway can fix that. And
+`FE-R27` moves the credential out of JavaScript's reach without making XSS harmless: script on the
+origin can still *use* the cookie by making requests.
+
+**One consequence for the role model.** `session.ts:30` currently caches `PortalUser` — role
+included — in `localStorage`, and `AppShell.tsx:188` renders the badge from that cache. Under
+`FE-R27` the new portal persists **no** authorization-relevant value client-side; role is read from
+`GET /me` (`services/gateway/app.py:202`), which returns it from the Redis session. This matters at
+§8.3 tier 2: a storage-cached role is operator-editable, so role-driven navigation derived from it
+would be the provenance antipathy §8.3 warns about wearing server clothes.
+
 ## 9. Traceability
 
 - **D4** (eligibility/error-swallow): `FE-R2`, `FE-R20`, and the gateway half flagged in §7.
@@ -225,7 +338,11 @@ navigation-only and kept on the debt register. Tier 2 does not close D8.
 - **D8** (single role): `FE-R13` treats the symptom; `FE-R14` + `FE-R23` deliver role-driven
   navigation without closing the debt; only tier 3 (§8.3) closes it, gated at G4.
 - **D11** (IDOR): `FE-R6` read-path affordance only. The fix is W4's.
-- **D1/D3** (PHI in logs, plaintext PHI): `FE-R16`, `FE-R12`.
+- **D1/D3** (PHI in logs, plaintext PHI): `FE-R16`, `FE-R12`, and `FE-R29` — PHI cached in web
+  storage is PHI at rest on a shared clinic workstation, a surface neither debt entry covers.
+- **D10** (no session expiry): `FE-R27` removes the credential from JavaScript's reach; `FE-R28`
+  bounds it for an idle operator. Neither closes D10 — the Redis session still has no TTL, which is
+  the gateway's to fix. See §8.4.
 - **D1** (PHI in logs): `FE-R16`, and `FE-R22` — the consent enum is a PHI control, so widening it
   must not weaken the boundary that keeps free text out of the intake log.
 - No debt ID: `FE-R1`, `FE-R3`, `FE-R7`–`R9`, `FE-R11`, `FE-R15`, `FE-R17`–`R19`, `FE-R21` — new scope or

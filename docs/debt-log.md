@@ -220,5 +220,61 @@ live PHI and credentials.
 | `.env` committed with secrets | Tracked `.env` holds live credentials: `SESSION_SECRET` (forge any session → full portal access, since sessions never expire + single role), `DB_PASSWORD`, `PAYER_API_KEY`, HL7 feed endpoint. A repo leak hands all of these over with **no cracking required**. The secrets are in **git history**, so deleting the file is insufficient — history rewrite **and** rotation of every credential are required. | OPEN — see **Remediation runbook** above (steps 1–4) |
 | README claims "PHI is encrypted / fully HIPAA compliant" — contradicts reality | `README.md:1,82` assert all PHI is encrypted and the system is fully HIPAA compliant. `db/schema.sql` stores `ssn`, `notes`, `dob`, `address`, etc. as plaintext `TEXT`; the only encryption is disk/volume-level (`ARCHITECTURE.md:76`), which protects a stolen disk and nothing else (DB dump, SQL injection, compromised app, committed logs all see cleartext). The overstatement is itself compliance risk — a documented false assurance. `ARCHITECTURE.md §7` is the honest account. Fix: correct the README to match `ARCHITECTURE.md`, or implement column-level encryption to make the claim true. | OPEN — filed under **Follow-up tickets** above |
 | Seeded demo password reuse | All seeded accounts share `portal123` (`db/seed/generate_seed.py`); hashing scheme (pbkdf2_sha256, 260k iters) fully disclosed. If any non-dev environment reused the seed, these are live valid logins on repo leak. | OPEN |
-| Sessions never expire, single role, no MFA | Any leaked cookie is a permanent all-access credential | OPEN (approval-gated) |
+| Sessions never expire, single role, no MFA | Any leaked cookie is a permanent all-access credential | OPEN (approval-gated). Partially mitigated for the rebuilt portal only, at G2: `FE-R28` logs an idle operator off after 10 min via the existing `POST /logout`, which does destroy the Redis session. **The debt is not closed** — `create_session` still sets no TTL, so a session abandoned by closing the browser is never invalidated and a captured token stays valid forever. Only a gateway-side TTL closes it (W9/G4). ADR 0014 gap #1 |
+| Session token in browser `localStorage` (portal) | `frontend/app/lib/session.ts:29-30` stores the bearer token — and the `PortalUser` incl. role — in `localStorage`, so any XSS on the origin exfiltrates a credential that never expires and, via D11, reads every chart in the network. It also persists in plaintext in the browser profile across reboot on shared front-desk workstations. This is the pattern OWASP's Authentication Cheat Sheet and SMART on FHIR browser-app guidance both name explicitly as the thing not to do; automatic logoff (45 CFR 164.312(a)(2)(iii), *addressable*) is absent entirely. Inherited from the handoff | OPEN on `main` — the legacy portal is deliberately not patched (spec §8 #1). Closed for the rebuilt portal at G2 by `FE-R27` (token held BFF-side behind an `httpOnly` cookie, unreadable by page script) + `FE-R28`. ADR 0014 |
 | No secret/dependency/image scanning in CI | Vulnerable deps and committed secrets ship silently | OPEN |
+| Intake payload contract break — registration is non-functional and reports success | See **Intake contract break** below | OPEN — fix folded into the frontend rebuild P2 (spec `FE-R1`–`FE-R3`, `FE-R21`, `FE-R22`), lands at G2 |
+
+### Intake contract break (no D-number)
+
+> Filed here rather than as a new `D15`: the seeded markers are the client's taxonomy, and D1b is
+> the precedent for recording a defect that has no marker of its own.
+
+Patient registration through the portal is **completely non-functional on `main`** and the UI
+displays a green "Intake submitted successfully." No patient row is created. Verified by driving
+the running stack on 2026-07-28 (browser + curl against `make up`) and re-verified against the
+code on 2026-07-30. **Inherited from handoff commit `3663c4b`** — not introduced by PRs #1–#21.
+
+**Business risk.** The clinic's self-service registration path silently loses every patient it
+takes in, and the operator is told it worked, so the loss is invisible at the desk and only
+surfaces when the patient arrives with no chart. Nothing in the stack alerts on it.
+
+**Why a green build and 730 passing tests missed it.** Nothing asserts the two sides of the
+payload against one shared fixture; each side is internally consistent and tested, and the
+mismatch lives only in the space between them. `FE-R3` (one intake payload fixture asserted by
+both a pytest test and a JS test, both in CI) is the artifact that makes this *class* impossible;
+this bug, not a synthetic one, is the harness's first regression test.
+
+**The four layers — the reason it presents as success.** Reading only the last layer misdiagnoses
+this as a UI bug:
+
+1. `intake-service` returns **422** on payload shape (table below).
+2. Gateway `proxy_intake` (`services/gateway/app.py:211`) uses the error-swallowing `_post` and
+   relays the 422 body at **HTTP 200**. Moving it to `_post_checked` is the open half of **D4**
+   and is CLAUDE.md §6 approval-gated — deliberately **not** in the P2 fix.
+3. The BFF `proxy` (`frontend/app/lib/gateway.ts`) relays status and body verbatim.
+4. `frontend/app/intake/page.tsx:108` guards on `!res.ok || data?.error`. A 422 body carries
+   `detail`, which is neither → success branch → line 113 finds no `patient_id` → prints the
+   fallback string. **That fallback is the failure path.**
+
+| Frontend sends | Service expects | Effect |
+|---|---|---|
+| `demographics.first_name` + `last_name` | `demographics.name` (required, non-blank) | 422 `Field required` |
+| `consents: {treatment, privacy, financial, communications}` (bools) | `consents: list[ConsentKind]` | 422 `Input should be a valid list` |
+| `insurance.carrier` | `insurance.payer_name` | extra key silently dropped, no error |
+| `insurance.policy_holder` | *no schema field and no DB column* | silently dropped, no error |
+
+**Two things the form collects with nowhere to store them.** `ConsentKind` is a closed
+three-value enum (`npp_ack`, `treatment_consent`, `roi_consent`) while the form collects four
+consents — financial responsibility and electronic communications have no representation, so
+clearing the 422 frontend-side alone would discard a legal financial attestation. Separately,
+`insurance.policy_holder` has no column at all (`services/intake-service/models.py`,
+`InsuranceCoverage`) yet feeds the AI checklist facts. The consent half is resolved: the enum is
+widened by `financial_responsibility_ack` and `communications_opt_in` — no migration
+(`consents.kind` is plain `TEXT`, `db/schema.sql:121`, no `CHECK`), but it is a deliberate touch
+to a **documented PHI control** and carries `FE-R22`'s re-proof obligation. `policy_holder` is
+undecided (spec §8 #14).
+
+**Not restated here:** the requirements and their verification are `FE-R1`, `FE-R2`, `FE-R3`,
+`FE-R15`, `FE-R16`, `FE-R21`, `FE-R22` in `docs/specs/frontend-rebuild.md`; the enum analysis is
+its §8.1. Read those, not a copy.

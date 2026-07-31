@@ -48,6 +48,12 @@ which owns login + session validation and fans requests out.
 frontend/              # Next.js 15 portal (port 3070). BFF route handlers proxy to gateway.
   app/                 #   pages: intake, records, appointments, roi, login
   app/lib/gateway.ts   #   server-side call into the gateway
+                       # ⚠️ legacy. Registration is BROKEN here and reports success (debt-log
+                       #   cross-cutting); deliberately not patched. Replaced by portal/ — ADR 0012.
+portal/                # SvelteKit staff portal (3071), NOT BUILT YET — lands at P2/G2.
+                       #   Decisions already pinned: adapter-node multi-stage image; the gateway
+                       #   token is held server-side behind an httpOnly cookie and never reaches
+                       #   page script; 10-min idle logoff via POST /logout (ADR 0014).
 services/
   gateway/             # FastAPI BFF (8070): login, sessions, request fan-out. ⚠️ owns auth
   intake-service/      # (8071) registration, insurance, consent, eligibility trigger
@@ -65,7 +71,9 @@ db/
 adr/                   # 0001 stack · 0002 data/compliance · 0003 auth/sessions · 0004 ai-assistant
                        # 0005 MPI match key · 0006 LangSmith observability · 0007 AI abuse controls
                        # 0008 date-picker dep · 0009 Bedrock provider · 0010 eligibility resilience
-                       # 0011 eligibility agent + visit memory
+                       # 0011 eligibility agent + visit memory · 0012 frontend framework (SvelteKit)
+                       # 0013 frontend test harness (Vitest, two projects)
+                       # 0014 frontend session: BFF-held token + httpOnly cookie + 10-min idle logoff
   _template.md         #   copy this for a new ADR — it owns the required sections
 docs/
   runbook.md           # operations + recovery
@@ -178,6 +186,10 @@ tests/                 # pytest; integration tests marked and need live infra
 
 - ⚠️ **Auth / sessions** (`services/gateway/`, `security.py`, `auth.yaml`) — sessions never
   expire, single role, no MFA. **Never change auth behavior without explicit human approval.**
+  Where the boundary actually is, since this was misread once: it is `require_session` and what the
+  **gateway** accepts. A cookie between a browser and one of our own BFFs, where the BFF still sends
+  `Authorization: Bearer` onward, does not cross it (ADR 0014). Making `require_session` accept a
+  cookie does, and stays approval-gated.
 - ⚠️ **IDOR on chart reads** — `GET /patients/{id}/records` requires a session but never binds
   it to `{patient_id}`; IDs are sequential and walkable. Intentional gap, documented in code.
 - ⚠️ **ROI has no authorization enforcement** — disclosures go out with no recorded
