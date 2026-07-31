@@ -189,7 +189,7 @@ blocks nothing in P2. #3, #5, #6, #7, #9, #10 and #16 block their own later phas
 | 11 | ~~SvelteKit adapter and Dockerfile shape.~~ **RESOLVED 2026-07-31: `adapter-node`, multi-stage Dockerfile.** Build stage runs `npm ci` + build; runtime stage installs with `npm ci --omit=dev` and copies only `build/`, so neither Vitest nor the Chromium binary reaches the shipped image — the promise ADR 0013's Consequences already made. `adapter-node` is now forced rather than presumptive: §8 #12's server-held session needs a Node server at runtime. The existing `frontend/Dockerfile` (bare `npm install`, devDependencies shipped) is **not** the template. | — | resolved |
 | 12 | ~~Auth token storage in the new app.~~ **RESOLVED 2026-07-31: the token is held by the portal's server layer and reaches the browser only in an `httpOnly` cookie** (`FE-R27`), with a 10-minute idle automatic logoff (`FE-R28`). Recorded in `adr/0014-frontend-session-and-automatic-logoff.md`. **This row previously said cookies were not an option — that exclusion was over-broad and is withdrawn.** ADR 0012 §3's stated reason is `require_session` *accepting* a cookie; that is the gateway hop, which still receives `Authorization: Bearer` unchanged. A cookie between the browser and our own BFF touches no auth boundary. §8.4 holds the reasoning; ADR 0012 §3 is amended. | — | resolved |
 | 13 | ~~New app's directory name, compose service name and Makefile targets.~~ **RESOLVED 2026-07-31: `portal`.** Directory `portal/`, compose service `portal` on 3071, Makefile target `make portal-dev`. Chosen because CLAUDE.md §1/§8 already calls this product "the portal", so `frontend` keeps meaning the legacy Next.js app for as long as both exist and no path is ambiguous. | — | resolved |
-| 14 | ~~What P2 actually builds.~~ **RESOLVED 2026-07-31: login plus the minimum intake path** — `FE-R1`–`R3`, `R15`, `R16`, `R21`, `R22`, and the new `FE-R27`–`R29`. Not the four-step wizard: G2 is contract truth and harness, and wizard UI decided before the P3 design system exists is UI built twice. | — | resolved |
+| 14 | ~~What P2 actually builds.~~ **RESOLVED 2026-07-31: login plus the minimum intake path** — `FE-R1`–`R3`, `R15`, `R16`, `R21`, `R22`, and the new `FE-R27`–`R29`. Not the four-step wizard: G2 is contract truth and harness, and wizard UI decided before the P3 design system exists is UI built twice. **Sub-question answered separately 2026-07-31, having been orphaned when this row closed: `insurance.policy_holder`** — §8.1 routed it here and this resolution never mentioned it. **The new form drops the free-text field and collects `policy_holder_is_self` as a checkbox**; reasoning and the measurement behind it are in §8.1. | — | resolved |
 | 15 | ~~Lint gate: `svelte-check` alone, or eslint as well.~~ **RESOLVED 2026-07-31: both.** `svelte-check` for types and template correctness, eslint for what a compiler does not cover (unused bindings, import hygiene, the a11y rules the Svelte compiler does not emit). ADR 0012 scored `FE-R17` partly on compiler-level a11y; eslint is what makes `FE-R17` a gate rather than a subset of it. **CORRECTED same day by measurement (§8.5): the last clause is false.** `eslint-plugin-svelte@3.22.0` ships 85 rules and **zero** a11y rules — its `valid-compile` rule only re-surfaces the same compiler warnings — so eslint cannot widen `FE-R17`, and the subset stays the subset. The decision to run both **stands** on its other grounds (unused bindings, import hygiene, `no-at-html-tags`, which matters for ADR 0014 gap #3); only its a11y justification is withdrawn. The accessible-name gap goes to ADR 0013 gap #9. | — | resolved, one premise corrected |
 | 16 | **Patient-facing surface — reopened 2026-07-31 by user, having been settled staff-only on 2026-07-28.** Not a re-litigation: the driver is a possible near-term client commitment, which is new information. The binding constraint is **not** frontend — it is **D11**. `GET /patients/{id}/records` checks only "is logged in" and IDs are sequential, so a patient account reads every other patient's chart; patient login therefore cannot ship before session→`patient_id` binding, which is W4 auth work behind CLAUDE.md §6 approval and G4. Three further consequences: unmanaged/family-shared devices make `FE-R28`'s automatic logoff non-negotiable rather than prudent; a shared origin means an XSS in the patient surface reaches staff credentials, which `FE-R27` contains and a separate origin would contain better; and "patient" is a different **principal class**, not a staff role, so §8.3's three tiers do not describe it and `config/roles.yaml` would gain a non-staff principal. §2's out-of-scope bullet is amended accordingly. **The origin half is now DECIDED (2026-07-31): two origins, `adr/0015-portal-origin-and-audience-separation.md`** — separate hostnames, host-only cookies (`FE-R30`), `ORIGIN` from runtime env (`FE-R31`), and the patient surface kept out of the staff app's route tree. Patient **authentication** stays blocked on D11; ADR 0015 §4 is explicit that nothing in it makes a patient login safe to ship. | nothing in P2 — `FE-R27`–`R29` already survive it, and `FE-R30`/`R31` are P2 work | D11 session binding (W4/G4), then a user call on the real hostnames and who terminates TLS |
 
@@ -248,9 +248,32 @@ re-derived under implementation pressure:
 **A fourth mismatch, found 2026-07-30 and not in the table above.** `insurance.policy_holder` is
 collected and sent by the current form but has **no schema field and no DB column**
 (`services/intake-service/models.py`, `InsuranceCoverage`), so it is silently dropped — same class
-as the two consents, but not a consent. It is not dead: it feeds the AI checklist facts
-(`frontend/app/intake/page.tsx:147`). Whether the new form keeps it (with the debt log recording
-that it is never persisted) or drops it belongs to **decision #14**, not here.
+as the two consents, but not a consent.
+
+**RESOLVED 2026-07-31 (user): the new form drops the free-text field and collects the bit
+directly** — a "Policy holder is the patient" checkbox supplying `policy_holder_is_self`. What made
+this cheap, measured rather than assumed: the *only* consumer of the field is
+`frontend/app/intake/page.tsx:147`, `policy_holder_is_self: !ins.policy_holder` — a **boolean
+derived from emptiness**. The name string itself reaches nothing but the Review-step display at
+`:366`; everything downstream (`services/ai-assistant/schemas.py:66`, `templates.py:92`,
+`services/gateway/app.py:446`) only ever sees the bool. So the AI checklist needs one bit, not a
+name, and dropping the field costs it nothing.
+
+Grounds: `FE-R21`'s principle — shall not collect what cannot be stored — generalises, and the
+field is PHI-shaped free text, so not collecting it is strictly better under D1/D3. Unlike the
+financial-responsibility consent, nothing legal is lost, so there is no reason to widen the
+backend for it. **Accepted cost:** the Review step no longer shows a policy-holder name, and a
+future "policy holder differs from the patient — who?" requirement needs both the field and a
+column. Recorded in `docs/debt-log.md` rather than left implicit. Reversible: the checkbox stays
+and the name returns beside it if a column is ever added.
+
+**No new requirement for this, by decision (user, 2026-07-31).** `FE-R21` covers consents only, and
+nothing in §5 generalises it to non-consent fields — deliberately. The **fixture is the
+enforcement**: a `policy_holder` key in the payload fails `FE-R3`'s shared assertion, which is a
+tighter gate than a prose requirement would be. Do not re-open this as a missing `FE-R`.
+
+Superseded pointer: this question was routed to **decision #14**, which closed on a different
+question (what P2 builds) without covering it.
 
 **Consents recording, worth knowing before the form is built.** `_record_consents`
 (`services/intake-service/app.py:158`) inserts one row per accepted kind, and the `consents` table

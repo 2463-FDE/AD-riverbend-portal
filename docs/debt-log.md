@@ -272,8 +272,21 @@ clearing the 422 frontend-side alone would discard a legal financial attestation
 `InsuranceCoverage`) yet feeds the AI checklist facts. The consent half is resolved: the enum is
 widened by `financial_responsibility_ack` and `communications_opt_in` — no migration
 (`consents.kind` is plain `TEXT`, `db/schema.sql:121`, no `CHECK`), but it is a deliberate touch
-to a **documented PHI control** and carries `FE-R22`'s re-proof obligation. `policy_holder` is
-undecided (spec §8 #14).
+to a **documented PHI control** and carries `FE-R22`'s re-proof obligation.
+
+**`policy_holder` resolved 2026-07-31 (user): the rebuilt form drops the free-text field** and
+collects a "Policy holder is the patient" checkbox instead. The AI checklist consumes only
+`policy_holder_is_self`, a boolean derived from the field's emptiness at
+`frontend/app/intake/page.tsx:147` — the name string reaches nothing but the Review display — so
+the checkbox supplies everything downstream uses. Rationale in `docs/specs/frontend-rebuild.md`
+§8.1; do not restate it here.
+
+**The debt this leaves, recorded because the fix removes the field rather than storing it:** the
+system captures no policy-holder identity at all. If a policy holder who is not the patient must
+ever be named — a coordination-of-benefits or billing requirement — it needs a new
+`InsuranceCoverage` column plus the hand-synced migration, not just a form field. Until then the
+absence is deliberate, not an oversight. The legacy Next.js portal keeps collecting and dropping
+the field; it is not patched (spec §8 #1).
 
 **Not restated here:** the requirements and their verification are `FE-R1`, `FE-R2`, `FE-R3`,
 `FE-R15`, `FE-R16`, `FE-R21`, `FE-R22` in `docs/specs/frontend-rebuild.md`; the enum analysis is
