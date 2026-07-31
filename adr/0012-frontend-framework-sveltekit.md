@@ -101,6 +101,12 @@ so the container's `GATEWAY_URL` env is honored at runtime and never constant-fo
 standalone build (which baked localhost)." The same failure is available in any bundler, so the rule
 carries over verbatim.
 
+**The SvelteKit-specific mechanism, named because the rule without it is unenforceable
+(2026-07-31 audit, finding 9).** `$env/static/private` is inlined at build time and reproduces the
+scar exactly — same failure, new bundler. Only `$env/dynamic/private`, or `process.env` under
+`adapter-node`, honours the container's environment at request time. The invariant is request-time
+resolution; `$env/dynamic/private` is the value.
+
 Fresh-deploy default: the compose service sets `GATEWAY_URL: http://gateway:8070`, mirroring the
 existing `frontend` service. There is no localhost fallback in the container path.
 
@@ -113,9 +119,26 @@ handler that throws) is a value that may change.
 
 Stated precisely, because this is the criterion the decision leans on hardest: Svelte's checks live
 in the compiler and apply to every component by default. React's equivalent
-(`eslint-plugin-jsx-a11y`) can also fail CI, but it is opt-in per rule and analyses JSX
-syntactically, so it does not see attributes assembled dynamically. The advantage is real and it is
-narrower than "one has a gate and the other does not."
+(`eslint-plugin-jsx-a11y`) can also fail CI, but it is opt-in per rule.
+
+> **Amended 2026-07-31 — measured, see §Audit-round corrections finding 3.** The paragraph above
+> originally continued: React's plugin "analyses JSX syntactically, so it does not see attributes
+> assembled dynamically. The advantage is real and it is narrower than 'one has a gate and the other
+> does not.'" **That sentence is withdrawn as a discriminator**: `svelte-check` is defeated by
+> `<button {...rest}>` in exactly the same way, so the dynamic-attribute blind spot is shared, not a
+> Svelte advantage. What survives measurement is narrower and still real — Svelte's rules are on by
+> default and apply to every component, where `eslint-plugin-jsx-a11y`'s equivalent
+> (`control-has-associated-label`) is opt-in.
+>
+> **The gate's measured scope, which is narrower than `FE-R17`'s wording.** With `svelte@5.56.8` +
+> `svelte-check@4.7.4`, `--fail-on-warnings` exits 1 (and exits 0 without the flag, so the flag is
+> load-bearing). It **catches** an icon-only `<button>` or `<a>` with no accessible name
+> (`a11y_consider_explicit_label`), a `<label>` not associated with a control, a missing `alt`, and
+> click handlers on static elements. It is **silent** on: `<input>`, `<textarea>` and `<select>` with
+> no accessible name; `<button {...rest}>`; `aria-label={maybeUndefined}` (attribute presence
+> satisfies it, the value is never evaluated); and `<div role="button">` with no name. So the gate
+> covers **buttons and links**, not "interactive elements" — see gap #5, `FE-R17`'s reworded scope in
+> `docs/specs/frontend-rebuild.md` §5, and ADR 0013's re-opened axe question.
 
 ### 6. What is dropped
 
@@ -140,7 +163,7 @@ restricted to the requirements where the stacks measurably differ, plus the oper
 
 | Criterion (source) | SvelteKit | Next.js 15 (incumbent) |
 |---|---|---|
-| `FE-R17` accessible-name gate | compiler-level, every component, fails the build | `eslint-plugin-jsx-a11y`, opt-in rules, blind to dynamic attributes |
+| `FE-R17` accessible-name gate — **row corrected 2026-07-31, see §5's amendment** | compiler-level, on by default for every component, fails the build — but **buttons and links only**; silent on form-control names and on spread attributes | `eslint-plugin-jsx-a11y`, opt-in rules; `control-has-associated-label` exists but is off by default; equally blind to spread |
 | Form ergonomics — 5 forms, the largest 555 lines of `useState` spread-updates (`FE-R1`, `FE-R21`) | two-way binding removes the update boilerplate outright | the boilerplate is the framework's model; a form library is a further dependency |
 | Token set delivery (`docs/design/05-design-tokens.md`) | scoped CSS is native; tokens land as plain CSS custom properties | needs a CSS strategy decision or a CSS-in-JS dependency |
 | `FE-R2` error-surface discipline | server endpoints, plain returns, no RSC/route-handler split to reason about | route handlers already work; the RSC boundary is extra ceremony without extra safety here |
@@ -210,10 +233,19 @@ ports, the same auth and the same deployment shape.
 4. **Auth posture is unchanged, not improved.** The token stays XSS-readable in client storage and
    sessions still never expire (D10). This ADR deliberately neither worsens nor fixes it. Closed by
    G4 / W9, with explicit human approval.
-5. **The a11y gate covers accessible names only.** It does not check contrast, focus order or reading
-   order. Contrast is covered by measurement in `docs/design/05-design-tokens.md` §1/§6, not by CI;
-   focus order is unverified. A gate that covers one WCAG failure mode must not be cited as covering
-   accessibility.
+5. **The a11y gate covers accessible names only — and, measured 2026-07-31, only on buttons and
+   links.** It does not check contrast, focus order or reading order. Contrast is covered by
+   measurement in `docs/design/05-design-tokens.md` §1/§6, not by CI; focus order is unverified. A
+   gate that covers one WCAG failure mode must not be cited as covering accessibility.
+
+   **Extended by the audit (finding 3/4):** the gate is also silent on `<input>`, `<select>` and
+   `<textarea>` accessible names — i.e. on the five-form surface this decision was partly justified
+   by — and on any interactive element whose attributes arrive by spread. `eslint-plugin-svelte@3.22.0`
+   does **not** close this: it ships 85 rules and **zero** a11y rules (its `valid-compile` rule only
+   re-surfaces the same compiler warnings), so spec decision #15's stated justification for adding
+   eslint does not hold. What closes it: `axe-core` in ADR 0013's `client` project, or a custom rule.
+   ADR 0013 §8 declined axe **before this measurement existed**, so that decision is re-opened on
+   evidence rather than on preference (ADR 0013 gap #9).
 6. **Small-viewport behaviour remains unverified** (`04-wireframes.md` §5) — Chrome would not resize
    below ~1500px during the walkthrough. The framework choice neither helps nor hurts this.
 
@@ -257,3 +289,37 @@ When `FE-R1`–`FE-R3` pass on the new frontend and the old portal is deleted: t
 `frontend-dev` loses its Next.js wording; `react-day-picker` leaves the lockfile; and ADR 0008 moves
 from "superseded in part" to fully superseded, since nothing will consume its dependency choice.
 `FE-R15` is the gate on all of it, and none of it happens before G2.
+
+## Audit-round corrections (2026-07-31)
+
+A pre-P2 adversarial audit of ADRs 0012–0014 and the spec, run before any frontend code exists.
+Not an automated review round, so `docs/review-loop-metrics.md` §4 gains no entry; in that file's
+vocabulary every finding here is **A-class** — a defect in the document as originally written.
+Recorded append-only per `adr/_template.md`, with in-place amendment blocks where leaving the
+original sentence unmarked would let the stale copy win (project memory
+`duplicated-instructions-let-the-stale-one-win`).
+
+**Finding 3 — §5's discriminating claim against React was false, and `FE-R17`'s scope exceeds its
+mechanism.** Measured with a 13-case probe on `svelte@5.56.8` + `svelte-check@4.7.4`. `svelte-check`
+does catch icon-only buttons and links — better than the audit predicted — but is silent on
+form-control accessible names, on spread attributes, on dynamic `aria-label` values and on
+`role="button"` elements. §5 carries the amendment, the Alternatives table row is corrected, and
+gap #5 is extended. The decision itself stands: Svelte's rules are on by default for every
+component, which is still an advantage over an opt-in rule, and `FE-R17` was never the only
+criterion. What changed is that the criterion is smaller than written, so `FE-R17`'s wording in
+`docs/specs/frontend-rebuild.md` §5 is narrowed to match the mechanism rather than left as an
+aspiration the gate does not enforce.
+
+**Finding 4 — spec decision #15's premise does not hold.** `eslint-plugin-svelte` has no a11y rules,
+so eslint cannot be what makes `FE-R17` "a gate rather than a subset of it". eslint stays for what it
+genuinely covers (unused bindings, import hygiene); the a11y gap goes to ADR 0013's re-opened axe
+question. Recorded in gap #5 and in spec §8 #15.
+
+**Finding 9 — §4 stated the request-time `GATEWAY_URL` rule without its SvelteKit mechanism.**
+`$env/static/private` would have reproduced the scar §4 quotes. §4 now names
+`$env/dynamic/private`.
+
+**Not a correction, recorded for navigation:** the origin and audience-separation question that §2's
+portal→gateway invariant makes possible — one origin for staff and patients, or two — is decided in
+`adr/0015-portal-origin-and-audience-separation.md`. That ADR depends on §2 and changes nothing in
+this one.
