@@ -150,6 +150,31 @@ defers it is that the honest configuration — a live composed stack seeded with
 introduces a PHI surface into CI that does not exist today, and that is an ADR of its own, not a line
 item in a testing-tools decision.
 
+> **Amended 2026-07-31 — this ADR was written before ADR 0014 added three G2 requirements it cannot
+> fully cover; see §Audit-round corrections finding 2.** `FE-R27`–`FE-R29` (ADR 0014) are verified
+> "after login" and "after a name search and a chart view". §7's guarantee table promises component
+> tests run with "no server, no database and no network" and that no patient-shaped data enters CI —
+> which is also the reason §2 holds. ADR 0014's Consequences nevertheless states these are "all P2,
+> ADR 0013's harness". Both cannot be true.
+>
+> **Resolved by splitting the evidence per requirement, not by adopting E2E.** §2's reason for
+> deferring E2E is a PHI-boundary reason and nothing about it changed; adopting E2E to unblock a gate
+> would be acquiring a CI PHI surface as a side effect of schedule pressure, which is the specific
+> thing §2 warns against. The split is finer than all-or-nothing:
+>
+> | Requirement | This harness proves | Driven at the gate against a local composed stack |
+> |---|---|---|
+> | `FE-R27` no token in JS reach | — | all of it: login, then scan `document.cookie` and every web-storage key/value |
+> | `FE-R28` idle logoff | the timer logic, as a pure function in the `server` project | the 401 on a request made after the timeout, i.e. server-side invalidation |
+> | `FE-R29` no patient data in web storage | a component fed fixture data writes **nothing** to storage — real coverage, no server and no network needed | post-search and post-chart storage state on the running app |
+>
+> **Invariant: which half of each requirement is CI-proven and which is gate-driven is written down
+> per requirement, never left to inference.** `docs/specs/frontend-rebuild.md` §5's verification column
+> carries it. The driven halves are recorded at G2 the way the gate text already demands ("`make
+> test-docker` **and** driving the app; a 200 proves nothing here"), and they join the five existing
+> `driven repro` rows under gap #3 — which is now the largest hole in this ADR by a wider margin than
+> when it was written. §2's existing reopen triggers are unchanged; this amendment adds none.
+
 ### 3. One contract fixture, owned by neither side
 
 `FE-R3` says "one shared intake payload fixture asserted by both a pytest test and a JS test." The
@@ -172,6 +197,35 @@ Three assertions, and the third is the one that would not be written by default:
    responsibility, electronic communications) without teaching the form about them fails this, and so
    does the reverse. That is `FE-R21` — "the portal shall not collect a consent that cannot be stored"
    — expressed as an assertion instead of a review habit.
+
+> **Amended 2026-07-31 — assertion 3 as written is unsatisfiable; see §Audit-round corrections
+> finding 5.** The intake form collects **four** consents (`frontend/app/intake/page.tsx:328-341`:
+> treatment, NPP/privacy, financial responsibility, electronic communications) and spec §8.1 widens
+> `ConsentKind` to **five**. `roi_consent` is collected by **no UI anywhere** — it exists only in
+> `services/intake-service/schemas.py:22`, the `db/schema.sql:121` / `models.py:44` comments, and
+> `tests/test_intake_schemas.py:65`. Set equality can therefore only pass by putting a consent in the
+> intake fixture that intake never collects, and the predictable resolution under gate pressure is to
+> quietly relax it.
+>
+> **Assertion 3 is replaced by three assertions with distinct jobs.** The framing that containment is
+> the weaker option is also withdrawn — for `FE-R21` containment is the *correct* operator, and what
+> set-equality was actually reaching for is served better by 3b:
+>
+> - **3a — `FE-R21`, pytest: every consent identifier in the fixture is a member of `ConsentKind`**
+>   (subset). This is exactly "the portal shall not collect a consent that cannot be stored": a form
+>   that collects an unstorable consent fails it.
+> - **3b — the D1 boundary, pytest: `ConsentKind`'s members equal the five documented literals
+>   exactly**, pinned as literals in the test (`npp_ack`, `treatment_consent`, `roi_consent`,
+>   `financial_responsibility_ack`, `communications_opt_in`). A silent sixth member, or a widening to
+>   bare `str`, fails here. This is the assertion that protects the PHI control the enum *is*
+>   (spec §8.1), and it is what set-equality was conflating with `FE-R21`.
+> - **3c — the drift that actually broke intake** is assertion 2 above, unchanged. It is the only one
+>   of the three that compares the portal's builder against the fixture.
+>
+> **Not done: splitting `ConsentKind` by surface.** `roi_consent` genuinely belongs to the ROI surface
+> rather than intake, so a per-surface enum is defensible — but `consents.kind` is one `TEXT` column in
+> one table, and splitting a documented PHI control for no current benefit is not worth the §6 touch.
+> Deferred, recorded here so it is a decision rather than an oversight.
 
 `FE-R22` is not satisfied by the fixture and must not be assumed to be. The existing adversarial test
 that rejects an out-of-set consent identifier has to be **re-proven to discriminate** after the enum
@@ -206,6 +260,11 @@ The `frontend` job stays as it is, for the old portal, for the length of the `FE
 window. A **second job** covers the new app and runs, in order:
 
 1. `npm ci` — against a committed lockfile, on `node-version: "22"`, matching the runtime image.
+   **Verified 2026-07-31, and one hazard the lockfile has to absorb:** `vitest@4.1.10` declares
+   `engines: ^20 || ^22 || >=24`, `playwright@1.62.1` declares `>=20` and `svelte-check@4.7.4`
+   declares `>=18`, so Node 22 is supported by all three. But `@vitest/browser@4.1.10` peers `vitest`
+   at an **exact** version while `vitest-browser-svelte@3.0.0` peers `^4.0.0` — a lone `vitest` patch
+   bump breaks the install, so the three move together or not at all.
 2. `npx playwright install --with-deps chromium` — explicit, cached.
 3. `svelte-check --fail-on-warnings` — this is `FE-R17`'s "the build shall fail when an interactive
    element lacks an accessible name" (ADR 0012 §5: the invariant is that the build fails; the
@@ -244,7 +303,7 @@ and therefore easy to check rather than assert.
 | The frontend typechecks and compiles | `npm run build` in `jobs.frontend` | **Improved** — `svelte-check --fail-on-warnings` is types plus the `FE-R17` accessible-name gate |
 | 730 pytest tests, in a 3.12 container | `jobs.tests` / `make test-docker` | **Unchanged** — `tests/contracts/` adds test files, not runner mechanics |
 | The existing portal keeps building | that same job | **Unchanged** — the job is not touched; the new app gets a second one (`FE-R15`) |
-| No patient-shaped data anywhere in CI | nothing in CI seeds a database | **Preserved, and it is why §2 holds.** Component tests run with no server, no database and no network |
+| No patient-shaped data anywhere in CI | nothing in CI seeds a database | **Preserved, and it is why §2 holds.** Component tests run with no server, no database and no network — which is also why the driven halves of `FE-R27`–`R29` are gate-verified rather than CI-verified (§2's 2026-07-31 amendment) |
 | Merge gates live in CI, not in local hooks | CLAUDE.md §10.1; `.claude/` is untracked | Preserved — §5 puts the gate in a job |
 | Gates run on the Node version that deploys | CI and the image both pin 22 | Preserved by pinning 22 in the new job; the host's Node 26 is not the gate |
 | No test tooling in a runtime image | accident, not design — `frontend/Dockerfile` runs a bare `npm install` and ships devDependencies | **Improved** — `npm ci --omit=dev`, Chromium fetched only in CI |
@@ -268,6 +327,15 @@ stays deferred — note that Storybook's Vitest integration would *reuse* this h
 replace it, so choosing it later costs nothing here. Automated accessibility auditing beyond
 accessible names (e.g. axe) is not adopted; ADR 0012 gap #5 stands unchanged — contrast, focus order
 and reading order remain uncovered by CI.
+
+> **Amended 2026-07-31 — the premise of that last sentence was wrong.** It declined axe as coverage
+> *beyond* accessible names, assuming accessible names were already covered by the `FE-R17` gate.
+> Measurement (ADR 0012 §5's amendment) shows the gate covers them on **buttons and links only** —
+> silent on `<input>`, `<select>` and `<textarea>` names, on spread attributes and on `role="button"`
+> elements — and `eslint-plugin-svelte` ships **zero** a11y rules, so spec decision #15 does not close
+> it either. For the five-form surface and the search combobox, axe is no longer "beyond" the gate; it
+> *is* the gate, or nothing is. **Re-opened as gap #9** rather than adopted here, because it is a scope
+> change whose cost should be measured against P3's real primitives instead of estimated now.
 
 ## Alternatives considered
 
@@ -339,6 +407,14 @@ covered by two CI jobs instead of trust.
 3. **The five `driven repro` requirements stay human-verified.** They are therefore only as reliable
    as the gate reviewer's willingness to actually drive the app. This is a deliberate consequence of
    §2 and it is the largest hole in this ADR. Trigger to revisit is stated there.
+
+   **Widened 2026-07-31:** the driven set is no longer five. `FE-R27`, the 401 half of `FE-R28`, and
+   the post-search/post-chart half of `FE-R29` join it (§2's amendment), and all three are **G2**
+   requirements — so the gate that blocks every later phase now depends on gate-driven evidence, not
+   only the later gates. Two consequences worth stating rather than discovering: the driven checks must
+   be **recorded** (what was driven, what was observed) so G2's signature rests on something re-readable,
+   and this is now much closer to §2's own reopen trigger ("the driven-repro list growing past what a
+   reviewer will actually re-run") than it was when that trigger was written.
 4. **This harness cannot test the old Next.js portal.** `FE-R15` keeps it runnable and untested for
    the coexistence window. Acceptable only because it is being deleted; nothing new should be built in
    it, and a defect found there is a reason to accelerate P2, not to retrofit React test tooling.
@@ -357,6 +433,17 @@ covered by two CI jobs instead of trust.
    reopened — then the browser's remaining value is the search combobox alone, and this decision should
    be revisited on that evidence rather than treated as settled. Recorded so the revisit is legitimate
    instead of looking like churn.
+
+9. **The accessible-name gate is narrower than ADR 0012 claimed, and this harness does not cover the
+   gap [added 2026-07-31].** Measured: `svelte-check` is silent on `<input>`/`<select>`/`<textarea>`
+   accessible names, on spread attributes and on `role="button"` elements, and `eslint-plugin-svelte`
+   has no a11y rules at all. So the five-form surface and the patient-search combobox — the surfaces
+   ADR 0012 and §1 respectively lean on hardest — have **no automated accessible-name coverage** today.
+   Acceptable only because nothing is built yet and `FE-R17`'s wording is being narrowed to match its
+   mechanism rather than left overstated. **What closes it:** `axe-core` inside the `client` project
+   against real primitives (§8's amendment), decided at P3 when its cost can be measured against real
+   components; or a custom eslint rule; or accepting the narrower scope in writing. **Do not** cite
+   `FE-R17` as accessible-name coverage for form controls until one of those lands.
 
 ## Consequences
 
@@ -402,3 +489,39 @@ When `FE-R1`–`FE-R3` pass on the new frontend and the old portal is deleted (A
 section): the original `frontend` job goes, the surviving job stops needing a disambiguating name, and
 `working-directory` ceases to be ambiguous. `tests/contracts/` does not move — it is deliberately
 outside both frontends so that this step is a deletion and not a migration.
+
+## Audit-round corrections (2026-07-31)
+
+Pre-P2 adversarial audit, run before any frontend code exists. Not an automated review round, so
+`docs/review-loop-metrics.md` §4 gains no entry; in that file's vocabulary these are **A-class** —
+defects in the document as written. Append-only per `adr/_template.md`, with in-place amendment blocks
+where an unmarked original sentence would let the stale copy win.
+
+**Finding 2 — this ADR and ADR 0014 contradict each other, one day apart.** ADR 0014 assigns
+`FE-R27`–`R29` to "ADR 0013's harness" while §7 guarantees component tests run with no server, no
+database and no network. Resolved in §2's amendment by splitting the evidence per requirement — CI
+proves the timer logic and the component-level no-write; the login and post-search halves are
+gate-driven and recorded. E2E is **not** adopted: §2's reason for deferring it is a PHI-boundary reason
+that this finding does not change, and adopting it to unblock a gate would acquire a CI PHI surface as a
+side effect of schedule pressure. Gap #3 widens accordingly.
+
+**Finding 5 — §3's assertion 3 was unsatisfiable.** The intake form collects four consents, the widened
+`ConsentKind` has five, and `roi_consent` is collected by no UI. Replaced by 3a (subset — this is
+`FE-R21`), 3b (enum members pinned as literals — this is the D1 boundary), and 3c (the existing
+builder-vs-fixture deep-equal — the only one that sees the drift that broke intake). The claim that
+containment is the weaker operator is **withdrawn**: for `FE-R21` it is the correct one, and set-equality
+was conflating `FE-R21` with the enum-pinning assertion. Splitting `ConsentKind` per surface is
+considered and deferred.
+
+**Finding 4/3 — §8's axe refusal rested on a false premise.** It declined axe as coverage *beyond*
+accessible names; measurement shows accessible names are covered on buttons and links only, and
+`eslint-plugin-svelte` has no a11y rules. §8 carries the amendment and gap #9 is added.
+
+**Node/peer verification (Q5 of the audit).** Recorded in §5 step 1 rather than here, because it is a
+fact the CI job needs at the point of use: Node 22 is supported by all three of `vitest`, `playwright`
+and `svelte-check`, but `@vitest/browser` peers `vitest` at an exact version, so the trio must be bumped
+together.
+
+**Unchanged by the audit, checked and worth stating:** the fixture's location outside both frontends
+(§3), the two-project split (§1), the `TZ` discipline (§4), the no-coverage-threshold decision (§6),
+and §7's regression table apart from the one row corrected above.
