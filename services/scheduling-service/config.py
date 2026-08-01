@@ -17,6 +17,12 @@ class Settings:
     default_page_limit = int(os.getenv("DEFAULT_PAGE_LIMIT", "50"))
     max_page_limit = int(os.getenv("MAX_PAGE_LIMIT", "200"))
 
+    # The clinic's own timezone. /schedule resolves a calendar day in THIS zone,
+    # not the server's and not the caller's: appointments are stored as
+    # TIMESTAMPTZ, so "2026-08-01" is only a day once a zone is named. Matches
+    # the rendering rule the portal is held to (frontend-rebuild FE-R8).
+    clinic_timezone = os.getenv("CLINIC_TIMEZONE", "America/New_York")
+
     @property
     def db_url(self) -> str:
         return (

@@ -43,6 +43,35 @@ class AppointmentListResponse(BaseModel):
     count: int
 
 
+class ScheduledVisitOut(BaseModel):
+    """One row of the day queue: the appointment plus enough identity to call the
+    patient's name in a waiting room. Joined from patients in the same query, so
+    building this list costs one round trip rather than one per patient (D8)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    patient_id: int
+    patient_name: Optional[str] = None
+    mrn: Optional[str] = None
+    provider: Optional[str] = None
+    reason: Optional[str] = None
+    location: Optional[str] = None
+    scheduled_for: Optional[datetime] = None
+    status: str
+
+
+class DayScheduleResponse(BaseModel):
+    items: List[ScheduledVisitOut]
+    count: int
+    limit: int
+    offset: int
+    # Echoed so a caller can prove which day, in which zone, produced this list.
+    # Without the zone the date alone is ambiguous for a TIMESTAMPTZ column.
+    date: str
+    timezone: str
+
+
 class BookingRequest(BaseModel):
     patient_id: int = Field(..., gt=0)
     slot_id: int = Field(..., gt=0)

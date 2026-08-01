@@ -264,6 +264,25 @@ def proxy_list_appointments(patient_id: int, session: dict = Depends(require_ses
     return _get("scheduling", "/appointments", params={"patient_id": patient_id})
 
 
+@app.get("/schedule")
+def proxy_day_schedule(
+    date: str,
+    session: dict = Depends(require_session),
+    provider_id: Optional[int] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    # One clinic day across all patients, for the front-desk queue. Additive:
+    # /appointments requires a patient_id, so a day view was previously only
+    # reachable by fanning out per patient (the D8 N+1 pattern). Session check
+    # is the same as every other read here — this is not an authz change (D11).
+    return _get(
+        "scheduling",
+        "/schedule",
+        params={"date": date, "provider_id": provider_id, "limit": limit, "offset": offset},
+    )
+
+
 @app.post("/appointments")
 def proxy_book(payload: dict, session: dict = Depends(require_session)):
     return _post("scheduling", "/appointments", payload)

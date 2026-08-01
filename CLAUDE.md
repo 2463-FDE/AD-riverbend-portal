@@ -147,6 +147,12 @@ eval/ · scripts/ · logs/  # eval harness; local tooling (gitignored); local lo
   not cross it (ADR 0014); making `require_session` accept a cookie does, and stays approval-gated.
 - ⚠️ **IDOR on chart reads** — `GET /patients/{id}/records` requires a session but never binds it
   to `{patient_id}`; IDs are sequential and walkable. Intentional gap, documented in code.
+  **Cross-patient reads are not only reachable by walking IDs:** `GET /records/search?q=` is
+  unscoped, `GET /roi/requests` takes `patient_id` as optional, and `GET /schedule?date=` (added
+  2026-08-01 for the front-desk day queue) returns a clinic day of appointments with patient name
+  and MRN across all patients. All three check only that a session exists. None of them *widened*
+  the authz gap — they are legitimate staff reads on a single-role system — but W4 must size the
+  D11 fix against this whole set, not against `/patients/{id}/records` alone.
 - ⚠️ **ROI has no authorization enforcement** — disclosures go out with no recorded 45 CFR 164.508
   authorization and no accounting trail. Touches PHI + compliance.
 - ⚠️ **PHI handling** — `ssn`, `notes` etc. stored as plaintext `TEXT`; intake logs full bodies at

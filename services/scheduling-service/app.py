@@ -4,7 +4,9 @@ scheduling-service — appointment slots (FHIR Appointment / Slot shaped).
 Read endpoints use the SQLAlchemy ORM. Booking deliberately still goes through
 the legacy raw-psycopg2 path in book.py to preserve the check-then-insert race.
 """
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy import select
@@ -14,13 +16,15 @@ from book import book
 from config import settings
 from db import get_db
 from logging_config import configure
-from models import Appointment, Provider, Slot
+from models import Appointment, Patient, Provider, Slot
 from schemas import (
     AppointmentListResponse,
     AppointmentOut,
     BookingRequest,
     BookingResponse,
     CancelResponse,
+    DayScheduleResponse,
+    ScheduledVisitOut,
     SlotListResponse,
     SlotOut,
 )
@@ -88,6 +92,88 @@ def list_appointments(
     items = [AppointmentOut.model_validate(a) for a in rows]
     log.info("listed %d appointments for patient %s", len(items), patient_id)
     return AppointmentListResponse(items=items, count=len(items))
+
+
+def _clinic_day_bounds(day: date) -> tuple[datetime, datetime]:
+    """Half-open UTC window ``[start, end)`` covering one clinic-local calendar day.
+
+    Both edges are built in the clinic's zone and converted afterwards. Doing the
+    arithmetic on the UTC value instead — ``start_utc + timedelta(days=1)`` — is
+    the failure worth naming: it is a true +24h, so the spring-forward day runs an
+    hour into the next clinic day and the fall-back day loses its last hour of
+    appointments. Proven by the DST cases in tests/test_schedule_day_view.py.
+    """
+    tz = ZoneInfo(settings.clinic_timezone)
+    start_local = datetime.combine(day, time.min, tzinfo=tz)
+    end_local = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
+@app.get("/schedule", response_model=DayScheduleResponse)
+def list_day_schedule(
+    day: date = Query(..., alias="date", description="Clinic-local calendar day, YYYY-MM-DD"),
+    provider_id: Optional[int] = Query(None, gt=0),
+    limit: int = Query(settings.default_page_limit, ge=1, le=settings.max_page_limit),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """One clinic day's appointments across all patients — the front-desk queue.
+
+    Why this exists: ``GET /appointments`` requires a ``patient_id``, so a day
+    view could previously only be assembled by fanning out one request per
+    patient, which is the D8 N+1 pattern this codebase already suffers from in
+    the records read path. This is a single joined query instead.
+
+    Scope, stated deliberately because the response is cross-patient PHI: the
+    window is one clinic-local day and the result is paginated under the same
+    guardrails as ``/slots``, so this is a work queue and not a bulk export.
+    Authorization is unchanged — the gateway still checks only that a session
+    exists (D11, W4 owns binding a session to a patient). This endpoint does not
+    widen that gap, and it must not be read as a decision about it.
+    """
+    start_utc, end_utc = _clinic_day_bounds(day)
+
+    stmt = (
+        select(Appointment, Patient.name, Patient.mrn)
+        .join(Patient, Patient.id == Appointment.patient_id, isouter=True)
+        .where(Appointment.scheduled_for >= start_utc)
+        .where(Appointment.scheduled_for < end_utc)
+    )
+    if provider_id is not None:
+        # appointments carry only a provider NAME; the id lives on the slot.
+        stmt = stmt.join(Slot, Slot.id == Appointment.slot_id).where(
+            Slot.provider_id == provider_id
+        )
+    stmt = stmt.order_by(Appointment.scheduled_for).limit(limit).offset(offset)
+
+    try:
+        rows = db.execute(stmt).all()
+    except Exception:
+        log.exception("failed to list the day schedule for %s", day.isoformat())
+        raise HTTPException(status_code=503, detail="database unavailable")
+
+    items = []
+    for appointment, patient_name, mrn in rows:
+        out = ScheduledVisitOut.model_validate(appointment)
+        out.patient_name = patient_name
+        out.mrn = mrn
+        items.append(out)
+
+    # PHI rule: the window and the count, never a name, MRN or visit reason.
+    log.info(
+        "listed %d appointments for %s (provider_id=%s)",
+        len(items),
+        day.isoformat(),
+        provider_id,
+    )
+    return DayScheduleResponse(
+        items=items,
+        count=len(items),
+        limit=limit,
+        offset=offset,
+        date=day.isoformat(),
+        timezone=settings.clinic_timezone,
+    )
 
 
 @app.post("/appointments", status_code=201, response_model=BookingResponse)

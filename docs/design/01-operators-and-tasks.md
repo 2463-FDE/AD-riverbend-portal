@@ -114,17 +114,22 @@ Thinner, and deliberately so — no billing or lab surface exists in the portal 
 - `GET /roi/requests` — `patient_id` optional, so a cross-patient ROI work queue is buildable now.
 
 **Not servable — needs backend work:**
-- **Today's schedule / check-in queue.** `GET /appointments` requires `patient_id`. Building a day
-  view client-side means fanning out one request per patient — precisely the N+1 pattern D8 warns
-  about. This is the single most valuable front-desk surface and it needs a new endpoint.
-- **A clinician's own day.** Same root cause; no by-provider query.
+- ~~**Today's schedule / check-in queue.**~~ **Servable as of 2026-08-01: `GET /schedule`** was added
+  for exactly this (frontend-rebuild §8 #7). One clinic-local day across all patients, one joined
+  query, paginated, patient name and MRN included so the queue can identify who is being called.
+  `GET /appointments` still requires `patient_id` and is unchanged — the new endpoint sits beside it.
+- **A clinician's own day.** Partly served: `GET /schedule?provider_id=` filters through the slot
+  join, since appointments store only a provider *name*. There is still no by-provider query that
+  does not route through slots, so an appointment booked without a slot is invisible to that filter.
 - **Date-filtered slots.** `GET /slots` takes `provider_id` and `limit` only, no date range. Day
   views and past-slot suppression (`FE-R10`) must filter client-side over up to 200 rows.
 - **Editing a submitted intake.** No update endpoint exists.
 
-**Consequence for sequencing:** P6 (queues, gate G5) has a backend dependency that the spec
-currently does not name. Either a scoped read endpoint is added — additive, non-auth, at a seam —
-or the queue surfaces get descoped. Flag it now rather than discovering it at G5.
+**Consequence for sequencing:** ~~P6 (queues, gate G5) has a backend dependency the spec does not
+name.~~ **Closed 2026-08-01** by adding `GET /schedule` — additive, non-auth, at a seam, as this
+section proposed. P6 is unblocked. Two things this section got slightly wrong and are corrected
+above: the ROI queue was never blocked (`patient_id` is optional there), and descoping would have
+cost new value rather than parity, since the legacy portal has no day view either.
 
 ## 5. What the walkthrough changes about the client's tickets
 
