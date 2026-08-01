@@ -126,3 +126,34 @@ jobs:
           cp .env.redis.example .env.redis
       - name: Build images
         run: docker compose build
+
+      # `docker compose build` proves an image compiles, never that it runs, and
+      # the portal is the one service where those come apart. adapter-node
+      # rollup-bundles its runtime into `build/`, so `npm ci --omit=dev` leaves a
+      # near-empty runtime dependency tree and the container boots anyway, which
+      # codex r2 read as a guaranteed startup crash. Two rounds running, static
+      # review has inferred a runtime failure in this scaffold and been wrong
+      # (r1: the absent `svelte.config.js`), so `FE-R32` settles the argument
+      # with a running container rather than another comment.
+      #
+      # `--no-deps` is load-bearing: portal `depends_on` gateway, whose own chain
+      # waits on a healthy Postgres and Redis, and pulling that in would turn the
+      # image-build gate into a mini-integration run. Alone, the portal still
+      # exercises what this PR added — the published 3071, `ORIGIN` as runtime
+      # config, and the container healthcheck, which is polled here rather than
+      # merely declared. The compose-level smoke with the gateway attached earns
+      # its cost in P2 PR 2, when the portal actually calls it.
+      - name: Portal image serves /healthz
+        run: |
+          docker compose up -d --no-deps portal
+          for _ in $(seq 1 30); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' \
+              "$(docker compose ps -q portal)" 2>/dev/null || true)"
+            [ "$status" = healthy ] && break
+            sleep 2
+          done
+          docker compose logs portal
+          curl -fsS --max-time 10 http://localhost:3071/healthz
+          echo
+          [ "$status" = healthy ]
+          docker compose down

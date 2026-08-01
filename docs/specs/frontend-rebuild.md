@@ -127,6 +127,7 @@ Phase column maps to §6. `insp.` = verified by inspection/documented repro, sta
 | `FE-R29` | The portal shall not persist patient data to `localStorage`, `sessionStorage` or IndexedDB. | **CI:** a component fed fixture patient data writes nothing to any storage (no server, no network). **Driven at the gate:** after a name search and a chart view, no storage key or value contains patient-shaped data | D1, D3 | G2 |
 | `FE-R30` | The portal shall set no cookie carrying a `Domain` attribute; every cookie it sets shall be host-only. | assertion on the `Set-Cookie` header, with the mutation proof (add a `Domain`, confirm the test fails) | — | G2 |
 | `FE-R31` | The portal shall resolve its own public origin from the runtime environment (`ORIGIN`), and shall not embed an origin as a build-time constant. | insp. + one container check that a non-default `ORIGIN` is honoured at runtime | — | G2 |
+| `FE-R32` | The portal's production image shall answer `GET /healthz` with 200 when started from the built image, proven in CI rather than inferred from the image building. | **CI:** `docker compose up -d --no-deps portal` in the `docker-build` job, wait for the container healthcheck to report `healthy`, then `curl -fsS http://localhost:3071/healthz`. Added 2026-07-31 after two review rounds inferred a startup crash from static config — the image builds and the runtime dependency tree is near-empty, both true, and the container serves anyway because adapter-node bundles its runtime | — | G2 |
 
 ## 6. Checkpoints / gates
 
@@ -136,7 +137,7 @@ Phases are sequential; **G2 blocks everything after it.**
 |---|---|---|---|---|---|
 | **G0** | P0 Design: operators, tasks, IA, flows, wireframes, tokens | framework choice | `docs/design/` + Artifact | user review of the design set | user |
 | **G1** | P1 Framework decision | all implementation | framework ADR (+ harness ADR after it) | ADR review; Next.js must be a genuine option that loses on stated criteria | user |
-| **G2** | P2 Contract truth + harness | **every later phase** | contract fixture, both test jobs green, `FE-R1`–`R3`, `R15`, `R16`, `R21`, `R22`, `R27`–`R31` | `make test-docker` **and** driving the app; a 200 proves nothing here. **From 2026-07-31 the split is explicit per requirement in §5:** `FE-R27` and the 401/post-search halves of `FE-R28`/`FE-R29` are **driven and recorded**, not CI-proven, so G2's signature rests on a written record of what was driven (ADR 0013 gap #3) | user |
+| **G2** | P2 Contract truth + harness | **every later phase** | contract fixture, both test jobs green, `FE-R1`–`R3`, `R15`, `R16`, `R21`, `R22`, `R27`–`R32` | `make test-docker` **and** driving the app; a 200 proves nothing here. **From 2026-07-31 the split is explicit per requirement in §5:** `FE-R27` and the 401/post-search halves of `FE-R28`/`FE-R29` are **driven and recorded**, not CI-proven, so G2's signature rests on a written record of what was driven (ADR 0013 gap #3) | user |
 | **G3** | P3 Design system + P4 identity/search/forms | queue work | primitives + patient banner + name search | driven repro per `FE-R4`–`R7`, `R11`–`R13`, `R17`, `R20` | user |
 | **G4** | P5 Role-aware shell | — | role model decision | **explicit human approval for an auth change (CLAUDE.md §6)**; needs `config/roles.yaml` + `users` + session + gateway enforcement, and both `db/schema.sql` and a new hand-synced migration | user, explicitly |
 | **G5** | P6 Appointments/ROI queues | — | queue surfaces, tz fix | driven repro per `FE-R8`–`R10` | user |
@@ -433,5 +434,5 @@ no reason to move any of them.
   justified *by* it — a staff credential borrowed by script on a shared origin reads every chart
   precisely because IDs are walkable and sessions never expire. The fix is still W4's.
 - No debt ID: `FE-R1`, `FE-R3`, `FE-R7`–`R9`, `FE-R11`, `FE-R15`, `FE-R17`–`R19`, `FE-R21`, `FE-R30`,
-  `FE-R31` — new scope or process requirements, not previously documented gaps. `FE-R1`/`FE-R3` cover a
+  `FE-R31`, `FE-R32` — new scope or process requirements, not previously documented gaps. `FE-R1`/`FE-R3` cover a
   defect that was never in the register; §4 deliverable 6 adds it.

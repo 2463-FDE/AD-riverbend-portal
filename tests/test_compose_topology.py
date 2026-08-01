@@ -428,3 +428,29 @@ def test_portal_origin_is_runtime_config_with_no_production_default():
             "no production hostname belongs in a tracked default: an unset ORIGIN "
             "must fail visibly rather than resolve to a plausible-looking guess"
         )
+
+
+def test_ci_starts_the_portal_image_and_polls_the_port_compose_publishes():
+    # FE-R32. `docker compose build` is not evidence that anything runs, and the
+    # portal is where those come apart: adapter-node bundles its runtime into
+    # build/, so the runtime stage's `npm ci --omit=dev` leaves a near-empty
+    # dependency tree and a working image is indistinguishable from a broken one
+    # at build time. Two review rounds read that shape as a startup crash. Only a
+    # started container answering the health surface separates the cases.
+    #
+    # The port and the path are read out of compose rather than written here, so
+    # republishing the portal on another port, or moving the health surface,
+    # fails this test instead of leaving CI curling an address nothing serves.
+    ci = (COMPOSE.parent / ".github/workflows/ci.yml").read_text()
+    assert "docker compose up -d --no-deps portal" in ci, (
+        "the docker gate must START the portal image, not only build it; "
+        "--no-deps keeps the gateway's Postgres/Redis chain out of an image job"
+    )
+    probe = " ".join(_service("portal")["healthcheck"]["test"])
+    path = re.search(r"(/[\w\-/]*healthz)", probe).group(1)
+    for host_port in _published_host_ports(_service("portal")):
+        assert f"http://localhost:{host_port}{path}" in ci, (
+            f"CI must poll http://localhost:{host_port}{path} — the port compose "
+            f"publishes and the path its healthcheck probes, not a hardcoded pair "
+            f"that can drift from either"
+        )
