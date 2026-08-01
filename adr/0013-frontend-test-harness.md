@@ -67,6 +67,10 @@ with the contract fixture living outside both frontends.
 | `client` | real browser (Chromium), `@vitest/browser` + `vitest-browser-svelte` | `src/**/*.svelte.test.ts` | `FE-R2` (DOM half), `R4`, `R5`, `R7`, `R9`, `R10`, `R11`, `R16`, `R20` |
 | `server` | Node | `src/**/*.test.ts`, `tests/**/*.test.ts` | `FE-R1`, `R2` (branch logic), `R3`, `R8`, `R21` (JS side) |
 
+> **Package name corrected 2026-07-31 at implementation — see §Implementation-round corrections.**
+> Vitest 4 moved the Playwright provider out of `@vitest/browser` into **`@vitest/browser-playwright`**,
+> which is the package the config actually names. `@vitest/browser` arrives as its dependency.
+
 **Invariant: component behaviour is asserted in a real browser engine, never in a DOM shim.** The
 mechanism (`@vitest/browser` with the Playwright Chromium provider) is a value that may change; the
 invariant is that a passing component test corresponds to something a browser actually did.
@@ -136,6 +140,14 @@ Two reasons, both specific:
   failure screenshots. The seed is synthetic, but "PHI-shaped data in build artifacts" is a decision
   for the PHI boundary (CLAUDE.md §6), not a testing convenience, and it should be made deliberately
   in its own ADR rather than acquired as a side effect of installing a test runner.
+
+> **Corrected 2026-07-31 at implementation — the artifact surface is not E2E-specific.** The bullet
+> above attributes traces/screenshots to E2E. Measured while building the harness: **browser-mode
+> component tests write a PNG of the rendered component on every failure**, with no E2E suite
+> anywhere. The reasoning survives — it is the artifact that matters, not which suite produced it —
+> but the mitigation had to be real rather than implied, so the `client` project sets
+> `browser.screenshotFailures: false` and that was proven by failing a test and confirming no image
+> is written. See §Implementation-round corrections.
 
 **What would reopen it:** a P6 queue surface with a genuinely multi-step flow (search → select →
 book → cancel) where hand-driving each gate stops being reliable; or the driven-repro list growing
@@ -525,3 +537,40 @@ together.
 **Unchanged by the audit, checked and worth stating:** the fixture's location outside both frontends
 (§3), the two-project split (§1), the `TZ` discipline (§4), the no-coverage-threshold decision (§6),
 and §7's regression table apart from the one row corrected above.
+
+## Implementation-round corrections (2026-07-31)
+
+Written while building the harness (P2 PR 1) — the first time any claim in this file met a running
+runner. Append-only per `adr/_template.md`, with in-place markers in §1 and §2. A-class in
+`docs/review-loop-metrics.md`'s vocabulary (defects in the document as written), but not an
+automated round, so that file gains no entry.
+
+**Finding 1 — the Playwright provider is its own package in Vitest 4.** The Consequences list names
+`@vitest/browser`; `@vitest/browser-playwright@4.1.10` is what exports the `playwright()` provider
+the config calls, and it depends on `@vitest/browser`. §1 carries the correction. The exact-peer
+hazard §5 step 1 warns about is confirmed and applies to this package (`peerDependencies: { vitest:
+'4.1.10' }`), so **`vitest` and `@vitest/browser-playwright` are pinned exactly rather than
+caret-ranged** in `portal/package.json` — the coupling is written into the manifest instead of left
+to a reader remembering §5.
+
+**Finding 2 — §2's artifact reasoning was scoped to E2E, and the artifact is not.** Browser-mode
+component tests write `.vitest-attachments/*.png` and `__screenshots__/*.png` on failure. This was
+discovered the ordinary way: a deliberately failed smoke test left two PNGs in the working tree.
+Component tests are fed fixtures rather than live data, but `FE-R4`/`FE-R5`/`FE-R20` fixtures are
+patient-*shaped* by construction, and an image of one is exactly the CI surface §2 declined to
+acquire. Closed at the source — `browser.screenshotFailures: false`, verified by re-failing the test
+and confirming nothing is written — with `.gitignore` entries as a second net rather than the
+control. **Nothing in §2's E2E deferral changes**; if E2E is ever adopted, its own ADR now has one
+fewer thing to discover.
+
+**Finding 3 — the browser project's cost is no longer unmeasured (gap #1/#6, partial).** On this
+scaffold: the full suite (2 Node files, 1 browser file) runs in **~2.0s** on Node 22 in a container
+with the browser cached, against ~0.2s for the Node project alone. The Chromium download is ~95 MB
+and ~30s uncached. Both numbers are for a three-test suite and say nothing about a real one — they
+are recorded so the first real measurement has a baseline, not to close the gaps.
+
+**Unchanged and confirmed by running it:** the two-project split works as specified, the
+`.svelte.test.ts` suffix does discriminate (a file named `*.test.ts` runs in Node and fails on
+`import { page } from 'vitest/browser'`), the `TZ` discipline in §4 holds — and is now enforced by
+`portal/tests/ambient-timezone.test.ts`, which fails under `TZ=America/New_York`, proven by running
+it that way.

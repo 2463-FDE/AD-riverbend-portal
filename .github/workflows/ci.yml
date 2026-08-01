@@ -19,6 +19,40 @@ jobs:
       - run: npm install
       - run: npm run build
 
+  # The SvelteKit portal's gate (ADR 0013 §5). A sibling job rather than an edit
+  # to `frontend` above: that job sets working-directory at JOB level, so it
+  # cannot be parameterized per step, and the legacy portal must keep building
+  # unchanged for the FE-R15 coexistence window.
+  #
+  # Node 22 is the version that deploys (portal/Dockerfile). A JS gate proven
+  # only on a developer's Node is proven on a version nothing runs.
+  portal:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      # `npm ci`, not `npm install`: @vitest/browser-playwright peers vitest at an
+      # EXACT version, so the committed lockfile is what keeps the pair in step.
+      - run: npm ci
+      - name: Install Chromium for the browser project
+        run: npx playwright install --with-deps chromium
+      # FE-R17's accessible-name gate. --fail-on-warnings is load-bearing:
+      # without it svelte-check exits 0 on every a11y warning.
+      - name: Type and accessibility check
+        run: npm run check
+      - run: npm run lint
+      # Both projects: `client` in Chromium, `server` in Node under an ambient
+      # TZ that is deliberately not the clinic's (ADR 0013 §4).
+      - run: npm test
+      - run: npm run build
+
   services:
     runs-on: ubuntu-latest
     strategy:
@@ -78,7 +112,7 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
-    needs: [frontend, services, tests, secret-scan]
+    needs: [frontend, portal, services, tests, secret-scan]
     steps:
       - uses: actions/checkout@v4
       # .env and .env.ai-proxy are gitignored (untracked secret files). Compose
@@ -92,3 +126,34 @@ jobs:
           cp .env.redis.example .env.redis
       - name: Build images
         run: docker compose build
+
+      # `docker compose build` proves an image compiles, never that it runs, and
+      # the portal is the one service where those come apart. adapter-node
+      # rollup-bundles its runtime into `build/`, so `npm ci --omit=dev` leaves a
+      # near-empty runtime dependency tree and the container boots anyway, which
+      # codex r2 read as a guaranteed startup crash. Two rounds running, static
+      # review has inferred a runtime failure in this scaffold and been wrong
+      # (r1: the absent `svelte.config.js`), so `FE-R32` settles the argument
+      # with a running container rather than another comment.
+      #
+      # `--no-deps` is load-bearing: portal `depends_on` gateway, whose own chain
+      # waits on a healthy Postgres and Redis, and pulling that in would turn the
+      # image-build gate into a mini-integration run. Alone, the portal still
+      # exercises what this PR added — the published 3071, `ORIGIN` as runtime
+      # config, and the container healthcheck, which is polled here rather than
+      # merely declared. The compose-level smoke with the gateway attached earns
+      # its cost in P2 PR 2, when the portal actually calls it.
+      - name: Portal image serves /healthz
+        run: |
+          docker compose up -d --no-deps portal
+          for _ in $(seq 1 30); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' \
+              "$(docker compose ps -q portal)" 2>/dev/null || true)"
+            [ "$status" = healthy ] && break
+            sleep 2
+          done
+          docker compose logs portal
+          curl -fsS --max-time 10 http://localhost:3071/healthz
+          echo
+          [ "$status" = healthy ]
+          docker compose down

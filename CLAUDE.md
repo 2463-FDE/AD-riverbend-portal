@@ -35,8 +35,10 @@ frontend/             # Next.js 15 portal (3070). BFF route handlers proxy to ga
                       # ⚠️ legacy. Registration is BROKEN here and reports success (debt-log
                       #   cross-cutting); deliberately not patched. Replaced by portal/.
   app/lib/gateway.ts  #   server-side call into the gateway
-portal/               # SvelteKit staff portal (3071) — NOT ON DISK YET; lands at P2/G2.
-                      #   Decisions pinned in ADR 0012 (framework), 0014 (session), 0015 (origin).
+portal/               # SvelteKit staff portal (3071). Scaffold + JS test harness only so far —
+                      #   no login, no gateway calls yet. `make portal-dev` / `make test-frontend`.
+                      #   Decisions pinned in ADR 0012 (framework), 0013 (harness), 0014 (session),
+                      #   0015 (origin); what is load-bearing in it is in portal/README.md.
 services/
   gateway/            # FastAPI BFF (8070): login, sessions, request fan-out. ⚠️ owns auth
   intake-service/     # (8071) registration, insurance, consent, eligibility trigger
@@ -83,7 +85,8 @@ eval/ · scripts/ · logs/  # eval harness; local tooling (gitignored); local lo
 | **Run unit tests** | **`make test-docker`** — python:3.12 container, mirrors CI |
 | Run one test | `make test-docker ARGS="tests/test_hl7_parser.py -q"` |
 | Run integration | `pytest -m integration` (needs `make up`) |
-| Frontend dev | `make frontend-dev` |
+| **Run the JS gate** | **`make test-frontend`** — `portal/` only: `svelte-check`, eslint, Vitest |
+| Frontend dev | `make frontend-dev` (legacy, 3070) / `make portal-dev` (SvelteKit, 3071) |
 | Validate compose | `make config` |
 | Regenerate status dashboard | `make status` (local only; needs gitignored `scripts/status.py`) |
 
@@ -94,11 +97,13 @@ eval/ · scripts/ · logs/  # eval harness; local tooling (gitignored); local lo
   `db/seed/seed.sql`.
 - **Demo logins** (all password `portal123`): `frontdesk`, `drnguyen`, `roiclerk`, `mokonkwo`, …
   (see `db/seed/generate_seed.py`).
-- **Ports:** portal 3070, gateway 8070 (`/docs`), services 8071–8077, Postgres 5432, Redis 6379
-  (⚠️ `expose`-only, not published — ADR 0011 round 1).
-- **No lint / typecheck / format target exists yet.** CI (`.github/workflows/ci.yml`) runs frontend
-  `npm run build`, a per-service `python -c "import app"` import smoke, `pytest -m "not
-  integration"`, a `gitleaks` secret scan, and `docker-build`.
+- **Ports:** legacy portal 3070, SvelteKit portal 3071, gateway 8070 (`/docs`), services 8071–8077,
+  Postgres 5432, Redis 6379 (⚠️ `expose`-only, not published — ADR 0011 round 1).
+- **Lint/typecheck exist for `portal/` only** (`svelte-check --fail-on-warnings` + eslint, via
+  `make test-frontend`); there is still no Python lint/format target and none for `frontend/`.
+  CI (`.github/workflows/ci.yml`) runs the legacy frontend `npm run build`, the `portal` job above
+  on Node 22, a per-service `python -c "import app"` import smoke, `pytest -m "not integration"`, a
+  `gitleaks` secret scan, and `docker-build`.
 
 ## 4. How things actually work
 

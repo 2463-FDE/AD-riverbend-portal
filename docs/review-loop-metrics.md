@@ -86,6 +86,32 @@ of this file.
 
 <!-- append below -->
 
+PR #25 r1 — 1 finding: 0 A / 0 B / 0 C, 1 refuted · "no `portal/svelte.config.js`, so the
+adapter is misconfigured and the build cannot emit `build/`" — false. SvelteKit 2.x takes
+the config inline through the `sveltekit()` Vite plugin. Disproved by clean-tree
+`npm run build` and `docker compose build --no-cache portal`, both printing "Using
+@sveltejs/adapter-node" and emitting `build/index.js`; the built server answers `/` and
+`/healthz` with 200. Closed with a comment at the anchor line, no code change. First
+refuted finding in the log — worth watching whether scaffold-shaped PRs draw more of them,
+since the reviewer is reasoning from an older SvelteKit convention rather than from the
+build.
+
+PR #25 r2 — 2 findings: 1 A / 0 B / 0 C, 1 refuted · **[high] refuted** — "the runtime stage runs
+`npm ci --omit=dev` and every package is a devDependency, so the container fails at startup with
+module resolution errors". Premise true (the runtime `node_modules` is 19 entries / 84K), conclusion
+false: adapter-node rollup-bundles its runtime into `build/`. All 30 bundle files sweep clean of
+executable bare specifiers — the only ones present sit inside `/** @import */` JSDoc comments — and
+the real image serves `/` and `/healthz` 200. **[medium] A, fixed** — the `docker-build` job stopped
+at `docker compose build`, so the healthcheck, the 3071 publish and the `ORIGIN` wiring this PR added
+were never executed anywhere. Closed with `FE-R32` plus a CI step that starts the image.
+
+**Class observation, and the reason r2 is worth reading later.** Both refuted findings so far are the
+same class: *runtime failure inferred from static config* — r1 from a missing `svelte.config.js`, r2
+from an empty runtime dependency tree. r1 was closed with a comment, which is an instance fix, and it
+did not stop r2. The class fix is giving the reviewer a runtime signal to check against instead of an
+inference, which is what `FE-R32` buys. If a round 3 lands another of these, the class fix did not
+work either and the next move is a design question rather than another comment.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
