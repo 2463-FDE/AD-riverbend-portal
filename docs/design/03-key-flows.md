@@ -33,7 +33,7 @@ nobody had written down what failure looks like. A flow without failure paths is
 | 5 | ▸ Capture consents | the set the backend can store (see ✗c) | — |
 | 6 | ▸ Review, with per-section edit | everything above | — |
 | 7 | ▸ Submit | full payload | `POST /intake` |
-| 8 | → Confirm **what was created**: patient identity + MRN + eligibility result | `patient_id`, `eligibility` | already in the response **[E]** |
+| 8 | → Confirm **what was created**: patient identity + eligibility result, and that no MRN was assigned (see ✗f) | `patient_id`, `eligibility` | already in the response **[E]** |
 | 9 | → Hand off into the patient surface | — | `/patients/:id` |
 
 **Step 1 is new and is the point.** Today registration begins with a blank form **[E]**, which is
@@ -48,6 +48,10 @@ removes the most common way a duplicate gets created.
 - `✗b` **Eligibility unknown.** ADR 0010 returns `pending`/`unknown` on payer trouble, never a false
   `inactive` **[E]** (my probe returned `status: unknown` **[E]**). Show it as unknown with a
   re-check affordance. ⛔ Never render unknown as "not covered" — that turns a covered patient away.
+  The re-check **reads without recording**: `_create_coverage` writes no `status`/`verified_at` and
+  nothing updates them afterwards, so `insurance_coverages.status` keeps its `'unknown'` default even
+  once the payer answers **[E]** (D4b). The answer is therefore true only on the screen showing it —
+  no later shift, and nothing downstream, can see that coverage was confirmed.
 - `✗c` **Consent not storable.** `ConsentKind` accepts three values; the form collects four **[E]**.
   Until the enum is widened, the form must not collect what cannot be stored (`FE-R21`).
   ⛔ Never accept a financial-responsibility attestation and discard it.
@@ -55,6 +59,18 @@ removes the most common way a duplicate gets created.
   free (step 6). Post-submit is honestly unavailable — say so; do not fake an edit affordance.
 - `✗e` **Duplicate suspected at step 2.** Operator needs a deliberate "this is a different person"
   action, recorded. **[?]** whether Riverbend has a duplicate-resolution policy.
+- `✗f` **No MRN exists to confirm.** `_create_patient` never sets `mrn` and `IntakeResponse` carries
+  no MRN field **[E]**; the only generator in the repo seeds existing rows (`db/seed/generate_seed.py:118`,
+  format `M####`). Step 8 must state the absence, not omit the row — a front desk that expects an MRN
+  needs to know one is not coming. ⛔ Never show a fabricated MRN on the confirmation. Steps 2 and
+  flow 2 are unaffected: those patients are already registered and do have MRNs. **[?]** whether intake
+  should mint one — entangled with RIV-160, since an MRN per registration numbers duplicates rather
+  than preventing them.
+- `✗g` **Consents partially written.** `_record_consents` commits one row per consent in its own
+  transaction and swallows each failure, and the 201 is returned regardless **[E]** — a partial write
+  is indistinguishable from a complete one. Step 8's count must come from the service response, never
+  from submitted form state (`FE-R33`). ⛔ Never report a consent accepted on the strength of the form
+  alone — that is `✗a`'s defect class one layer in.
 
 ---
 

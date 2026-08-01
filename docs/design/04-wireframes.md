@@ -84,7 +84,7 @@ half of this document most likely to be eroded by a later "small" change.
 4. **"Not answered", never "Declined"** (`FE-R11`), and the form collects only consents the service
    can store (`FE-R21`) — `ConsentKind` holds three values against four collected today, so a
    financial attestation is currently taken and discarded.
-5. **Confirmation states what was written** — identity, MRN, patient id — plus the eligibility result
+5. **Confirmation states what was written** — identity, patient id, and the *absence* of an MRN — plus the eligibility result
    already present in the response and currently thrown away (`FE-R1`, `FE-R20`).
 6. ⛔ **Never a success message on a failed write.** A 200 carrying an error `detail` body is a
    failure (`FE-R2`); every entered field survives retry.

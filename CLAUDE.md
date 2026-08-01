@@ -200,7 +200,7 @@ indexes both — several IDs appear nowhere else in the repo, so do not thin it 
 
 | Gap | Status |
 |-----|--------|
-| **RIV-088 / RIV-141** slow/freezing intake ← inline eligibility call (D4, W3) | ~ partly closed by PR #11 / ADR 0010; verification still runs on the `/intake` request thread, and gateway `proxy_intake` still uses the error-swallowing `_post` |
+| **RIV-088 / RIV-141** slow/freezing intake ← inline eligibility call (D4, W3) | ~ partly closed by PR #11 / ADR 0010; verification still runs on the `/intake` request thread, and gateway `proxy_intake` still uses the error-swallowing `_post`. **D4b (new 2026-08-01): the result is never persisted** — `insurance_coverages.status` keeps its `'unknown'` default even after the payer answers |
 | **RIV-160** allergy differs per chart ← no MPI (D5a, W2) and HL7 AL1 dropped (D6, W6) | open |
 | **RIV-175** double confirmations ← booking race, no UNIQUE/idempotency (D5b, W5) | open, spec-only |
 | **IDOR** cross-patient chart reads succeed; sessions not patient-bound (D11, W4) | open |

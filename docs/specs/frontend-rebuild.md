@@ -60,6 +60,15 @@ above; a frontend test harness with its ADR.
   **Amended 2026-07-31:** a patient surface is now a live question, tracked as §8 #16. It remains
   out of scope for P2 and the no-speculative-abstraction rule stands unchanged; what changed is that
   its prerequisite is named — **D11 session binding**, not any amount of frontend work.
+- **The AI feature surfaces — out of scope for P0–P6, and scheduled as P7 (§8 #17).** Two LLM
+  features were built for W1 and W3 and one of them has never had a UI: `POST /ai/intake-instructions`
+  (W1's patient-friendly checklist, surfaced only in the legacy portal at
+  `frontend/app/intake/page.tsx:141`) and `POST /ai/visit-chat` (W3's eligibility assistant with
+  visit-scoped memory, `services/gateway/app.py:938`, **no frontend route in either portal**).
+  **Named here 2026-08-01 because silence is exactly how they went missing:** every other deliberate
+  omission in this rebuild was written into this list, these two were not, and the result was a plan
+  that would retire `frontend/` and delete the only shipped UI of a client ask. This list is the
+  mechanism; it failed once and the entry is the repair.
 - Backend redesign of any kind. The portal → gateway → service invariant holds (CLAUDE.md §1).
 
 ## 3. Definitions
@@ -89,6 +98,9 @@ above; a frontend test harness with its ADR.
    list. **Done: `adr/0015-portal-origin-and-audience-separation.md`.** Two origins, host-only cookies
    (`FE-R30`), `ORIGIN` as runtime config (`FE-R31`). It exists because ADR 0014 §1's `Secure` flag and
    §2's `csrf.checkOrigin` both depend on an origin no document had stated.
+8. **P7 — surfaces for the AI features already built** (added 2026-08-01, §8 #17): W1's
+   intake-instructions checklist, currently legacy-only, and a first-ever UI for W3's `visit-chat`
+   eligibility assistant. Sequenced after G5 so it never competes with parity work.
 
 ## 5. Requirements (EARS)
 
@@ -111,7 +123,7 @@ Phase column maps to §6. `insp.` = verified by inspection/documented repro, sta
 | `FE-R12` | The portal shall not use an `input` of type `password` for SSN entry. | insp. + lint rule | D3 (adjacent) | G3 |
 | `FE-R13` | WHILE a staff operator is signed in, the portal shall not address that operator as the patient. | insp. against a copy checklist in `docs/design/` | D8 (surface of) | G3 |
 | `FE-R14` | WHERE a per-operator role is present in the session, the portal shall render a role-specific home surface. | driven repro per role | D8 | **G4** |
-| `FE-R15` | The repository shall retain the original portal as a separately runnable service until `FE-R1`–`FE-R3` pass on the new frontend. | `make config` + both services up | — | G2 |
+| `FE-R15` | The repository shall retain the original portal as a separately runnable service until the new portal reaches feature parity at **G5**. **[Condition widened 2026-08-01.** It read "until `FE-R1`–`FE-R3` pass", which close at **G2** — login plus the minimum intake path. Records land at G3 and the appointment/ROI queues at G5, so the original wording released the old portal three gates before anything replaced what it does. Phrased as a floor it forced no premature deletion, but it was the only stated condition and reads as permission.**]** | `make config` + both services up, re-checked at each gate from G2 through G5 | — | G2 |
 | `FE-R16` | IF an error is surfaced to the operator, THEN the message shall not contain PHI. | adversarial test (CLAUDE.md §5 negative-test rule) | D1 | G2 |
 | `FE-R17` | The build shall fail when a **button or link** lacks an accessible name. **[scope narrowed 2026-07-31 to what the gate measurably enforces — see §8.5; form-control names are NOT gated, ADR 0013 gap #9. Narrowed once more the same day, measured at implementation: a button or link whose only child is `<img alt="">` is NOT caught either — ADR 0012 §Implementation-round corrections]** | CI job | — | G3 |
 | `FE-R18` | The design phase shall produce, for each seeded operator role, the tasks performed per shift and the data each task requires. | `docs/design/` review | — | G0 |
@@ -128,6 +140,7 @@ Phase column maps to §6. `insp.` = verified by inspection/documented repro, sta
 | `FE-R30` | The portal shall set no cookie carrying a `Domain` attribute; every cookie it sets shall be host-only. | assertion on the `Set-Cookie` header, with the mutation proof (add a `Domain`, confirm the test fails) | — | G2 |
 | `FE-R31` | The portal shall resolve its own public origin from the runtime environment (`ORIGIN`), and shall not embed an origin as a build-time constant. | insp. + one container check that a non-default `ORIGIN` is honoured at runtime | — | G2 |
 | `FE-R32` | The portal's production image shall answer `GET /healthz` with 200 when started from the built image, proven in CI rather than inferred from the image building. | **CI:** `docker compose up -d --no-deps portal` in the `docker-build` job, wait for the container healthcheck to report `healthy`, then `curl -fsS http://localhost:3071/healthz`. Added 2026-07-31 after two review rounds inferred a startup crash from static config — the image builds and the runtime dependency tree is near-empty, both true, and the container serves anyway because adapter-node bundles its runtime | — | G2 |
+| `FE-R33` | WHEN an intake is submitted successfully, intake-service shall report which consents were committed, and the portal shall render the confirmation's consent count from that report and not from the submitted payload. | **CI:** a unit test in which one consent insert raises and the response reports the surviving set, not the submitted set — the mutation proof is that a test asserting the submitted set passes today and must fail after the change. Plus a JS test that the confirmation renders the response field, fed a fixture where the two sets differ | — | G2 |
 
 ## 6. Checkpoints / gates
 
@@ -137,10 +150,11 @@ Phases are sequential; **G2 blocks everything after it.**
 |---|---|---|---|---|---|
 | **G0** | P0 Design: operators, tasks, IA, flows, wireframes, tokens | framework choice | `docs/design/` + Artifact | user review of the design set | user |
 | **G1** | P1 Framework decision | all implementation | framework ADR (+ harness ADR after it) | ADR review; Next.js must be a genuine option that loses on stated criteria | user |
-| **G2** | P2 Contract truth + harness | **every later phase** | contract fixture, both test jobs green, `FE-R1`–`R3`, `R15`, `R16`, `R21`, `R22`, `R27`–`R32` | `make test-docker` **and** driving the app; a 200 proves nothing here. **From 2026-07-31 the split is explicit per requirement in §5:** `FE-R27` and the 401/post-search halves of `FE-R28`/`FE-R29` are **driven and recorded**, not CI-proven, so G2's signature rests on a written record of what was driven (ADR 0013 gap #3) | user |
+| **G2** | P2 Contract truth + harness | **every later phase** | contract fixture, both test jobs green, `FE-R1`–`R3`, `R15`, `R16`, `R21`, `R22`, `R27`–`R33` | `make test-docker` **and** driving the app; a 200 proves nothing here. **From 2026-07-31 the split is explicit per requirement in §5:** `FE-R27` and the 401/post-search halves of `FE-R28`/`FE-R29` are **driven and recorded**, not CI-proven, so G2's signature rests on a written record of what was driven (ADR 0013 gap #3) | user |
 | **G3** | P3 Design system + P4 identity/search/forms | queue work | primitives + patient banner + name search | driven repro per `FE-R4`–`R7`, `R11`–`R13`, `R17`, `R20` | user |
 | **G4** | P5 Role-aware shell | — | role model decision | **explicit human approval for an auth change (CLAUDE.md §6)**; needs `config/roles.yaml` + `users` + session + gateway enforcement, and both `db/schema.sql` and a new hand-synced migration | user, explicitly |
-| **G5** | P6 Appointments/ROI queues | — | queue surfaces, tz fix | driven repro per `FE-R8`–`R10` | user |
+| **G5** | P6 Appointments/ROI queues | P7 | queue surfaces, tz fix | driven repro per `FE-R8`–`R10` | user |
+| **G6** | P7 AI feature surfaces (§8 #17) | — | W1's intake-instructions checklist re-homed on the new portal; a UI for W3's `visit-chat` assistant, which has never had one | design-first like every phase before it: flows + wireframes, then requirements, then build. **Also a PHI-boundary review** — `/ai/*` is the only vendor-egress path (CLAUDE.md §6) and D13/D14 are open | user |
 
 Per-phase discipline, not repeated per gate: each phase is its own PR with its own ADR where a
 non-trivial decision was made; `/verify-stack` before every push; `/security-review` on any diff
@@ -193,6 +207,7 @@ blocks nothing in P2. #3, #5, #6, #7, #9, #10 and #16 block their own later phas
 | 14 | ~~What P2 actually builds.~~ **RESOLVED 2026-07-31: login plus the minimum intake path** — `FE-R1`–`R3`, `R15`, `R16`, `R21`, `R22`, and the new `FE-R27`–`R29`. Not the four-step wizard: G2 is contract truth and harness, and wizard UI decided before the P3 design system exists is UI built twice. **Sub-question answered separately 2026-07-31, having been orphaned when this row closed: `insurance.policy_holder`** — §8.1 routed it here and this resolution never mentioned it. **The new form drops the free-text field and collects `policy_holder_is_self` as a checkbox**; reasoning and the measurement behind it are in §8.1. | — | resolved |
 | 15 | ~~Lint gate: `svelte-check` alone, or eslint as well.~~ **RESOLVED 2026-07-31: both.** `svelte-check` for types and template correctness, eslint for what a compiler does not cover (unused bindings, import hygiene, the a11y rules the Svelte compiler does not emit). ADR 0012 scored `FE-R17` partly on compiler-level a11y; eslint is what makes `FE-R17` a gate rather than a subset of it. **CORRECTED same day by measurement (§8.5): the last clause is false.** `eslint-plugin-svelte@3.22.0` ships 85 rules and **zero** a11y rules — its `valid-compile` rule only re-surfaces the same compiler warnings — so eslint cannot widen `FE-R17`, and the subset stays the subset. The decision to run both **stands** on its other grounds (unused bindings, import hygiene, `no-at-html-tags`, which matters for ADR 0014 gap #3); only its a11y justification is withdrawn. The accessible-name gap goes to ADR 0013 gap #9. | — | resolved, one premise corrected |
 | 16 | **Patient-facing surface — reopened 2026-07-31 by user, having been settled staff-only on 2026-07-28.** Not a re-litigation: the driver is a possible near-term client commitment, which is new information. The binding constraint is **not** frontend — it is **D11**. `GET /patients/{id}/records` checks only "is logged in" and IDs are sequential, so a patient account reads every other patient's chart; patient login therefore cannot ship before session→`patient_id` binding, which is W4 auth work behind CLAUDE.md §6 approval and G4. Three further consequences: unmanaged/family-shared devices make `FE-R28`'s automatic logoff non-negotiable rather than prudent; a shared origin means an XSS in the patient surface reaches staff credentials, which `FE-R27` contains and a separate origin would contain better; and "patient" is a different **principal class**, not a staff role, so §8.3's three tiers do not describe it and `config/roles.yaml` would gain a non-staff principal. §2's out-of-scope bullet is amended accordingly. **The origin half is now DECIDED (2026-07-31): two origins, `adr/0015-portal-origin-and-audience-separation.md`** — separate hostnames, host-only cookies (`FE-R30`), `ORIGIN` from runtime env (`FE-R31`), and the patient surface kept out of the staff app's route tree. Patient **authentication** stays blocked on D11; ADR 0015 §4 is explicit that nothing in it makes a patient login safe to ship. | nothing in P2 — `FE-R27`–`R29` already survive it, and `FE-R30`/`R31` are P2 work | D11 session binding (W4/G4), then a user call on the real hostnames and who terminates TLS |
+| 17 | **AI feature surfaces — RESOLVED 2026-08-01 (user): build them as P7, immediately after G5.** Found while checking the P2 mockups against W1–W3. Three client asks were LLM-shaped; the UI status is one built, one never built, one deliberately not built. **W1** — "a little assistant that drafts a patient-friendly version of our intake instructions… *get something on the screen this week*". Backend `POST /ai/intake-instructions`; UI exists **only** in the legacy portal (`frontend/app/intake/page.tsx:141`). **W3** — "a little **chat assistant** that checks a patient's eligibility and keeps track of the visit context". Backend `POST /ai/visit-chat` + ADR 0011 visit memory; **no UI has ever existed** — `frontend/app/api/ai/` contains one directory. The client asked for a screen and the deliverable shipped headless. **W2** — "a retrieval helper that surfaces the most relevant past records the moment they open a chart". Correctly redirected: the decoded finding was duplicate/fragmented charts, so `w2.md` §4 delivers an eval harness plus an MPI ADR. The ask stays unmet **by decision**, and P7 does not revive it. **How this stayed invisible:** neither `w1.md` nor `w3.md` §4 lists a UI deliverable — "frontend", "portal", "UI" and "screen" appear across W1–W3 exactly once, inside W1's verbatim client quote — and `visit-chat`/`intake-instructions` appear in **zero** files under `docs/todo.md`, `docs/debt-log.md` and `docs/status/`. The client's own Jira export holds four tickets, all workflow defects, none AI, so no client-side artifact would ever surface the gap. **P7 scope:** re-home W1's checklist on the new portal and build W3's assistant a surface for the first time. Requirements are written when P7 is designed, not here — this spec is design-first and specifying unscreened UI would break its own discipline. Note `/ai/*` is the only vendor-egress path (CLAUDE.md §6, D13) and W8's de-identification gap (D14) is open, so P7 inherits a PHI-boundary review that P0–P6 do not carry. | P7 / G6 | resolved — scheduled, not yet designed |
 
 ### 8.1 Why the intake fix is not frontend-only (verified 2026-07-28, extended 2026-07-30)
 
@@ -434,5 +449,8 @@ no reason to move any of them.
   justified *by* it — a staff credential borrowed by script on a shared origin reads every chart
   precisely because IDs are walkable and sessions never expire. The fix is still W4's.
 - No debt ID: `FE-R1`, `FE-R3`, `FE-R7`–`R9`, `FE-R11`, `FE-R15`, `FE-R17`–`R19`, `FE-R21`, `FE-R30`,
-  `FE-R31`, `FE-R32` — new scope or process requirements, not previously documented gaps. `FE-R1`/`FE-R3` cover a
+  `FE-R31`, `FE-R32`, `FE-R33` — new scope or process requirements, not previously documented gaps. `FE-R33`
+  is the newest: the swallowed-consent-insert defect behind it was found on 2026-08-01 while checking the
+  P2 mockups against the code, and is recorded in `docs/design/03-key-flows.md` flow 1 `✗g` rather than
+  as its own D-number. `FE-R1`/`FE-R3` cover a
   defect that was never in the register; §4 deliverable 6 adds it.
