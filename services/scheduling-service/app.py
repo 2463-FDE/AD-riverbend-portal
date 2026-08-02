@@ -31,6 +31,19 @@ from schemas import (
 
 log = configure(settings.service_name)
 
+# The status the day queue excludes. Shared by the cancel writer and the day
+# reader in THIS module so those two cannot drift — a cancel that stored a
+# different spelling would silently put the visit back in the front-desk queue.
+#
+# The claim stops at this module, deliberately, because two other producers of
+# the same column cannot import it: `book.py` is the frozen raw-psycopg2 path
+# with `'confirmed'` inline in SQL, and `db/seed/generate_seed.py:290` emits all
+# three values as literals. There is no shared Python library here (ADR 0001).
+# `appointments.status` is also free TEXT with no CHECK (db/schema.sql:84), so
+# the vocabulary is a convention the database does not enforce. Changing this
+# value does NOT migrate rows already written with the old spelling.
+CANCELLED_STATUS = "cancelled"
+
 app = FastAPI(title="Riverbend scheduling-service")
 
 
@@ -130,6 +143,13 @@ def list_day_schedule(
     exists (D11, W4 owns binding a session to a patient). This endpoint does not
     widen that gap, and it must not be read as a decision about it.
 
+    Cancelled visits are excluded (``FE-R34``). The queue answers "who is coming
+    to this clinic today", and a cancelled visit is not — leaving them in means a
+    front desk checks in a patient who cancelled, and means name, MRN and reason
+    are displayed for a visit that should no longer be active. The predicate is
+    an **exclusion**, not an allowlist, for the reason given at the ``.where``.
+    Completed visits stay: the desk needs to see who has already been seen today.
+
     There is deliberately no ``provider_id`` filter. The only route from an
     appointment to a provider id is ``appointments.slot_id`` → ``slots``, and
     that column has no foreign key (db/schema.sql) while ``book()`` inserts any
@@ -173,6 +193,15 @@ def list_day_schedule(
         .join(Slot, Slot.id == Appointment.slot_id, isouter=True)
         .where(visit_at >= start_utc)
         .where(visit_at < end_utc)
+        # Exclusion, never an allowlist. `status` is free TEXT with no CHECK
+        # constraint (db/schema.sql:84), so `status IN ('confirmed','completed')`
+        # would silently drop any value added later — 'checked_in', 'arrived',
+        # 'no_show' — which is the same silent-drop class as the FK-less inner
+        # join removed from this query in codex r1. An unrecognised status shows
+        # up in the queue; only an explicit cancellation is hidden. Wrong in the
+        # visible direction, which is the one a front desk can correct.
+        # 'completed' stays: the desk needs to see who has already been seen today.
+        .where(Appointment.status != CANCELLED_STATUS)
         # id breaks ties: appointment times collide heavily (the seed alone has
         # five on one timestamp), and Postgres gives no stable order for equal
         # sort keys across separate queries — so an unbroken tie means a paging
@@ -266,7 +295,7 @@ def cancel_appointment(appointment_id: int, db: Session = Depends(get_db)):
     if appt is None:
         raise HTTPException(status_code=404, detail="appointment not found")
 
-    appt.status = "cancelled"
+    appt.status = CANCELLED_STATUS
     try:
         db.commit()
     except Exception:
@@ -275,4 +304,4 @@ def cancel_appointment(appointment_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=503, detail="database unavailable")
 
     log.info("cancelled appointment %s", appointment_id)
-    return CancelResponse(appointment_id=appointment_id, status="cancelled")
+    return CancelResponse(appointment_id=appointment_id, status=CANCELLED_STATUS)

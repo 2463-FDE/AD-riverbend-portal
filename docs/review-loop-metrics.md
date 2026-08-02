@@ -176,3 +176,34 @@ not. Second round in a row where checking the prose against the repo changed the
    the first commit, and it is the *mechanism* that post-dates it.
 5. Churn: sum `git show --numstat` insertions per non-merge commit, split at the last
    commit of the original push.
+
+PR #26 r1 — 3 findings: 3 A / 0 B / 0 C · gateway swallowed downstream errors as 200 (fixed,
+`_get_checked`); `provider_id` inner-joined an FK-less column and silently dropped appointments
+(fixed by deletion, the reviewer's own first option); cross-patient PHI on session-only auth
+(scoped to tracked debt at a design gate — a permission gate on a single-`staff`-role system denies
+nobody, so the negative test the finding asks for cannot be written to fail). The round's most
+serious defect came from the **pre-push adversarial pass, not the bot**: the day queue filtered on
+`scheduled_for`, which the booking UI never populates, so it returned nothing but seeded rows in
+production — right in dev, empty in prod.
+
+PR #26 r2 — 2 findings: 2 A / 0 B / 0 C · **[high]** cross-patient PHI on session-only auth —
+**verbatim repeat of r1's finding**, re-scoped, no code. Not labelled C: C is "an earlier round
+tried to fix it and did not close it", and this was never attempted — it was scoped out at a design
+gate with human approval. **[medium] A, fixed** — the day query filtered on time only, so a
+cancelled visit still rendered in the front-desk arriving queue with name, MRN and reason. Closed
+with an exclusion predicate (`FE-R34`), never an allowlist: `appointments.status` is free TEXT with
+no CHECK, so `IN ('confirmed','completed')` would silently drop any status added later — the same
+silent-drop class as the FK-less inner join r1 removed from this very query.
+
+**Zero B/C for the second round running on this PR, and the reason is visible in the process.** The
+pre-push pass returned 4 findings, 3 of them defects in code *this round had just written* — an
+overclaiming comment ("the two literals cannot drift"; the constant reaches 1 of 4 producers of that
+column), a drift test that pinned writer↔constant instead of writer↔reader, and a second test whose
+assertions restated the first's while banning an equivalent refactor. Those are textbook B-class
+findings, caught before the push instead of arriving as r3. A mutation the pass provoked also
+falsified a claim in one of the round's own new docstrings (the "survives an equivalent `notin_`
+refactor" test did not, because SQLAlchemy binds an `IN` list as one parameter rather than as
+scalars). The pass's own top finding was checked and partly wrong — it asserted booking marks
+`slots.status = 'booked'`; nothing in the repo writes that column at all — which is the second time
+in three rounds that checking a reviewer's prose against the tree changed the disposition. Parked
+accurately as TODO-35 rather than as filed.

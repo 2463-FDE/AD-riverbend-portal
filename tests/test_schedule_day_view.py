@@ -235,6 +235,111 @@ def test_slots_is_outer_joined_so_no_row_is_dropped_by_it():
     assert "left outer join patients" in sql
 
 
+def test_cancelled_visits_are_excluded_from_the_queue():
+    """FE-R34. A cancelled visit is not someone coming to the clinic today, so
+    leaving it in means the front desk checks in a patient who cancelled — and
+    means name, MRN and reason are rendered for a visit that should no longer be
+    active (codex r2).
+
+    Asserted on the compiled statement, like the window: the predicate runs in
+    Postgres and the fake session cannot evaluate one.
+
+    This one pins the `!=` form on purpose, so it is the test that fails if the
+    predicate is rewritten as an equivalent `notin_` — update this line, it is not
+    a defect. The form-independent invariant is the next test's job.
+    """
+    session = _FakeSession()
+    assert _client(session).get("/schedule?date=2026-08-01").status_code == 200
+
+    sql, params = _compiled(session)
+    where = _where(sql)
+
+    m = re.search(r"appointments\.status\s*!=\s*:(\w+)", where)
+    assert m, f"no status exclusion against the day query in: {where}"
+    # Both, and they are different assertions. The literal pins the value against
+    # the rows already in the database — which no constant rename migrates. The
+    # constant pins the reader to the writer, and without it the two halves are
+    # coupled only by the same string being typed into two files.
+    assert params[m.group(1)] == "cancelled"
+    assert params[m.group(1)] == app_mod.CANCELLED_STATUS
+
+
+def test_no_status_but_the_cancelled_one_constrains_the_day_query():
+    """FE-R34's second clause: no visit is omitted for having a status the query
+    does not recognise.
+
+    Asserted on the bind VALUES rather than on the compiled SQL's syntax, and the
+    difference matters. A syntax assertion (`"status in (" not in where`) pins the
+    operator SQLAlchemy happens to emit, so it fails an equivalent refactor —
+    `status.notin_([CANCELLED_STATUS])` and `not_(status == CANCELLED_STATUS)` are
+    the same query here, `status` being NOT NULL — while still passing anything
+    that constrains status some other way. The invariant is about which status
+    values the query is allowed to know about, and that is what this reads.
+
+    It fails in both wrong directions: an allowlist binds 'confirmed'/'completed'
+    and the set no longer equals {cancelled}; dropping the predicate empties it.
+    """
+    session = _FakeSession()
+    assert _client(session).get("/schedule?date=2026-08-01").status_code == 200
+
+    _, params = _compiled(session)
+
+    # Every status value this codebase's writers produce (book.py, the cancel
+    # route, the seed generator), plus the ones the endpoint's comment names as
+    # plausible later additions and the spelling the legacy UI defends against.
+    known_statuses = {
+        "confirmed",
+        "completed",
+        "cancelled",
+        "canceled",
+        "checked_in",
+        "arrived",
+        "no_show",
+    }
+    # Flattened, because an IN/NOT IN predicate binds its values as one list
+    # parameter rather than as separate scalars — reading only the scalars would
+    # make this test silently blind to exactly the allowlist it exists to reject.
+    bound = []
+    for value in params.values():
+        bound.extend(value if isinstance(value, (list, tuple)) else [value])
+    bound_statuses = {v for v in bound if isinstance(v, str) and v in known_statuses}
+
+    assert bound_statuses == {app_mod.CANCELLED_STATUS}, bound_statuses
+
+
+def test_the_excluded_status_is_the_literal_the_cancel_path_writes():
+    """Drift proof. The exclusion is only correct while the value the cancel path
+    STORES equals the value the day query EXCLUDES — a cancel that wrote
+    'canceled' (the spelling the legacy UI defends against,
+    frontend/app/appointments/page.tsx:96) would silently put the visit back in
+    the front-desk queue with no error anywhere.
+
+    What this pins is those two values matching, not that the writer imports the
+    constant — an equal literal is equally correct and this test cannot, and need
+    not, tell them apart. Mutation-proven by changing the stored spelling.
+    """
+
+    class _FakeCancelSession:
+        def __init__(self, appointment):
+            self.appointment = appointment
+            self.committed = False
+
+        def get(self, _model, _pk):
+            return self.appointment
+
+        def commit(self):
+            self.committed = True
+
+    appointment = _FakeAppointment(1, 1042)
+    session = _FakeCancelSession(appointment)
+
+    body = _client(session).post("/appointments/1/cancel").json()
+
+    assert appointment.status == app_mod.CANCELLED_STATUS
+    assert body["status"] == app_mod.CANCELLED_STATUS
+    assert session.committed
+
+
 def test_sort_breaks_ties_on_id():
     """Appointment times collide heavily — the seed alone has five on one exact
     timestamp. Postgres gives no stable order for equal sort keys across
