@@ -82,7 +82,15 @@ PHI columns (`ssn`, `notes`, …) are stored as plain `TEXT` (see `adr/0002`).
   (X12 270/271). Today this call is synchronous and has no timeout; intake
   triggers it inline on the request path.
 - **Hospital HL7 v2 feed** — `interop-service` ingests ADT/ORU messages and maps
-  them to the internal record shape.
+  them to the internal record shape. **No live feed is connected in this
+  environment** (2026-08-02): nothing posts to the service — no script, doc, or
+  test. Since ADR 0016 it has no host port; the one remaining inbound path is
+  the gateway's session-guarded `POST /hl7/ingest` on 8070 — usable by
+  logged-in staff, not by an automated hospital feed, so closing 8075 broke no
+  integration. Connecting a real hospital feed requires dedicated **authenticated**
+  ingress (mutual TLS or an authenticated MLLP/HTTP listener, decided in its own
+  ADR at that point); re-publishing 8075 as-is is ruled out — it was an
+  unauthenticated PHI write path (ADR 0016 §5).
 
 ## 7. Known limitations / tech debt (carried into the handoff)
 

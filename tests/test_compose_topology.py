@@ -463,6 +463,46 @@ def test_every_internal_url_in_compose_targets_a_port_that_service_exposes():
             )
 
 
+# --- docs/tooling must not point at the removed host ports (r1) ---------------
+# ADR 0016's pre-landing sweep grepped one literal spelling and missed
+# docs/runbook.md twice, because both references were parameterized (an
+# `807N` placeholder, and a `for p in 8071 ...` loop curling `$p`). A doc or
+# tool that hits a removed port reads a healthy stack as six dead services, and
+# the fix an operator reaches for is exactly the local republish the unpublish
+# exists to prevent (Codex PR #27 r1). So this guards the CLASS, not the two
+# instances: every loopback spelling (localhost, 127.0.0.1, 0.0.0.0, [::1]),
+# the literal ports (8077/ai-assistant included — unpublished since PR #7),
+# bracket globs, the N placeholder, and any `$var` port
+# interpolation — over the operator docs AND the tracked executable surfaces
+# (eval/, tests/) the original sweep claimed. The `$var` arm deliberately
+# over-blocks parameterized PUBLISHED ports too; hardcode those in docs.
+# Excluded: adr/ (quotes the removed commands as history) and this file.
+
+DOC_SURFACES = ["Makefile", "README.md", "ARCHITECTURE.md", "CLAUDE.md"]
+_HOST_PORT_REF = re.compile(
+    r"(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(?:807[1-7N\[]|\$)"
+)
+
+
+def test_no_operator_doc_or_tool_hits_a_domain_service_host_port():
+    root = COMPOSE.parent
+    files = [root / p for p in DOC_SURFACES]
+    files += sorted((root / "docs").rglob("*.md"))
+    files += sorted((root / "eval").rglob("*.py")) + sorted((root / "tests").rglob("*.py"))
+    own = Path(__file__).resolve()
+    for f in files:
+        if f.resolve() == own:
+            continue
+        for i, line in enumerate(f.read_text().splitlines(), 1):
+            assert not _HOST_PORT_REF.search(line), (
+                f"{f.relative_to(root)}:{i} points at a domain-service host "
+                f"port, or interpolates a host port from a variable "
+                f"({line.strip()!r}) — domain-service ports are unpublished "
+                "(ADR 0016); probe via `make ps` or the exec valve in "
+                "docs/runbook.md, and hardcode published ports in docs"
+            )
+
+
 # --- the SvelteKit portal's place in the topology (ADR 0012, 0015) ------------
 # Two frontends run side by side until FE-R1-FE-R3 pass on the new one
 # (FE-R15), which is a coexistence window with two failure modes worth holding

@@ -66,16 +66,23 @@ no host mapping exists to answer.
 
 ### 4. The dev valve is a local override, not a republished port
 
-Host-side debugging that genuinely needs a domain service directly uses
-`docker compose exec gateway curl http://<service>:<port>/...`, or a **gitignored**
-`docker-compose.override.yml` republishing a port on that machine only. The
+Host-side debugging that genuinely needs a domain service directly goes through
+the compose network — the service images ship no curl, so the working recipe is
+`docker compose exec -T gateway python -c "import urllib.request;
+print(urllib.request.urlopen('http://<service>:<port>/...').read().decode())"`
+(the r1 fix corrected an earlier `exec gateway curl` recipe here that the image
+cannot run; `docs/runbook.md` Health checks carries the copy-pasteable loop) —
+or a **gitignored** `docker-compose.override.yml` republishing a port on that
+machine only. The
 topology tests assert on `docker-compose.yml` alone, so a local override does not
 trip them — and does not ship. Per-service Swagger (`/docs`) moves behind the same
 valve; the gateway's own `/docs` on 8070 stays.
 
 ### 5. HL7 ingress, when a real feed exists
 
-Nothing on this machine posts to 8075 today — no script, doc, or test. When a real
+Nothing on this machine posts to 8075 today — no script, doc, or test — and
+`ARCHITECTURE.md` §6 records that operational state (r1: it previously described
+the feed with no mention that none is connected). When a real
 hospital ADT/ORU feed is connected, it gets **dedicated authenticated ingress**
 (mutual TLS or an authenticated MLLP/HTTP listener, decided then in its own ADR),
 not a naked container port. Re-publishing 8075 as-is would restore an
@@ -140,9 +147,16 @@ workflows see no change; the portals and gateway are untouched.
 - `tests/test_compose_topology.py` gains the domain-service section (four tests,
   §3). Failures there are regressions of this decision.
 - Host-side `curl localhost:807[1-6]` and per-service Swagger stop working; the §4
-  valve replaces them. Measured before landing: zero references to
-  `localhost:807[1-6]` in `Makefile`, `docs/`, `scripts/`, `eval/`, tests, or
-  handover material — nothing breaks.
+  valve replaces them. The pre-landing sweep grepped the literal
+  `localhost:807[1-6]` and wrongly reported zero references: `docs/runbook.md`
+  held two **parameterized** forms (`localhost:807N`, and a
+  `for p in 8071 …; curl localhost:$p/healthz` loop) that the literal pattern
+  cannot match. Caught by review round 1; the runbook now probes via `make ps`
+  and the §4 valve, and
+  `tests/test_compose_topology.py::test_no_operator_doc_or_tool_hits_a_domain_service_host_port`
+  guards the class — every loopback spelling, literal/glob/placeholder ports,
+  and `$var` port interpolation — across the operator docs and the tracked
+  executable surfaces (`eval/`, `tests/`) the original sweep claimed.
 - CI unchanged: integration tests target `GATEWAY_URL=localhost:8070` only.
 - `docs/debt-log.md` gains **D15** (the class, what closed it, the residuals);
   CLAUDE.md §6's IDOR bullet gains the topology note.
