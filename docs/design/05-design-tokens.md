@@ -4,6 +4,12 @@
 > Closes at gate **G0** — the last P0 artifact. Evidence grades: **[E]** observed, **[I]** inferred,
 > **[?]** unknown.
 >
+> **Amended 2026-08-01**, after G0: the serif stack in §3 moves to set **E** (Charter/Cambria) from
+> the P2 font board, the type scale's three `650` weights are corrected to the `700` they always
+> rendered as, and a new **§6.5** records how much margin the palette has on older, uncalibrated
+> displays. No §1 palette value, no §2 chip derivation and no §4/§5 token changes — the visual
+> register is untouched, so **this does not reopen G0**.
+>
 > **Direction F, "warm and institutional", is the chosen visual register.** The seven candidates and
 > the live specimen live in `05-token-directions.html`; that page stays as the record of what was
 > rejected and why. This file is the proposal that survives it.
@@ -129,16 +135,53 @@ cost line gives: a warm ground lowers effective contrast in dense tables.
 | Step | Size / line-height | Weight | Family |
 |---|---|---|---|
 | Page title | 29px / 1.15 | 700 | `--display` (serif) |
-| Section | 23px / 1.2 | 650 | `--display` |
-| Card heading | 19px / 1.3 | 650 | `--display` |
-| Patient name (identity strip) | 18px | 650 | `--display` |
+| Section | 23px / 1.2 | 700 | `--display` |
+| Card heading | 19px / 1.3 | 700 | `--display` |
+| Patient name (identity strip) | 18px | 700 | `--display` |
 | Body | 15px / 1.5 | 400 | `--font` (sans) |
 | Secondary | 13.5px / 1.5 | 400 | `--font`, `--muted` |
 | Label / column head | 11px / 1.45, uppercase, `.08em` | 700 | `--font`, `--muted` |
 
-- `--display` — `ui-serif, "Iowan Old Style", Palatino, Georgia, serif`
+- `--display` — `Charter, "Bitstream Charter", "Charis SIL", Cambria, Georgia, serif`
 - `--font` — `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`
 - `--numeric` — `= --font`, with `font-variant-numeric: tabular-nums`
+
+**The three 700s were `650`, and `650` never existed.** `fc-list` on the shipped families — both the
+old stack and the new one — reports `Roman | Bold | Black` and nothing between; Cambria is
+Regular/Bold. CSS weight matching for a target above 500 searches weights `>=` the target in
+ascending order, so `650` resolved to Bold 700 on every platform. The table now states what renders.
+Do not "restore" 650: it is not a lighter bold, it is the same bold with a number that implies a
+face nobody ships. **[E]** — measured 2026-08-01.
+
+**Why this serif stack, replacing `ui-serif, "Iowan Old Style", Palatino, Georgia, serif`.** Chosen
+by the user 2026-08-01 from set **E** of the P2 font board (`06-p2-mockups.html`, five system stacks
+switchable over the real mockups). It swaps the *serif*, not the register — Direction F and
+everything in §1, §2 and §4–§6 are untouched, so this does not reopen G0.
+
+Two reasons, and the second is the one that decided it:
+
+- **Both faces were drawn low-DPI-first.** Charter (Carter, 1987) was cut for 300dpi laser output —
+  low stroke contrast, sturdy stems, little fine detail for a coarse rasterizer to lose. Cambria was
+  commissioned for ClearType and is among the most aggressively screen-hinted serifs shipped.
+  Palatino and Iowan Old Style are the inverse: high thick/thin contrast and delicate serifs, whose
+  thins fall below one pixel at 1x/96dpi and drop out or smear. Note this is a **DPI** argument, not
+  a size one — the board's "small sizes" framing is largely spent by the rationing rule below, which
+  keeps the serif at 18px and up. See §6.5.
+- **The old stack resolved unpredictably.** It led with the `ui-serif` *generic*, whose mapping is
+  per-browser and not inspectable, and named `Palatino`, which does **not** match Windows'
+  `Palatino Linotype` — so a Windows workstation fell through to Georgia by accident rather than by
+  choice. The new stack names concrete faces: Charter on macOS (`/System/Library/Fonts/Supplemental/
+  Charter.ttc`, verified present), Cambria on Windows, Georgia as the deliberate floor. **[E]**
+
+**Recorded cost, not hidden:** this still renders a different face per platform — Charter on a Mac,
+Cambria on a Windows box. That is the same objection the board raises against set D. The difference
+is that here both outcomes are named, screen-drawn serifs rather than one named face and one
+accident. **[?]** — no observation of the clinic's actual workstation mix (§7).
+
+**Watch on implementation:** Charter and Cambria carry a larger x-height than Palatino/Iowan and so
+read optically larger at the same px. The four block-level uses will not care; the **18px patient
+name sits in the identity-strip flex row**, so confirm that row does not reflow before the stack is
+considered landed.
 
 **Rules:**
 
@@ -202,7 +245,9 @@ Geometry: `--radius` 10px · `--radius-sm` 6px · `--pill` 999px · `--bw` 1px �
 ## 6. Four corrections direction F needs before it is implemented
 
 The specimen was a visual proposal and was measured as one. Four pairings do not survive
-implementation as-is. Each is fixed by a value, and the value is measured.
+implementation as-is. Each is fixed by a value, and the value is measured. **§6.5 is not a fifth
+correction** — it changes no value; it records how much room the corrected values have left once the
+display stops being ideal.
 
 ### 6.1 Primary button label — `5.97:1`, needs the 7:1 text floor
 
@@ -235,10 +280,56 @@ attribute (so assistive tech announces it) and must not be the only route to an 
 control is disabled for a *reason* the operator can act on, the reason is stated in words next to it
 rather than left to the grey.
 
+### 6.5 Where the margin actually is — low-DPI and older panels
+
+Not a correction. Every ratio in §1–§6.4 was re-derived independently on 2026-08-01 and **all of them
+reproduce exactly** — `--separator` 3.04:1 against `--bg`, `--border-strong` 3.10:1, `--text` 17.12:1
+on surface. The palette is sound. What the same arithmetic also shows is that the *non-text* values
+are not evenly spaced above their floor, and an old clinic monitor is where that asymmetry lands.
+**[E]** for the ratios, **[?]** for the hardware.
+
+| Pairing | Measured | Reading on a poor panel |
+|---|---|---|
+| `--zebra` vs `--surface` | **1.03:1** | not visible — on any display |
+| `--ptx-bg` vs `--surface` | 1.03:1 | identity strip has no ground of its own |
+| Released / Declined chip tint | 1.26:1 / 1.28:1 | first thing to go |
+| `--alert-bg` vs `--surface` | 1.13:1 | allergy banner ground barely present |
+| `--dis-bg` vs `--surface` | 1.13:1 | disabled ground barely present |
+| `--shadow` (`.07` alpha) | — | gone |
+| `--separator` vs `--bg` | **3.04:1** | sits *on* the 3:1 floor |
+| `--border-strong` vs `--bg` | **3.10:1** | sits on the floor |
+
+Three things follow, in order of how much they matter:
+
+1. **Zebra striping does no work.** At 1.03:1 it is decorative on a calibrated display and invisible
+   on a bad one. Row tracking is carried **entirely** by `--separator`. §6.2 diagnosed the separator;
+   this adds that there is no second mechanism behind it. Nothing should be designed on the
+   assumption that alternating rows are distinguishable — and no future table should drop the
+   separator on the grounds that it has a zebra.
+2. **The two boundary tokens are engineered exactly to the floor**, with 0.04 and 0.10 of headroom.
+   Body text has enormous margin (17:1 against a 7:1 target); the boundaries have almost none. WCAG
+   ratios are computed in sRGB, and an aged TN panel — drifted backlight, ~250:1 native contrast,
+   luminance shifting with viewing angle — does not deliver sRGB. If any workstation turns out to be
+   that, `--separator` and `--border-strong` are the first two values to raise, and they are the
+   only two.
+3. **The glyph rule is what makes this degrade gracefully.** §2 rule 5 puts ●/✓/✕/○ on every chip.
+   When a 1.26:1 tint dies, the state survives in the glyph and the ink. That rule was written for
+   colour blindness and greyscale printing; it turns out to be the reason the status column tolerates
+   bad hardware, which the zebra does not. Worth stating so it is never traded away as redundant.
+
+**Typeface interaction (§3).** The serif stack is now Charter/Cambria precisely because this section
+exists: both were drawn for coarse rasterizers, where Palatino and Iowan Old Style lose their thins
+at 1x. That is a §3 decision, recorded here as the reason.
+
 ---
 
 ## 7. Deliberately unresolved
 
+- **The clinic's workstations — one question, and it settles several of these.** What hardware,
+  what resolution, and what browser. **[?]**, never asked. It decides whether §6.5's two
+  floor-hugging boundary tokens need raising, whether Dense's 36px `--ctrl-h` is safe, which face
+  §3's stack actually resolves to across the fleet, and whether `color-mix()` is available to derive
+  the chips at runtime (TODO-29). Cheaper to ask than any of the four are to guess.
 - **Density (§4).** Needs the Dense/Comfortable answer. Currently defaulted to Dense on a scanning
   argument, against a mis-click argument that is at least as strong on the ROI queue.
 - **Identity-strip field order.** P0.2 pins name + DOB + MRN; whether that is the order a clinician

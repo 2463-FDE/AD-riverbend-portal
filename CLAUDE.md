@@ -52,12 +52,14 @@ config/roles.yaml     # RBAC (single "staff" role — see §6)
 db/schema.sql         # flattened current schema (loads on a fresh Postgres volume)
 db/migrations/00N_*.sql   # ordered, forward-only, hand-synced to schema.sql
 db/seed/generate_seed.py  # deterministic seed generator → seed/seed.sql
-adr/                  # 0001–0015; `_template.md` owns the required sections — copy it
-docs/                 # debt-log.md (§9) · runbook.md · phi-logging-policy.md · todo.md
-                      #   onboarding-seam-map.md · design/ · research/ · status/
+adr/                  # `_template.md` owns the required sections — copy it
+docs/                 # debt-log.md (§9) · todo.md
+  onboarding-seam-map.md  # §10.3's seam/wall rule made concrete: the 6 safe extension points
+                      #   with worked examples, and the 8 walls with why. Read before landing a
+                      #   change somewhere new. No other file links it.
   review-loop-metrics.md  # A/B/C label per review finding + measured baseline. Append only.
   specs/wN.md         # weekly engagement specs; `_template.md` owns EARS rules + ID scheme
-  specs/frontend-rebuild.md  # FE-R1–R26, gates G0–G5
+  specs/frontend-rebuild.md  # FE-R1–R34, gates G0–G6
   handover/           # jira-tickets.md (client asks), breach policy, auditor Q, payer status,
                       #   portal.har
 tests/                # pytest; integration tests marked and need live infra
@@ -76,18 +78,12 @@ eval/ · scripts/ · logs/  # eval harness; local tooling (gitignored); local lo
 
 | Task | Command |
 |------|---------|
-| Install (dev) | `pip install -r requirements-dev.txt` |
-| Run / stop stack | `make up` / `make down` |
-| Logs / service status | `make logs` / `make ps` |
-| Build images | `make build` |
-| Seed db / regenerate seed | `make seed` / `make seed-gen` |
-| psql shell | `make psql` |
+| Everyday targets (install, up/down, logs/ps, build, seed, psql, config) | each is `##`-documented in the `Makefile` |
 | **Run unit tests** | **`make test-docker`** — python:3.12 container, mirrors CI |
 | Run one test | `make test-docker ARGS="tests/test_hl7_parser.py -q"` |
 | Run integration | `pytest -m integration` (needs `make up`) |
 | **Run the JS gate** | **`make test-frontend`** — `portal/` only: `svelte-check`, eslint, Vitest |
 | Frontend dev | `make frontend-dev` (legacy, 3070) / `make portal-dev` (SvelteKit, 3071) |
-| Validate compose | `make config` |
 | Regenerate status dashboard | `make status` (local only; needs gitignored `scripts/status.py`) |
 
 - ⚠️ **`make test` / bare `pytest` do not work on this machine.** Local Python is 3.8, the suite
@@ -97,13 +93,11 @@ eval/ · scripts/ · logs/  # eval harness; local tooling (gitignored); local lo
   `db/seed/seed.sql`.
 - **Demo logins** (all password `portal123`): `frontdesk`, `drnguyen`, `roiclerk`, `mokonkwo`, …
   (see `db/seed/generate_seed.py`).
-- **Ports:** legacy portal 3070, SvelteKit portal 3071, gateway 8070 (`/docs`), services 8071–8077,
-  Postgres 5432, Redis 6379 (⚠️ `expose`-only, not published — ADR 0011 round 1).
+- **Ports** are in `docker-compose.yml` and the §2 map; the gateway serves `/docs`. ⚠️ Redis 6379 is
+  `expose`-only, not published (ADR 0011 round 1).
 - **Lint/typecheck exist for `portal/` only** (`svelte-check --fail-on-warnings` + eslint, via
   `make test-frontend`); there is still no Python lint/format target and none for `frontend/`.
-  CI (`.github/workflows/ci.yml`) runs the legacy frontend `npm run build`, the `portal` job above
-  on Node 22, a per-service `python -c "import app"` import smoke, `pytest -m "not integration"`, a
-  `gitleaks` secret scan, and `docker-build`.
+  What CI gates is in `.github/workflows/ci.yml`.
 
 ## 4. How things actually work
 
@@ -117,8 +111,6 @@ eval/ · scripts/ · logs/  # eval harness; local tooling (gitignored); local lo
 
 - **Where:** `tests/`, pytest (`pytest.ini`; `integration` marker). No shared package, so unit
   tests load the target by file path (`tests/conftest.py::load_module`).
-- **Covered:** password hash roundtrip, HL7 PID/PV1 happy path, eligibility response shaping,
-  intake schema validation, one integration login→auth→chart-read flow.
 - **Deliberate gaps — do NOT "fix" the tests to hide them:** scheduling race untested; IDOR
   prevention is an `xfail` (cross-patient reads currently succeed); HL7 AL1/RXA extraction
   `xfail`; no ROI authorization tests; no input-normalization / dup-patient tests. (RIV-201.)
@@ -256,10 +248,8 @@ fan out** — this model delegates readily, so the cap is the lever that matters
 **Authorisation.** Sessions may run under a standing "don't spawn subagents unless asked" rule. A
 skill or command that instructs a subagent step **is** that authorisation for that step
 (`verify-stack`'s adversarial diff review is the standing example). Otherwise ask before fanning
-out. **Brief every review subagent with the facts-only pack** (`verify-stack` §6): verbatim diff,
-touched-file inventory, `file:line` call-site map, what each changed branch returns and what its
-callers do with it, tests already covering the surface. Forbid orientation greps; cap the finding
-count, never the finding length. Withhold every conclusion — *facts, not verdicts*.
+out. **Brief every review subagent with the facts-only pack — `verify-stack` §6 owns what goes in
+it, and wins on any disagreement (§10.1).**
 
 ### 10.3 Brownfield discipline
 
