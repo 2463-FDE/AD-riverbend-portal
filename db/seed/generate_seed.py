@@ -46,28 +46,30 @@ emit("-- 88231; and the PHI-laden audit_logs rows.")
 emit()
 
 # ---------------------------------------------------------------------------
-# users — everyone gets the single 'staff' role (role bloat / no least-privilege)
+# users — roles per job function (ADR 0017). Accounts with no matching role in
+# config/roles.yaml keep the deprecated full-capability 'staff' role; only a
+# fresh volume picks these values up (existing databases keep their rows).
 # ---------------------------------------------------------------------------
 USERS = [
-    ("mokonkwo",  "Maya Okonkwo (COO)"),
-    ("frontdesk", "Front Desk (Riverbend Main)"),
-    ("rdelgado",  "Rosa Delgado (Registration)"),
-    ("jpark",     "Jin Park (Registration)"),
-    ("drpatel",   "Dr. Anil Patel"),
-    ("drnguyen",  "Dr. Anita Nguyen"),
-    ("drlee",     "Dr. Sandra Lee"),
-    ("billing1",  "Tom Reyes (Billing)"),
-    ("roiclerk",  "Dana White (ROI Clerk)"),
-    ("labtech",   "Lab Intake"),
-    ("nurse_kc",  "Karen Cole, RN"),
-    ("itadmin",   "Helix Support"),
+    ("mokonkwo",  "Maya Okonkwo (COO)",           "staff"),
+    ("frontdesk", "Front Desk (Riverbend Main)",  "front_desk"),
+    ("rdelgado",  "Rosa Delgado (Registration)",  "front_desk"),
+    ("jpark",     "Jin Park (Registration)",      "front_desk"),
+    ("drpatel",   "Dr. Anil Patel",               "clinician"),
+    ("drnguyen",  "Dr. Anita Nguyen",             "clinician"),
+    ("drlee",     "Dr. Sandra Lee",               "clinician"),
+    ("billing1",  "Tom Reyes (Billing)",          "staff"),
+    ("roiclerk",  "Dana White (ROI Clerk)",       "roi_clerk"),
+    ("labtech",   "Lab Intake",                   "staff"),
+    ("nurse_kc",  "Karen Cole, RN",               "clinician"),
+    ("itadmin",   "Helix Support",                "admin"),
 ]
 emit("INSERT INTO users (id, username, password_hash, full_name, role, created_at) VALUES")
 rows = []
-for i, (uname, full) in enumerate(USERS, start=1):
+for i, (uname, full, role) in enumerate(USERS, start=1):
     salt = f"riverbend{i:02d}saltval0"  # fixed -> deterministic output
     h = hash_password(DEMO_PASSWORD, salt)
-    rows.append(f" ({i}, {sql_str(uname)}, {sql_str(h)}, {sql_str(full)}, 'staff', now())")
+    rows.append(f" ({i}, {sql_str(uname)}, {sql_str(h)}, {sql_str(full)}, {sql_str(role)}, now())")
 emit(",\n".join(rows) + ";")
 emit(f"SELECT setval('users_id_seq', {len(USERS)}, true);")
 emit()

@@ -48,7 +48,7 @@ services/
   interop-service/    # (8075) HL7 v2 ingest
   roi-service/        # (8076) release-of-information + disclosures
   ai-assistant/       # (8077) LLM features. ⚠️ the only vendor-egress path — see §6
-config/roles.yaml     # RBAC (single "staff" role — see §6)
+config/roles.yaml     # RBAC roles+capabilities (ADR 0017; enforced twin: gateway authz.py)
 db/schema.sql         # flattened current schema (loads on a fresh Postgres volume)
 db/migrations/00N_*.sql   # ordered, forward-only, hand-synced to schema.sql
 db/seed/generate_seed.py  # deterministic seed generator → seed/seed.sql
@@ -140,7 +140,10 @@ eval/ · scripts/ · logs/  # eval harness; local tooling (gitignored); local lo
 
 - ⚠️ **Auth / sessions** (`services/gateway/`, `security.py`, `auth.yaml`) — `users` holds
   PBKDF2-SHA256 hashes; login stores `session:<token>` in Redis with **no TTL, so sessions never
-  expire**; a single `staff` role for everyone; no per-action authz; MFA off. **Never change auth
+  expire**; MFA off. Since ADR 0017 every session-protected gateway route requires a role
+  capability (`require_capability`; roles `front_desk`/`clinician`/`roi_clerk`/`admin`), but the
+  deprecated `staff` role — every pre-RBAC DB row — keeps every capability, and the policy map in
+  `services/gateway/authz.py` is test-pinned to `config/roles.yaml`. **Never change auth
   behavior without explicit human approval.** Where the boundary actually is, since this was
   misread once: it is `require_session` and what the **gateway** accepts. A cookie between a
   browser and one of our own BFFs, where the BFF still sends `Authorization: Bearer` onward, does
@@ -200,7 +203,7 @@ indexes both — several IDs appear nowhere else in the repo, so do not thin it 
 | **IDOR** cross-patient chart reads succeed; sessions not patient-bound (D11, W4) | open |
 | **ROI authz** no 45 CFR 164.508 enforcement, no accounting of disclosures (D12, W9/W10) | open |
 | **Compliance** plaintext PHI (D3), PHI in logs (D1), mutable non-tamper-evident audit log (D2) | open (W1 logs / W10 append-only trail) |
-| **Auth** no session expiry (D10), single role / no segregation of duties (D8), no MFA | open (W4 / W9) |
+| **Auth** no session expiry (D10), single role / no segregation of duties (D8), no MFA | ~ D8 partly closed by ADR 0017 (four roles + gateway capability enforcement; `staff` compat rows keep every capability); D10 and MFA open (W4 / W9) |
 | **CI** `gitleaks` guards recurrence only (`--no-git`); no dependency or image scan; old `.env` secrets still in git history (D9, W1) | partly closed |
 | **N+1 / full-table scans** in records read/search paths (D8, W4) | open |
 | **RIV-201** thin security/auth test coverage overall | open |

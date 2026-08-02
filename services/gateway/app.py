@@ -8,7 +8,10 @@ Inherited shortcomings (left as-is from the handoff):
   * Records fan-out forwards the caller's session but never binds it to the
     {patient_id} being requested — any logged-in user can read any chart (IDOR).
   * Sessions never expire (see security.create_session / auth.yaml).
-  * One role for everyone; no per-action authorization beyond "is logged in".
+  * No MFA, and authorization stops at role capabilities: since ADR 0017 every
+    session-protected route requires a role capability (require_capability),
+    but the deprecated 'staff' role — every pre-RBAC account — keeps all of
+    them, and nothing binds a session to a patient (the IDOR above).
 """
 import re
 import time
@@ -31,6 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
+from authz import CAPABILITIES, capabilities_for
 from config import settings
 from db import get_db
 from logging_config import configure
@@ -122,6 +126,40 @@ def require_session(authorization: Optional[str] = Header(default=None)) -> dict
     return sess
 
 
+def require_capability(capability: str):
+    """Per-route capability check on top of require_session (ADR 0017).
+
+    Anonymous callers still get 401 first (the inner require_session). A
+    logged-in session whose role does not hold `capability` gets 403 before
+    any downstream fan-out. An unknown or missing role resolves to zero
+    capabilities (authz.capabilities_for), so a bad row fails closed as a 403,
+    never a 500 or a pass. The 403 detail names the capability — an internal
+    identifier, no PHI, and it tells an operator which grant their role lacks.
+
+    The vocabulary check below runs at import: a typo'd capability name on a
+    route would otherwise deny everyone (it is in no role's grant), which is
+    fail-closed but silent. A boot failure is the observable version.
+    """
+    if capability not in CAPABILITIES:
+        raise ValueError(f"unknown capability wired to a route: {capability}")
+
+    def dependency(session: dict = Depends(require_session)) -> dict:
+        role = session.get("role") or ""
+        if capability not in capabilities_for(role):
+            # username is an internal identifier, not PHI — safe to log.
+            log.warning(
+                "authz denied user=%s role=%s capability=%s",
+                session.get("username"),
+                role,
+                capability,
+            )
+            raise HTTPException(status_code=403, detail=f"requires capability {capability}")
+        return session
+
+    dependency.required_capability = capability
+    return dependency
+
+
 @app.exception_handler(RedisUnauthenticated)
 async def redis_unauthenticated(request: Request, exc: RedisUnauthenticated):
     """A refused session store is a 503, not a 500 (Codex PR #14 round 1).
@@ -200,7 +238,7 @@ def logout(authorization: Optional[str] = Header(default=None)):
 
 
 @app.get("/me")
-def me(session: dict = Depends(require_session)):
+def me(session: dict = Depends(require_capability("profile.read"))):
     return {"username": session.get("username"), "role": session.get("role")}
 
 
@@ -208,12 +246,14 @@ def me(session: dict = Depends(require_session)):
 # intake / eligibility
 # --------------------------------------------------------------------------- #
 @app.post("/intake")
-def proxy_intake(payload: dict, session: dict = Depends(require_session)):
+def proxy_intake(payload: dict, session: dict = Depends(require_capability("patients.write"))):
     return _post("intake", "/intake", payload)
 
 
 @app.get("/eligibility")
-def proxy_eligibility(insurance_id: str, session: dict = Depends(require_session)):
+def proxy_eligibility(
+    insurance_id: str, session: dict = Depends(require_capability("eligibility.check"))
+):
     return _get("eligibility", "/eligibility", params={"insurance_id": insurance_id})
 
 
@@ -222,7 +262,7 @@ def proxy_eligibility(insurance_id: str, session: dict = Depends(require_session
 # --------------------------------------------------------------------------- #
 @app.get("/patients")
 def proxy_patients(
-    session: dict = Depends(require_session),
+    session: dict = Depends(require_capability("patients.read")),
     q: Optional[str] = None,
     limit: int = Query(25, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -231,19 +271,19 @@ def proxy_patients(
 
 
 @app.get("/patients/{patient_id}")
-def proxy_patient(patient_id: int, session: dict = Depends(require_session)):
+def proxy_patient(patient_id: int, session: dict = Depends(require_capability("patients.read"))):
     return _get("records", f"/patients/{patient_id}")
 
 
 @app.get("/patients/{patient_id}/records")
-def proxy_records(patient_id: int, session: dict = Depends(require_session)):
+def proxy_records(patient_id: int, session: dict = Depends(require_capability("records.read"))):
     # IDOR: a valid session is required, but it is never checked against
     # {patient_id}. {patient_id} is the sequential primary key.
     return _get("records", f"/patients/{patient_id}/records")
 
 
 @app.get("/records/search")
-def proxy_search(q: str, session: dict = Depends(require_session)):
+def proxy_search(q: str, session: dict = Depends(require_capability("records.search"))):
     return _get("records", "/records/search", params={"q": q})
 
 
@@ -252,7 +292,7 @@ def proxy_search(q: str, session: dict = Depends(require_session)):
 # --------------------------------------------------------------------------- #
 @app.get("/slots")
 def proxy_slots(
-    session: dict = Depends(require_session),
+    session: dict = Depends(require_capability("schedule.read")),
     provider_id: Optional[int] = None,
     limit: int = Query(50, ge=1, le=200),
 ):
@@ -260,17 +300,21 @@ def proxy_slots(
 
 
 @app.get("/appointments")
-def proxy_list_appointments(patient_id: int, session: dict = Depends(require_session)):
+def proxy_list_appointments(
+    patient_id: int, session: dict = Depends(require_capability("schedule.read"))
+):
     return _get("scheduling", "/appointments", params={"patient_id": patient_id})
 
 
 @app.post("/appointments")
-def proxy_book(payload: dict, session: dict = Depends(require_session)):
+def proxy_book(payload: dict, session: dict = Depends(require_capability("appointments.write"))):
     return _post("scheduling", "/appointments", payload)
 
 
 @app.post("/appointments/{appointment_id}/cancel")
-def proxy_cancel(appointment_id: int, session: dict = Depends(require_session)):
+def proxy_cancel(
+    appointment_id: int, session: dict = Depends(require_capability("appointments.write"))
+):
     return _post("scheduling", f"/appointments/{appointment_id}/cancel", {})
 
 
@@ -278,24 +322,29 @@ def proxy_cancel(appointment_id: int, session: dict = Depends(require_session)):
 # release of information
 # --------------------------------------------------------------------------- #
 @app.get("/roi/requests")
-def proxy_roi_list(session: dict = Depends(require_session), patient_id: Optional[int] = None):
+def proxy_roi_list(
+    session: dict = Depends(require_capability("disclosures.read")),
+    patient_id: Optional[int] = None,
+):
     return _get("roi", "/roi/requests", params={"patient_id": patient_id})
 
 
 @app.post("/roi/requests")
-def proxy_roi_create(payload: dict, session: dict = Depends(require_session)):
+def proxy_roi_create(payload: dict, session: dict = Depends(require_capability("disclosures.write"))):
     return _post("roi", "/roi/requests", payload)
 
 
 @app.post("/roi/requests/{request_id}/fulfill")
-def proxy_roi_fulfill(request_id: int, session: dict = Depends(require_session)):
+def proxy_roi_fulfill(
+    request_id: int, session: dict = Depends(require_capability("disclosures.write"))
+):
     return _post("roi", f"/roi/requests/{request_id}/fulfill", {})
 
 
 # --------------------------------------------------------------------------- #
 # ai assistant
 # --------------------------------------------------------------------------- #
-def _ai_rate_limited(session: dict = Depends(require_session)) -> dict:
+def _ai_rate_limited(session: dict = Depends(require_capability("ai.use"))) -> dict:
     """Per-user REQUEST quota for the AI endpoint (Codex PR #7 round 6; ADR 0007).
 
     require_session only proves a caller is logged in, and sessions never
@@ -596,7 +645,7 @@ def proxy_intake_instructions(payload: dict, session: dict = Depends(_ai_rate_li
 # --------------------------------------------------------------------------- #
 # ai assistant — visit chat (ADR 0011)
 # --------------------------------------------------------------------------- #
-def _ai_chat_rate_limited(session: dict = Depends(require_session)) -> dict:
+def _ai_chat_rate_limited(session: dict = Depends(require_capability("ai.use"))) -> dict:
     """Per-user REQUEST quota for the chat endpoint, in its own namespace.
 
     Same control and same fail-closed rule as _ai_rate_limited, with separate
@@ -1138,7 +1187,7 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
 # interop
 # --------------------------------------------------------------------------- #
 @app.post("/hl7/ingest")
-def proxy_hl7(payload: dict, session: dict = Depends(require_session)):
+def proxy_hl7(payload: dict, session: dict = Depends(require_capability("hl7.ingest"))):
     return _post("interop", "/hl7/ingest", payload)
 
 
