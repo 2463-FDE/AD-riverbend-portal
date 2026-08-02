@@ -31,7 +31,7 @@ job is to surface that verdict conversationally without ever converting an
 Four constraints shape every decision below.
 
 1. **The vendor boundary is not cleared for PHI.** Debt **D13 / #5** (CLAUDE.md
-   §9, `docs/specs/w8.md`): Bedrock is used on standard SaaS terms with **no BAA**.
+   §9): Bedrock is used on standard SaaS terms with **no BAA**.
    ADR 0004 kept `/intake-instructions` safe by construction — its request is
    closed vocabulary (enum/bool only), so nothing PHI-shaped can reach the prompt.
    A free-text chat box is the obvious way to break that invariant, and W8 — the
