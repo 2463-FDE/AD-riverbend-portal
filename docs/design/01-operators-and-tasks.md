@@ -118,9 +118,14 @@ Thinner, and deliberately so — no billing or lab surface exists in the portal 
   for exactly this (frontend-rebuild §8 #7). One clinic-local day across all patients, one joined
   query, paginated, patient name and MRN included so the queue can identify who is being called.
   `GET /appointments` still requires `patient_id` and is unchanged — the new endpoint sits beside it.
-- **A clinician's own day.** Partly served: `GET /schedule?provider_id=` filters through the slot
-  join, since appointments store only a provider *name*. There is still no by-provider query that
-  does not route through slots, so an appointment booked without a slot is invisible to that filter.
+- **A clinician's own day.** Still not served. `GET /schedule` shipped without a `provider_id`
+  filter, and the omission is deliberate (codex PR #26 r1): appointments store only a provider
+  *name*, so the only route to a provider id is `appointments.slot_id` → `slots` — a column with
+  no foreign key, written by a `book()` that never checks the slot exists. Filtering through that
+  join is an inner join over an unenforced reference, so an appointment with a missing or stale
+  slot appears in the all-day queue and vanishes from the per-provider one, silently. A real
+  by-provider view needs provider identity stored on the appointment; that is a migration and
+  belongs with the RIV-175 slot/appointment work (W5).
 - **Date-filtered slots.** `GET /slots` takes `provider_id` and `limit` only, no date range. Day
   views and past-slot suppression (`FE-R10`) must filter client-side over up to 200 rows.
 - **Editing a submitted intake.** No update endpoint exists.

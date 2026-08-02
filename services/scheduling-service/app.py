@@ -9,7 +9,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from book import book
@@ -112,7 +112,6 @@ def _clinic_day_bounds(day: date) -> tuple[datetime, datetime]:
 @app.get("/schedule", response_model=DayScheduleResponse)
 def list_day_schedule(
     day: date = Query(..., alias="date", description="Clinic-local calendar day, YYYY-MM-DD"),
-    provider_id: Optional[int] = Query(None, gt=0),
     limit: int = Query(settings.default_page_limit, ge=1, le=settings.max_page_limit),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -130,45 +129,94 @@ def list_day_schedule(
     Authorization is unchanged — the gateway still checks only that a session
     exists (D11, W4 owns binding a session to a patient). This endpoint does not
     widen that gap, and it must not be read as a decision about it.
+
+    There is deliberately no ``provider_id`` filter. The only route from an
+    appointment to a provider id is ``appointments.slot_id`` → ``slots``, and
+    that column has no foreign key (db/schema.sql) while ``book()`` inserts any
+    positive slot_id without checking the slot exists. A join through it is an
+    inner join over an unenforced reference, so an appointment with a missing or
+    stale slot row would appear in this day queue and silently vanish from a
+    per-provider one — a clinician missing a visit with no error shown. A real
+    by-provider view needs provider identity stored on the appointment, which is
+    a migration and belongs with the RIV-175 slot/appointment work (W5).
+
+    The visit time is ``COALESCE(appointments.scheduled_for, slots.start_at)``,
+    not ``scheduled_for`` alone. That column is nullable with no default and the
+    write path never populates it: the booking UI posts only
+    ``{patient_id, slot_id, provider, reason}``
+    (frontend/app/appointments/page.tsx:62), ``BookingRequest.scheduled_for``
+    defaults to ``None``, and ``insert_appointment`` writes the NULL. Since
+    ``NULL >= x`` is NULL in SQL, filtering on the column alone returns nothing
+    but seeded rows — correct-looking in dev, empty in production. ``slots`` is
+    joined **isouter** purely to recover the time, which is a different shape
+    from the ``provider_id`` filter above: an outer join drops no row, an inner
+    join used as a predicate does. An appointment with neither a
+    ``scheduled_for`` nor a resolvable slot is still absent, and that is honest —
+    nothing in the database says which day it belongs to.
     """
-    start_utc, end_utc = _clinic_day_bounds(day)
+    try:
+        start_utc, end_utc = _clinic_day_bounds(day)
+    except OverflowError:
+        # `date` accepts up to 9999-12-31, and the end edge is day + 1. Left
+        # unguarded this raises out of the handler as a 500 with a plaintext
+        # body, which the gateway's checked GET reports as "bad response" — an
+        # unparseable request diagnosed as a transport fault.
+        raise HTTPException(status_code=422, detail="date is outside the supported range")
+
+    # One expression, reused for the filter and the sort, so a row can never be
+    # selected by one time and ordered by another.
+    visit_at = func.coalesce(Appointment.scheduled_for, Slot.start_at)
 
     stmt = (
-        select(Appointment, Patient.name, Patient.mrn)
+        select(Appointment, Patient.name, Patient.mrn, visit_at)
         .join(Patient, Patient.id == Appointment.patient_id, isouter=True)
-        .where(Appointment.scheduled_for >= start_utc)
-        .where(Appointment.scheduled_for < end_utc)
+        .join(Slot, Slot.id == Appointment.slot_id, isouter=True)
+        .where(visit_at >= start_utc)
+        .where(visit_at < end_utc)
+        # id breaks ties: appointment times collide heavily (the seed alone has
+        # five on one timestamp), and Postgres gives no stable order for equal
+        # sort keys across separate queries — so an unbroken tie means a paging
+        # caller can see one row twice and another not at all.
+        .order_by(visit_at, Appointment.id)
+        # One past the page, so "is there more" is answered without a COUNT.
+        .limit(limit + 1)
+        .offset(offset)
     )
-    if provider_id is not None:
-        # appointments carry only a provider NAME; the id lives on the slot.
-        stmt = stmt.join(Slot, Slot.id == Appointment.slot_id).where(
-            Slot.provider_id == provider_id
-        )
-    stmt = stmt.order_by(Appointment.scheduled_for).limit(limit).offset(offset)
 
     try:
         rows = db.execute(stmt).all()
-    except Exception:
-        log.exception("failed to list the day schedule for %s", day.isoformat())
+    except Exception as e:
+        # The exception CLASS, never log.exception and never str(e). This query
+        # is the one read in the service whose result set is cross-patient PHI —
+        # name, MRN and free-text reason for every patient in the day — and a
+        # driver error raised mid-fetch can carry row data in its message, which
+        # log.exception would render into the traceback. The class is what
+        # separates "database down" from "programming error"; the rest is not
+        # worth a PHI log line. Same rule as the gateway's _post_checked.
+        # The sibling reads here still use log.exception (inherited D1 debt,
+        # docs/todo.md TODO-33) — not swept in this diff.
+        log.error(
+            "failed to list the day schedule for %s: %s", day.isoformat(), type(e).__name__
+        )
         raise HTTPException(status_code=503, detail="database unavailable")
 
+    has_more = len(rows) > limit
     items = []
-    for appointment, patient_name, mrn in rows:
+    for appointment, patient_name, mrn, when in rows[:limit]:
         out = ScheduledVisitOut.model_validate(appointment)
         out.patient_name = patient_name
         out.mrn = mrn
+        # The time the row was placed on this day by — the raw column would be
+        # null for anything the booking UI wrote.
+        out.scheduled_for = when
         items.append(out)
 
     # PHI rule: the window and the count, never a name, MRN or visit reason.
-    log.info(
-        "listed %d appointments for %s (provider_id=%s)",
-        len(items),
-        day.isoformat(),
-        provider_id,
-    )
+    log.info("listed %d appointments for %s", len(items), day.isoformat())
     return DayScheduleResponse(
         items=items,
         count=len(items),
+        has_more=has_more,
         limit=limit,
         offset=offset,
         date=day.isoformat(),

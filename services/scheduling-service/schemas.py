@@ -63,7 +63,13 @@ class ScheduledVisitOut(BaseModel):
 
 class DayScheduleResponse(BaseModel):
     items: List[ScheduledVisitOut]
+    # Length of THIS page, not the day's total. `has_more` is what tells the
+    # caller apart a complete day from a truncated one: without it a 60-visit
+    # day renders as a complete-looking list of 50, which is the same silent
+    # drop this endpoint's other guardrails exist to prevent. Answered by
+    # fetching limit+1 rather than a second COUNT query.
     count: int
+    has_more: bool
     limit: int
     offset: int
     # Echoed so a caller can prove which day, in which zone, produced this list.

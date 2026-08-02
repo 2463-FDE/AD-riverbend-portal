@@ -268,7 +268,6 @@ def proxy_list_appointments(patient_id: int, session: dict = Depends(require_ses
 def proxy_day_schedule(
     date: str,
     session: dict = Depends(require_session),
-    provider_id: Optional[int] = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -276,10 +275,15 @@ def proxy_day_schedule(
     # /appointments requires a patient_id, so a day view was previously only
     # reachable by fanning out per patient (the D8 N+1 pattern). Session check
     # is the same as every other read here — this is not an authz change (D11).
-    return _get(
+    #
+    # _get_checked, never _get: the legacy helper returns r.json() without
+    # looking at r.status_code, so scheduling's 422 (bad date, over-limit) and
+    # its 503 (database unavailable) would both reach the portal as a 200 with
+    # an error body — a front desk seeing an empty queue instead of an outage.
+    return _get_checked(
         "scheduling",
         "/schedule",
-        params={"date": date, "provider_id": provider_id, "limit": limit, "offset": offset},
+        params={"date": date, "limit": limit, "offset": offset},
     )
 
 
@@ -1218,6 +1222,46 @@ def _post_checked(
         # Relay the downstream error status; detail comes from the downstream
         # body only if it is the standard FastAPI shape (a plain "detail"
         # string), otherwise stays generic.
+        detail = body.get("detail") if isinstance(body, dict) else None
+        if not isinstance(detail, str):
+            detail = f"{service} service error"
+        raise HTTPException(status_code=r.status_code, detail=detail)
+    return body
+
+
+def _get_checked(service: str, path: str, params: Optional[dict] = None, timeout: float = 30):
+    """GET from a downstream service, surfacing failure as failure.
+
+    The read-side twin of ``_post_checked`` and it holds the same two lines the
+    inherited ``_get`` crosses: a non-2xx downstream response must not come back
+    as a 200 with an error body, and ``str(e)`` must never reach a log or a
+    response, because httpx exception text embeds the request URL — and for a
+    GET the URL carries the query string, which is where the identifiers are
+    (the eligibility ``member_id`` leak class, PR #2). Only the exception CLASS
+    is logged; ``params`` never is.
+
+    ``_get`` is deliberately left in place for the inherited routes: switching
+    them would change the status codes those callers already handle. New routes
+    use this one.
+    """
+    try:
+        r = httpx.get(f"{SERVICES[service]}{path}", params=_clean(params), timeout=timeout)
+    except httpx.TimeoutException:
+        log.error("proxy GET %s%s timed out after %.0fs", service, path, timeout)
+        raise HTTPException(status_code=504, detail=f"{service} service timed out")
+    except httpx.HTTPError as e:
+        log.error("proxy GET %s%s transport error: %s", service, path, type(e).__name__)
+        raise HTTPException(status_code=502, detail=f"{service} service unreachable")
+    try:
+        body = r.json()
+    except ValueError:
+        log.error("proxy GET %s%s returned non-JSON status=%s", service, path, r.status_code)
+        raise HTTPException(status_code=502, detail=f"{service} service returned a bad response")
+    if r.status_code >= 400:
+        # Same relay rule as _post_checked: the downstream status is preserved,
+        # and the detail is adopted only when it is the standard FastAPI shape
+        # (a plain "detail" string), so a downstream body cannot smuggle an
+        # arbitrary structure — or PHI — into the gateway's error response.
         detail = body.get("detail") if isinstance(body, dict) else None
         if not isinstance(detail, str):
             detail = f"{service} service error"

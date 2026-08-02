@@ -112,6 +112,56 @@ did not stop r2. The class fix is giving the reviewer a runtime signal to check 
 inference, which is what `FE-R32` buys. If a round 3 lands another of these, the class fix did not
 work either and the next move is a design question rather than another comment.
 
+PR #25 r3 — 0 findings: verdict **approve**, "No material findings" · **The class fix held.** After
+two rounds of runtime failure inferred from static config, the round that followed a real CI runtime
+signal produced no findings at all, and the reviewer's own summary now cites the container-start
+health smoke as what covers "the riskiest part of a new service". That is the answer to r2's open
+question: the class fix worked, and it worked where r1's instance fix (a comment) had not. Recorded
+because a single round proves little on its own — the claim to test on the next scaffold-shaped PR is
+that *shipping a runtime signal costs one round and removes a class of finding*, not that comments
+are useless.
+
+Two advisories appeared in r3's prose but in neither the raw findings block nor the verdict, and both
+were checked rather than accepted: "confirm CI actually collects `tests/test_compose_topology.py`" —
+it does, proven by delta, `733 passed` on run `30670931154` against `734 passed` on `30675208217`,
+moving by exactly the one test added; and "a 500 that returns bytes should fail the smoke" — already
+false, since `curl -fsS` exits 22 on any status >= 400. The narrower residual they did not state (200
+with a wrong body) is real but unreachable today and is `docs/todo.md` TODO-28, deferred by the user
+to P2 PR 2 where `/healthz` grows its first failure branches. **Worth noting for the log's own
+sake:** an `approve` verdict still carried two prose claims, one of which was wrong on the flags. The
+prose summary is not the findings block, and checking it cost two commands.
+
+PR #25 MERGED — squash `82df049`, 3 rounds, 3 findings total: **1 A / 0 B / 0 C, 2 refuted.** No
+fix-round-induced findings on this PR at all, against the 41% B baseline.
+
+PR #26 r1 — 3 findings: **3 A / 0 B / 0 C.** Verdict `needs-attention`, one `[high]` no-ship. Of the
+three, one was fixed (gateway `_get` returning downstream 422/503 as 200), one was closed by
+**deleting** the flagged code rather than repairing it (the `provider_id` filter, which joined
+`slots` through an FK-less column), and one was scoped to tracked debt after a design gate (the
+`[high]`: binding `/schedule` to a front-desk permission is D7/RBAC, which `docs/specs/w4.md` §3
+explicitly assigns to W9, and a §6 auth zone besides).
+
+**The gate earned its stop on the `[high]`.** The reviewer's recommended fix — a permission check on
+one route — is exactly the shape the PR #7 post-mortem in §3 warns about: plausible, bounded-looking,
+and stateful. On a system with `default_role: staff` for every account it would have denied nobody,
+so the "authorization regression test proving unauthorized sessions cannot read" that the finding
+asks for could not have been written to fail. That is a decorative control plus a test that proves
+nothing, shipped inside the week whose own spec defers the decision. One design page cost less than
+the rounds spent unwinding it would have.
+
+**Also worth logging: one finding was closed by deletion.** Step 4's "can it be closed by deleting?"
+question is easy to skip because it feels like a non-answer. Here it was the whole answer — the
+alternative fixes were a brittle free-text name match or a migration, and no consumer of the
+parameter existed. Net diff for that cluster is negative.
+
+**And one prose/findings-block divergence, the same class as r3 on PR #25:** the summary said the
+route is "broader than the old `/appointments` path, which at least required a caller-supplied
+`patient_id`". True but not the point — `patient_id` there was a query shape, never an authz control,
+and `GET /records/search?q=` already returns cross-patient *clinical notes* on `require_session`
+alone. The novelty claim does not survive contact with CLAUDE.md §6, which already names all of them
+as one class. The underlying finding is still correct; only its framing as a new trust boundary is
+not. Second round in a row where checking the prose against the repo changed the disposition.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
