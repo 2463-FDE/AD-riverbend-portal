@@ -373,6 +373,96 @@ def test_no_scoped_env_template_can_skew_the_catalog():
         )
 
 
+# --- every domain service is network-internal (ADR 0016, debt-log D15) --------
+# Codex PR #26 r3/r4: GET /schedule answered a clinic day of appointments —
+# patient names + MRNs — on host port 8074 with no login. Not that route's bug:
+# no domain service has any auth dependency (each carries Depends(get_db) and
+# nothing else), so every published 807x port was an unauthenticated PHI
+# read/write path that skips the gateway, the only place a session is checked.
+# records-service served full charts and the unscoped /records/search;
+# roi-service fulfills disclosures; interop-service ACCEPTS PHI via
+# POST /hl7/ingest. Same class ai-assistant (PR #7 r3) and Redis (PR #14 r1)
+# already left, now applied to the whole tier. The r4 ask for a direct-access
+# rejection test is satisfied structurally here: no `ports` key means the
+# container port has no host mapping to answer on.
+
+DOMAIN_SERVICES = {
+    "intake-service": "8071",
+    "eligibility-service": "8072",
+    "records-service": "8073",
+    "scheduling-service": "8074",
+    "interop-service": "8075",
+    "roi-service": "8076",
+}
+
+# The full sanctioned host surface. postgres stays published for local psql
+# access (ADR 0016 §6 — password-authenticated, unlike the domain services);
+# the gateway is the auth boundary; the two portals are the UIs.
+HOST_PUBLISHABLE = {"postgres", "gateway", "frontend", "portal"}
+
+
+def test_no_domain_service_publishes_a_host_port():
+    for name in DOMAIN_SERVICES:
+        assert "ports" not in _service(name), (
+            f"{name} must not publish a host port: domain services have no auth "
+            "of their own — the gateway session check is the only auth boundary, "
+            "so a host mapping is an unauthenticated PHI path that skips it "
+            "(ADR 0016, docs/debt-log.md D15)"
+        )
+
+
+def test_host_publishing_is_a_closed_allowlist():
+    # The class guard, not just the six current instances: a NEW service added
+    # with a host port fails here until it is deliberately added to the
+    # allowlist — publishing must be a decision, never a default.
+    for name, svc in _all_services().items():
+        if name not in HOST_PUBLISHABLE:
+            assert "ports" not in svc, (
+                f"{name} publishes a host port but is not in HOST_PUBLISHABLE. "
+                "If host access is genuinely required, say why in an ADR and add "
+                "it here in the same change (ADR 0016)"
+            )
+
+
+def test_every_domain_service_stays_reachable_where_the_gateway_expects_it():
+    # The flip side of unpublishing (same shape as the ai-assistant check
+    # above): the gateway still needs each service on the compose network at
+    # the port its *_URL points to.
+    gateway_env = _service("gateway")["environment"]
+    for name, port in DOMAIN_SERVICES.items():
+        assert port in [str(p) for p in _service(name).get("expose", [])], (
+            f"{name} must expose {port} — it is the port the gateway's URL "
+            "points at"
+        )
+        expected = f"http://{name}:{port}"
+        assert expected in gateway_env.values(), (
+            f"no gateway *_URL points at {expected} — the unpublish only works "
+            "if the gateway path stays intact"
+        )
+
+
+def test_every_internal_url_in_compose_targets_a_port_that_service_exposes():
+    # Beyond the gateway: intake and ai-assistant carry their own
+    # ELIGIBILITY_URL. Any http://<service>:<port> env value anywhere in the
+    # compose file must agree with that service's declared port, or a future
+    # port move strands a caller silently.
+    services = _all_services()
+    for name, svc in services.items():
+        raw = svc.get("environment") or {}
+        values = raw if isinstance(raw, list) else raw.values()
+        for value in values:
+            m = re.fullmatch(r"(?:\w+=)?http://([\w-]+):(\d+)", str(value))
+            if not m or m.group(1) not in services:
+                continue
+            target, port = m.group(1), m.group(2)
+            declared = [str(p) for p in services[target].get("expose", [])]
+            declared += [str(p).split(":")[-1] for p in services[target].get("ports", [])]
+            assert port in declared, (
+                f"{name} points at http://{target}:{port} but {target} declares "
+                f"{declared or 'no port'} — the URL and the topology have drifted"
+            )
+
+
 # --- the SvelteKit portal's place in the topology (ADR 0012, 0015) ------------
 # Two frontends run side by side until FE-R1-FE-R3 pass on the new one
 # (FE-R15), which is a coexistence window with two failure modes worth holding
