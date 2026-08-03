@@ -1,4 +1,4 @@
-.PHONY: up down logs ps build seed seed-gen psql test test-docker test-frontend frontend-dev portal-dev config status
+.PHONY: up down logs ps build seed seed-gen psql test test-docker test-frontend frontend-dev portal-dev config status eval
 
 # Scoped gateway->ai-assistant secret file. Compose refuses to parse when a
 # listed env_file is missing, so every compose target depends on this. The
@@ -40,6 +40,24 @@ seed: .env.ai-proxy .env.redis ## load schema + demo data (re-runs against a run
 
 seed-gen:      ## regenerate db/seed/seed.sql from the generator (deterministic)
 	python3 db/seed/generate_seed.py > db/seed/seed.sql
+
+# eval/rag/REPORT.md is a committed deliverable derived from db/seed/patients.csv,
+# encounters.csv and goldset.json, and nothing noticed when the seed moved and the
+# report went stale (tests/test_rag_eval.py asserts substrings, not bytes). This
+# regenerates with the STUB retriever — torch-free and stdlib-only, so it runs under
+# the system Python (3.8) like seed-gen and status, needs no container, no database
+# and no network — and diffs against the committed file.
+#
+# §4's retrieval NUMBERS are masked out of the diff: the committed report is
+# embed-path output and they are not reproducible without the model. Cost of masking
+# the whole table rather than the differing rows: whatever feeds §4 alone goes unseen
+# — goldset.json entirely, and encounters.csv's summary/provider/type/date columns.
+# The §4 retriever LABEL is checked rather than masked, so a report regenerated the
+# easy way (--retriever stub, which scores 1.00 everywhere) is rejected instead of
+# passing forever. Full rationale in the header of eval/rag/check_drift.py; the mask
+# and its red paths are pinned by tests/test_drift_check.py.
+eval:          ## check eval/rag/REPORT.md is still current against db/seed/*
+	python3 eval/rag/check_drift.py
 
 psql: .env.ai-proxy .env.redis ## open a psql shell
 	docker compose exec postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend}
