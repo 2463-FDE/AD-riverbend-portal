@@ -165,6 +165,18 @@ def _run_in_copy(tmp_path, mutate):
     )
 
 
+def _regen_seed(work):
+    """Rerun the generator into the copy's seed.sql — the `make seed-gen` step
+    an operator runs after editing a fixture CSV. Without it, a CSV edit is
+    caught earlier by the seed.sql check (the generator reads the CSVs), and
+    the report-diff layer these tests pin would never be reached."""
+    with open(str(work / "db" / "seed" / "seed.sql"), "wb") as out:
+        subprocess.run(
+            [sys.executable, str(work / "db" / "seed" / "generate_seed.py")],
+            stdout=out, check=True,
+        )
+
+
 def test_green_against_the_committed_seed(tmp_path):
     """The control. Without this, every red test above could be red by accident."""
     proc = _run_in_copy(tmp_path, lambda work: None)
@@ -176,6 +188,7 @@ def test_red_when_a_seed_patient_changes(tmp_path):
     def mutate(work):
         csv = work / "db" / "seed" / "patients.csv"
         csv.write_text(csv.read_text().replace("Maria Gonzales,", "Maria Gonzalez,", 1))
+        _regen_seed(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -188,6 +201,7 @@ def test_red_when_a_seed_allergy_changes(tmp_path):
     def mutate(work):
         csv = work / "db" / "seed" / "encounters.csv"
         csv.write_text(csv.read_text().replace("penicillin", "sulfa"))
+        _regen_seed(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -285,14 +299,22 @@ def test_unexpected_failure_exits_2_not_1(tmp_path):
     assert "not a drift verdict" in proc.stderr
 
 
-def test_loading_check_drift_does_not_register_generic_module_names():
-    """This file loads check_drift.py by path into the test process; the
-    module must not plant the generic name `retriever` in sys.modules, where
-    a later path-loaded module's `import retriever` would silently receive
-    the eval harness instead of its own sibling. (conftest.load_module's
-    sys.path insert of eval/rag is its documented sibling-import mechanism,
-    shared by every loaded module — not asserted here.)"""
-    assert "retriever" not in sys.modules
+def test_check_drift_reads_the_retriever_without_planting_a_generic_name():
+    """check_drift reaches retriever.py's DEFAULT_MODEL by path under a unique
+    module name, never via a bare `import retriever` — which would plant the
+    generic name in sys.modules for every later path-loaded module to inherit,
+    the collision class tests/conftest.py exists to prevent.
+
+    Asserted across the call rather than as `"retriever" not in sys.modules`:
+    that form is a property of whatever else the run happened to import, so it
+    would go red here — pointing at an innocent check_drift.py — the day any
+    test path-loads eval/rag/run.py, which does `import retriever` at import
+    time."""
+    generic = {"retriever", "data", "metrics", "report", "run"}
+    before = set(sys.modules)
+    assert drift._retriever_default_model()
+    planted = set(sys.modules) - before
+    assert not (planted & generic), planted
 
 
 def test_red_when_generator_and_seed_sql_skew(tmp_path):
@@ -305,3 +327,168 @@ def test_red_when_generator_and_seed_sql_skew(tmp_path):
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
     assert "seed.sql does not match db/seed/generate_seed.py" in proc.stderr
+
+
+# --- the fixture CSVs are the generator's source, not a parallel copy (codex r4) ---
+
+
+def test_red_on_csv_fixture_edit_before_seed_regen(tmp_path):
+    """The r4 finding closed: the generator reads its fixture rows from the
+    CSVs, so a CSV edit alone must first redden the SEED check — previously
+    seed.sql kept matching the generator's own untouched literal and only the
+    report diff (a different message) went red."""
+    def mutate(work):
+        csv = work / "db" / "seed" / "patients.csv"
+        csv.write_text(csv.read_text().replace("412-55-9981", "999-99-9999"))
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 1
+    assert "seed.sql does not match db/seed/generate_seed.py" in proc.stderr
+    assert "make seed-gen" in proc.stderr
+
+
+def test_generator_dies_when_fixture_csv_is_missing(tmp_path):
+    """A missing fixture CSV must kill generation loudly — exit 2 through the
+    'generator cannot run' path — never emit a partial seed.sql, and never be
+    diagnosed as the eval failing (the pre-derivation behavior: the generator
+    ignored the CSVs and only run.py noticed the file was gone)."""
+    def mutate(work):
+        os.remove(str(work / "db" / "seed" / "patients.csv"))
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 2
+    assert "generate_seed.py failed to run" in proc.stderr
+
+
+def test_generator_dies_when_patient_rows_are_reordered(tmp_path):
+    """The seed-only columns (mrn/phone/notes…) are keyed by patient id; a
+    reordered CSV must fail loudly, not attach them to the wrong patient."""
+    def mutate(work):
+        path = work / "db" / "seed" / "patients.csv"
+        lines = path.read_text().rstrip("\n").split("\n")
+        lines[1], lines[2] = lines[2], lines[1]
+        path.write_text("\n".join(lines) + "\n")
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 2
+    assert "row order changed" in proc.stderr
+
+
+def test_generator_dies_when_encounter_rows_are_reordered(tmp_path):
+    """Same guard for encounters, which are matched to their seed-only
+    columns (id, reason, location, status) by row order."""
+    def mutate(work):
+        path = work / "db" / "seed" / "encounters.csv"
+        lines = path.read_text().rstrip("\n").split("\n")
+        lines[1], lines[2] = lines[2], lines[1]
+        path.write_text("\n".join(lines) + "\n")
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 2
+    assert "row order changed" in proc.stderr
+
+
+def test_generator_dies_when_encounter_content_swaps_under_a_stable_patient_id(tmp_path):
+    """patient_id alone is too weak a key for the encounter cross-check.
+    Swapping two visits' clinical columns while leaving the patient_id column
+    in place left the id-only guard green, so encounter id 1 / "Annual
+    physical" attached to the sinus visit and the damage surfaced only as an
+    exit-1 "regenerate seed.sql" — which invites the operator to bless the
+    mis-attached rows. occurred_at pins each tuple to its own CSV row."""
+    def mutate(work):
+        path = work / "db" / "seed" / "encounters.csv"
+        rows = path.read_text().rstrip("\n").split("\n")
+        pid_a, rest_a = rows[1].split(",", 1)
+        pid_b, rest_b = rows[2].split(",", 1)
+        rows[1], rows[2] = "%s,%s" % (pid_a, rest_b), "%s,%s" % (pid_b, rest_a)
+        path.write_text("\n".join(rows) + "\n")
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 2
+    assert "row order changed" in proc.stderr
+
+
+def test_red_when_the_eval_itself_fails(tmp_path):
+    """A crash in run.py must exit 2 through its own 'eval failed to run'
+    message — never exit 1, whose 'regenerate and commit' advice would have
+    an operator fixing a broken eval by rewriting the committed report."""
+    def mutate(work):
+        runpy = work / "eval" / "rag" / "run.py"
+        runpy.write_text("import sys\nsys.exit(3)\n")
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 2
+    assert "the eval itself failed to run" in proc.stderr
+
+
+def test_child_timeout_is_reported_as_cannot_run_not_drift(monkeypatch, capsys):
+    """A wedged child process must exit 2 through the 'cannot run' path: exit
+    1 would send the operator regenerating a report to fix a hang, and no
+    handler at all would propagate TimeoutExpired and wedge `make eval` on
+    whatever the caller's timeout is."""
+    def hang(cmd, **kwargs):
+        # Asserts the ARMING too, not just the handler: a fake that raises
+        # unconditionally stays green after both `timeout=` kwargs are
+        # deleted, which is the un-wiring that would let a wedged child run
+        # to GitHub's 6-hour job kill.
+        assert kwargs["timeout"] == drift.SUBPROCESS_TIMEOUT
+        raise drift.subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(drift.subprocess, "run", hang)
+    for entry in (drift._regenerate, drift._check_seed_sql):
+        with pytest.raises(SystemExit) as exc:
+            entry()
+        assert exc.value.code == 2
+    assert capsys.readouterr().err.count("not a drift verdict") == 2
+
+
+def test_audit_log_fixture_follows_the_patient_csv(tmp_path):
+    """audit_logs' intake row logs patient 1042's name/dob/ssn — the D1
+    "PHI in application logs" teaching fixture. Held as a hand-copied literal
+    it went stale in silence on a fixture edit: no check reads audit_logs (not
+    the eval, not the report), and the generator still byte-matched itself, so
+    seed.sql would demonstrate an SSN that no patients row holds."""
+    work = tmp_path / "repo"
+    (work / "db").mkdir(parents=True)
+    shutil.copytree(os.path.join(REPO_ROOT, "db", "seed"), str(work / "db" / "seed"))
+    csv = work / "db" / "seed" / "patients.csv"
+    csv.write_text(csv.read_text().replace("412-55-9981", "999-88-7777"))
+
+    proc = subprocess.run(
+        [sys.executable, str(work / "db" / "seed" / "generate_seed.py")],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    logged = [ln for ln in proc.stdout.splitlines() if "POST /intake body=" in ln]
+    assert len(logged) == 1, logged
+    assert "999-88-7777" in logged[0]
+    # Class-level: no copy of the old SSN survives ANYWHERE in the seed.
+    assert "412-55-9981" not in proc.stdout
+
+
+def test_seed_gen_does_not_destroy_seed_sql_when_the_generator_fails(tmp_path):
+    """The recipe around the guards, not the guards. `make seed-gen` used to
+    redirect straight onto db/seed/seed.sql, and the shell truncates the
+    target BEFORE the generator runs — harmless while the generator read no
+    files and could not fail, fatal now that a missing or reordered fixture
+    CSV kills it. The 0-byte file left behind is what docker-compose.yml
+    mounts into a fresh volume's initdb, which brings up a schema-only
+    database and reports nothing."""
+    work = tmp_path / "repo"
+    (work / "db").mkdir(parents=True)
+    shutil.copytree(os.path.join(REPO_ROOT, "db", "seed"), str(work / "db" / "seed"))
+    shutil.copy(os.path.join(REPO_ROOT, "Makefile"), str(work / "Makefile"))
+    seed_sql = work / "db" / "seed" / "seed.sql"
+    before = seed_sql.read_bytes()
+    assert before, "copied seed.sql is empty — this test would prove nothing"
+
+    os.remove(str(work / "db" / "seed" / "patients.csv"))
+    proc = subprocess.run(
+        ["make", "seed-gen"], cwd=str(work),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+    )
+
+    assert proc.returncode != 0, proc.stdout
+    assert seed_sql.read_bytes() == before
+    assert not (work / "db" / "seed" / "seed.sql.tmp").exists()

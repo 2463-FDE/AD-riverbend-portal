@@ -38,8 +38,15 @@ seed: .env.ai-proxy .env.redis ## load schema + demo data (re-runs against a run
 	docker compose exec -T postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend} < db/schema.sql
 	docker compose exec -T postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend} < db/seed/seed.sql
 
+# Written through a temp file, not redirected onto the target: since the
+# generator started reading the fixture CSVs it has failure paths (missing
+# file, changed row order), and a plain `> db/seed/seed.sql` truncates the
+# target BEFORE the generator runs — leaving an empty seed.sql, which
+# docker-compose.yml mounts into a fresh volume's initdb without complaint.
 seed-gen:      ## regenerate db/seed/seed.sql from the generator (deterministic)
-	python3 db/seed/generate_seed.py > db/seed/seed.sql
+	python3 db/seed/generate_seed.py > db/seed/seed.sql.tmp \
+	  && mv db/seed/seed.sql.tmp db/seed/seed.sql \
+	  || (rm -f db/seed/seed.sql.tmp; false)
 
 # eval/rag/REPORT.md is a committed deliverable derived from db/seed/patients.csv,
 # encounters.csv and goldset.json, and nothing noticed when the seed moved and the

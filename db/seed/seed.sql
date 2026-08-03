@@ -670,10 +670,10 @@ INSERT INTO insurance_coverages (patient_id, payer_name, member_id, group_number
  (1851, 'Aetna', 'AETN5131', 'GRP76', 'PPO', 'inactive', '2026-06-01 12:00:00');
 
 INSERT INTO encounters (id, patient_id, encounter_type, provider, reason, location, status, summary, allergies, medications, occurred_at) VALUES
- (1, 1042, 'office_visit', 'Dr. Patel',  'Annual physical', 'Riverbend Main', 'finished', 'Annual physical. Unremarkable.', '', 'lisinopril', '2026-01-12 09:00:00'),
+ (1, 1042, 'office_visit', 'Dr. Patel', 'Annual physical', 'Riverbend Main', 'finished', 'Annual physical. Unremarkable.', '', 'lisinopril', '2026-01-12 09:00:00'),
  (2, 1330, 'office_visit', 'Dr. Nguyen', 'Sinus infection', 'Riverbend Main', 'finished', 'Sinus infection. Prescribed antibiotic.', 'penicillin', 'amoxicillin', '2026-03-04 11:30:00'),
- (3, 1588, 'lab',          'Lab',        'CBC panel', 'Riverbend Main', 'finished', 'CBC panel within normal limits.', '', '', '2026-05-19 08:15:00'),
- (4, 1043, 'office_visit', 'Dr. Patel',  'Hearing aid follow-up', 'Riverbend Main', 'finished', 'Hearing aid follow-up.', '', '', '2026-02-20 14:00:00'),
+ (3, 1588, 'lab', 'Lab', 'CBC panel', 'Riverbend Main', 'finished', 'CBC panel within normal limits.', '', '', '2026-05-19 08:15:00'),
+ (4, 1043, 'office_visit', 'Dr. Patel', 'Hearing aid follow-up', 'Riverbend Main', 'finished', 'Hearing aid follow-up.', '', '', '2026-02-20 14:00:00'),
  (5, 1601, 'office_visit', 'Dr. Nguyen', 'New patient intake', 'Riverbend Main', 'finished', 'New patient intake.', 'none known', '', '2026-06-23 10:30:00'),
  (6, 1042, 'office_visit', 'Dr. Grace Kim', 'Consult', 'Riverbend North', 'finished', 'Consult. Counseled patient.', 'none known', 'amoxicillin', '2024-07-04 00:00:00'),
  (7, 1043, 'telehealth', 'Lab Services', 'Follow-up', 'Riverbend Main', 'finished', 'Follow-up. Stable.', 'penicillin', 'albuterol', '2024-07-18 00:00:00'),

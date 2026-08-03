@@ -12,14 +12,38 @@ PRESERVES the hand-authored teaching fixtures verbatim:
 and then layers a few hundred realistic rows on top so the database reads like a
 real, lived-in clinic network.
 
+The fixture patient/encounter columns shared with the RAG eval corpus are read
+from db/seed/patients.csv and encounters.csv (see load_fixture_csv) — there is
+no second hardcoded copy here to drift from what eval/rag/REPORT.md describes.
+
 Run:  python3 db/seed/generate_seed.py  > db/seed/seed.sql
 """
 import base64
+import csv
 import hashlib
+import os
 import random
 from datetime import datetime, timedelta
 
 random.seed(2026)
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def load_fixture_csv(filename):
+    """Read a teaching-fixture CSV that sits next to this script.
+
+    patients.csv / encounters.csv are ALSO the RAG eval's corpus
+    (eval/rag/run.py renders them into eval/rag/REPORT.md), so the fixture
+    columns both sides use are read from here rather than duplicated as
+    literals below — one copy, and a fixture edit reaches seed.sql and the
+    report's inputs together, where `make eval` arbitrates both (TODO-40).
+    A missing file raises and kills the generation: a silently partial
+    seed.sql would pass every check that trusts this generator.
+    """
+    path = os.path.join(HERE, filename)
+    with open(path, newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
 
 # --- password hashing (django-style pbkdf2_sha256; mirrored in gateway/security) -
 def hash_password(password: str, salt: str, iterations: int = 260000) -> str:
@@ -78,13 +102,34 @@ emit()
 # patients — fixtures first, then ~250 generated
 # ---------------------------------------------------------------------------
 emit("INSERT INTO patients (id, mrn, name, dob, ssn, gender, address, phone, email, notes, created_via, created_at) VALUES")
-fixture_patients = [
-    (1042, "M4471", "Maria Gonzalez", "1971-03-02", "412-55-9981", "F", "118 Maple Ave, Beverly Hills, CA 90210", "310-555-0147", "maria.g@example.com", "Prefers morning appts.", "self_service", "2026-06-22 09:14:06"),
-    (1043, "M5012", "James O'Brien",  "1958-11-19", "501-22-7734", "M", "42 Birch St, Riverbend, CA 90211", "310-555-0199", "jobrien@example.com", "Hard of hearing.", "self_service", "2026-06-22 09:17:27"),
-    (1330, "M4471", "Maria Gonzales", "1971-03-02", "412-55-9981", "F", "118 Maple Ave, Beverly Hills, CA 90210", "310-555-0147", "maria.g@example.com", "PCN allergy noted at front desk.", "self_service", "2026-06-22 09:21:45"),
-    (1588, "M4471", "M. Gonzalez",    "1971-02-03", "412-55-9981", "F", "118 Maple Ave, Beverly Hills, CA 90210", "310-555-0147", None, "", "self_service", "2026-06-22 09:55:06"),
-    (1601, "M6620", "Aisha Khan",     "1989-07-14", "623-41-2210", "F", "900 Cedar Rd, Riverbend, CA 90211", "310-555-0210", "akhan@example.com", "", "front_desk", "2026-06-23 10:02:00"),
-]
+# Shared fixture columns (id, name, dob, ssn, address, created_via,
+# created_at) come from patients.csv; only the columns the eval never reads
+# live here, keyed by patient id.
+PATIENT_SEED_ONLY = {  # id -> (mrn, gender, phone, email, notes)
+    1042: ("M4471", "F", "310-555-0147", "maria.g@example.com", "Prefers morning appts."),
+    1043: ("M5012", "M", "310-555-0199", "jobrien@example.com", "Hard of hearing."),
+    1330: ("M4471", "F", "310-555-0147", "maria.g@example.com", "PCN allergy noted at front desk."),
+    1588: ("M4471", "F", "310-555-0147", None, ""),
+    1601: ("M6620", "F", "310-555-0210", "akhan@example.com", ""),
+}
+
+_csv_patients = load_fixture_csv("patients.csv")
+if [int(r["id"]) for r in _csv_patients] != list(PATIENT_SEED_ONLY):
+    raise SystemExit(
+        "db/seed/patients.csv fixture ids or row order changed — update "
+        "PATIENT_SEED_ONLY in generate_seed.py to match, or the seed-only "
+        "columns (mrn/gender/phone/email/notes) would attach to the wrong patient"
+    )
+
+fixture_patients = []
+for _row in _csv_patients:
+    _pid = int(_row["id"])
+    _mrn, _gender, _phone, _email, _notes = PATIENT_SEED_ONLY[_pid]
+    fixture_patients.append(
+        (_pid, _mrn, _row["name"], _row["dob"], _row["ssn"], _gender,
+         _row["address"], _phone, _email, _notes,
+         _row["created_via"], _row["created_at"])
+    )
 FIRST = ["James","Mary","Robert","Patricia","John","Jennifer","Michael","Linda","David","Elizabeth",
          "William","Barbara","Richard","Susan","Joseph","Jessica","Thomas","Karen","Aisha","Wei",
          "Carlos","Fatima","Hiroshi","Olga","Samuel","Grace","Derek","Nadia","Luis","Priya",
@@ -201,13 +246,41 @@ emit()
 # encounters — fixtures (ids 1-5) then generated
 # ---------------------------------------------------------------------------
 emit("INSERT INTO encounters (id, patient_id, encounter_type, provider, reason, location, status, summary, allergies, medications, occurred_at) VALUES")
-erows = [
-    " (1, 1042, 'office_visit', 'Dr. Patel',  'Annual physical', 'Riverbend Main', 'finished', 'Annual physical. Unremarkable.', '', 'lisinopril', '2026-01-12 09:00:00')",
-    " (2, 1330, 'office_visit', 'Dr. Nguyen', 'Sinus infection', 'Riverbend Main', 'finished', 'Sinus infection. Prescribed antibiotic.', 'penicillin', 'amoxicillin', '2026-03-04 11:30:00')",
-    " (3, 1588, 'lab',          'Lab',        'CBC panel', 'Riverbend Main', 'finished', 'CBC panel within normal limits.', '', '', '2026-05-19 08:15:00')",
-    " (4, 1043, 'office_visit', 'Dr. Patel',  'Hearing aid follow-up', 'Riverbend Main', 'finished', 'Hearing aid follow-up.', '', '', '2026-02-20 14:00:00')",
-    " (5, 1601, 'office_visit', 'Dr. Nguyen', 'New patient intake', 'Riverbend Main', 'finished', 'New patient intake.', 'none known', '', '2026-06-23 10:30:00')",
+# Shared fixture columns (patient_id, encounter_type, provider, summary,
+# allergies, medications, occurred_at) come from encounters.csv, in row
+# order; only the columns the eval never reads live here. patient_id AND
+# occurred_at cross-check each tuple against the CSV row it claims to
+# extend — patient_id alone stops discriminating the moment two fixture
+# encounters share a patient, and the eval cites encounters by row index,
+# so a silent row swap would also repoint goldset.json's citations.
+ENCOUNTER_SEED_ONLY = [  # (id, patient_id, occurred_at, reason, location, status)
+    (1, 1042, "2026-01-12 09:00:00", "Annual physical", "Riverbend Main", "finished"),
+    (2, 1330, "2026-03-04 11:30:00", "Sinus infection", "Riverbend Main", "finished"),
+    (3, 1588, "2026-05-19 08:15:00", "CBC panel", "Riverbend Main", "finished"),
+    (4, 1043, "2026-02-20 14:00:00", "Hearing aid follow-up", "Riverbend Main", "finished"),
+    (5, 1601, "2026-06-23 10:30:00", "New patient intake", "Riverbend Main", "finished"),
 ]
+
+_csv_encounters = load_fixture_csv("encounters.csv")
+if len(_csv_encounters) != len(ENCOUNTER_SEED_ONLY):
+    raise SystemExit(
+        "db/seed/encounters.csv fixture row count changed — update "
+        "ENCOUNTER_SEED_ONLY in generate_seed.py to match"
+    )
+
+erows = []
+for (_eid, _epid, _eocc, _reason, _loc, _status), _row in zip(ENCOUNTER_SEED_ONLY, _csv_encounters):
+    if int(_row["patient_id"]) != _epid or _row["occurred_at"] != _eocc:
+        raise SystemExit(
+            "db/seed/encounters.csv fixture row order changed — encounter ids "
+            "and reasons would attach to the wrong visit; update "
+            "ENCOUNTER_SEED_ONLY in generate_seed.py to match"
+        )
+    erows.append(
+        f" ({_eid}, {_epid}, {sql_str(_row['encounter_type'])}, {sql_str(_row['provider'])}, "
+        f"{sql_str(_reason)}, {sql_str(_loc)}, {sql_str(_status)}, {sql_str(_row['summary'])}, "
+        f"{sql_str(_row['allergies'])}, {sql_str(_row['medications'])}, {sql_str(_row['occurred_at'])})"
+    )
 ETYPES = ["office_visit","office_visit","lab","imaging","telehealth"]
 REASONS = ["Annual physical","Follow-up","Acute visit","Lab draw","Imaging","Med refill","Consult"]
 ALLERGY_POOL = ["", "", "", "penicillin", "sulfa", "latex", "peanuts", "none known"]
@@ -344,8 +417,17 @@ emit()
 # audit_logs — "audit" rows are really app INFO logs with PHI in them
 # ---------------------------------------------------------------------------
 emit("INSERT INTO audit_logs (actor, message) VALUES")
+# The logged body is built from patient 1042's CSV row rather than repeated as
+# a literal: a hand-copied name/dob/ssn here would go stale on a fixture edit
+# and leave the seed citing an SSN no patients row holds, with every check
+# green (the eval never reads audit_logs, and the generator would still
+# byte-match itself).
+_intake_logged = next(r for r in _csv_patients if int(r["id"]) == 1042)
 alrows = [
-    " ('intake-service', 'POST /intake body={\"name\":\"Maria Gonzalez\",\"dob\":\"1971-03-02\",\"ssn\":\"412-55-9981\"}')",
+    " ('intake-service', %s)" % sql_str(
+        'POST /intake body={"name":"%s","dob":"%s","ssn":"%s"}'
+        % (_intake_logged["name"], _intake_logged["dob"], _intake_logged["ssn"])
+    ),
     " ('records-service', 'GET /patients/1042/records 200')",
 ]
 for _ in range(20):

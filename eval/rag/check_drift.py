@@ -26,7 +26,9 @@ the macro line. The row itself survives, so its `query` and
 compared, and so is the row COUNT: a reworded query, a changed cites_records
 list, or an added/removed case all turn the gate red. Everything else — §1
 headline and cluster table, §2 patient-safety gaps, §3 match-key analysis, §5
-conclusion — is compared byte for byte.
+conclusion — is compared line for line after text-mode newline normalization
+(the report is a markdown deliverable, so a CRLF rewrite of it is cosmetic;
+seed.sql, the file Postgres loads, IS compared as raw bytes).
 
 Masking whole cells, rather than only the values that currently differ between
 the stub and embed paths, keeps this check decoupled from score stability: a
@@ -53,12 +55,19 @@ SEPARATE FROM THE REPORT DIFF (added codex r3): db/seed/seed.sql — the file a
 fresh Postgres volume and `make seed` actually load — is byte-checked against
 its deterministic generator, db/seed/generate_seed.py. Without this, a
 hand-edited Maria row in seed.sql changes what the running system demonstrates
-while the report (which reads only the CSVs and goldset) stays green. The
-remaining gap there is TODO-40's duplication: generate_seed.py and the CSVs
-are two independent hardcoded copies of the same fixtures, so a generator
-edit with `make seed-gen` run leaves seed.sql, the CSVs and this report
-jointly stale and this check green. That closes only by deriving one from the
-other (TODO-40), not by another diff.
+while the report (which reads only the CSVs and goldset) stays green. Since
+codex r4 the generator READS its fixture rows' shared columns from
+patients.csv / encounters.csv (TODO-40's second copy deleted): a fixture edit
+now lands in seed.sql and the report's inputs together, so "the patients and
+encounters tables are jointly stale with the report" is no longer a reachable
+state.
+
+What that does NOT cover, and no check does: the generator's OTHER tables
+paraphrase the same fixtures in prose it cannot derive. records id 2's body
+("Penicillin allergy confirmed…") restates encounters.csv row 2's allergies
+column, so moving that allergy to another encounter leaves the note attached
+to the wrong visit with seed.sql byte-matching its generator. The eval reads
+neither table, so only a human notices.
 
 Nothing else is masked, and the green message names exactly this scope rather
 than claiming the whole seed directory.
@@ -119,6 +128,11 @@ REGENERATED_SIDE = "the regenerated report"
 
 SEED_DIFF_MAX_LINES = 120
 
+# Both child scripts are pure-CPU and finish in seconds; the timeout exists so
+# a future blocking read added to either one wedges this gate — and the CI jobs
+# behind it — for minutes, not for GitHub's 6-hour job kill.
+SUBPROCESS_TIMEOUT = 300
+
 SEED_REGENERATE = (
     "rerun: make seed-gen   (python3 db/seed/generate_seed.py > db/seed/seed.sql)\n"
     "then commit db/seed/seed.sql. If the regenerated file is the wrong one, the\n"
@@ -144,12 +158,19 @@ def _regenerate():
     tmp_dir = tempfile.mkdtemp(prefix="eval-drift-")
     try:
         tmp_out = os.path.join(tmp_dir, "REPORT.md")
-        proc = subprocess.run(
-            [sys.executable, RUN_PY, "--retriever", "stub", "--out", tmp_out],
-            cwd=REPO_ROOT,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
+        try:
+            proc = subprocess.run(
+                [sys.executable, RUN_PY, "--retriever", "stub", "--out", tmp_out],
+                cwd=REPO_ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=SUBPROCESS_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            _die(
+                "eval drift: eval/rag/run.py exceeded %ds — not a drift "
+                "verdict; nothing needs regenerating\n" % SUBPROCESS_TIMEOUT
+            )
         if proc.returncode != 0:
             sys.stderr.write(proc.stderr.decode("utf-8", "replace"))
             _die("eval drift: the eval itself failed to run (above)\n")
@@ -165,16 +186,24 @@ def _check_seed_sql():
     """db/seed/seed.sql is what Postgres actually loads (fresh-volume init and
     `make seed`), and its generator is deterministic — so the committed file
     must byte-match a regeneration. Catches a hand-edited or stale seed.sql,
-    i.e. the running system demonstrating data this report never read. Does
-    NOT catch a generator edit whose CSV twins went stale with it — see the
-    header's TODO-40 bullet. Exits 1 on mismatch, 2 if the generator cannot
-    run."""
-    proc = subprocess.run(
-        [sys.executable, GENERATE_SEED],
-        cwd=REPO_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    i.e. the running system demonstrating data this report never read. The
+    generator reads its fixture rows from the same CSVs the report reads, so
+    a fixture edit skews this check and the report diff together rather than
+    leaving them jointly stale. Exits 1 on mismatch, 2 if the generator
+    cannot run."""
+    try:
+        proc = subprocess.run(
+            [sys.executable, GENERATE_SEED],
+            cwd=REPO_ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=SUBPROCESS_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        _die(
+            "eval drift: db/seed/generate_seed.py exceeded %ds — not a drift "
+            "verdict; nothing needs regenerating\n" % SUBPROCESS_TIMEOUT
+        )
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr.decode("utf-8", "replace"))
         _die("eval drift: db/seed/generate_seed.py failed to run (above)\n")
@@ -328,8 +357,7 @@ def main():
             "encounters.csv, and goldset.json's queries and cited records"
         )
         print(
-            "      (unchecked: the generator's own fixture literals vs the "
-            "CSVs (TODO-40),\n      non-clustered rows, the summary/provider/"
+            "      (unchecked: non-clustered rows, the summary/provider/"
             "type/date columns, and §4's\n      retrieved/recall/precision "
             "cells — scope owned by this script's header)"
         )
