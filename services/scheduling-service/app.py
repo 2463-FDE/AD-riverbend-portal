@@ -9,7 +9,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import select, union_all
 from sqlalchemy.orm import Session
 
 from book import book
@@ -160,19 +160,34 @@ def list_day_schedule(
     by-provider view needs provider identity stored on the appointment, which is
     a migration and belongs with the RIV-175 slot/appointment work (W5).
 
-    The visit time is ``COALESCE(appointments.scheduled_for, slots.start_at)``,
-    not ``scheduled_for`` alone. That column is nullable with no default and the
-    write path never populates it: the booking UI posts only
-    ``{patient_id, slot_id, provider, reason}``
+    The visit time is ``appointments.scheduled_for`` falling back to
+    ``slots.start_at``, never ``scheduled_for`` alone. That column is nullable
+    with no default and the write path never populates it: the booking UI posts
+    only ``{patient_id, slot_id, provider, reason}``
     (frontend/app/appointments/page.tsx:62), ``BookingRequest.scheduled_for``
     defaults to ``None``, and ``insert_appointment`` writes the NULL. Since
     ``NULL >= x`` is NULL in SQL, filtering on the column alone returns nothing
-    but seeded rows — correct-looking in dev, empty in production. ``slots`` is
-    joined **isouter** purely to recover the time, which is a different shape
-    from the ``provider_id`` filter above: an outer join drops no row, an inner
-    join used as a predicate does. An appointment with neither a
-    ``scheduled_for`` nor a resolvable slot is still absent, and that is honest —
-    nothing in the database says which day it belongs to.
+    but seeded rows — correct-looking in dev, empty in production.
+
+    The fallback is written as a UNION ALL of two branches, not as a filter on
+    ``COALESCE(scheduled_for, slots.start_at)`` (codex r6, ADR 0018). A
+    predicate on that expression is computed across an outer join, so no B-tree
+    index can serve it and Postgres scans all of ``appointments`` for every day
+    requested — the page limit bounds rows returned, not rows scanned. Each
+    branch instead filters one indexed column (migration 009):
+
+    * rows with their own ``scheduled_for`` in the window — never joined to
+      ``slots``, so a missing or stale slot row cannot drop them;
+    * rows with ``scheduled_for IS NULL`` whose slot's ``start_at`` is in the
+      window. The inner join here is the predicate itself — under the old
+      COALESCE an unresolvable slot left the visit time NULL and the window
+      excluded the row, and a join with no match excludes it identically.
+
+    The ``IS NULL`` guard is what keeps the branches disjoint — without it a
+    row with both times in the window is returned twice and paginates wrong.
+    An appointment with neither a ``scheduled_for`` nor a resolvable slot is
+    still absent, and that is honest — nothing in the database says which day
+    it belongs to.
     """
     try:
         start_utc, end_utc = _clinic_day_bounds(day)
@@ -183,16 +198,33 @@ def list_day_schedule(
         # unparseable request diagnosed as a transport fault.
         raise HTTPException(status_code=422, detail="date is outside the supported range")
 
-    # One expression, reused for the filter and the sort, so a row can never be
-    # selected by one time and ordered by another.
-    visit_at = func.coalesce(Appointment.scheduled_for, Slot.start_at)
+    # Each branch filters one indexed column; the docstring owns why this is a
+    # UNION ALL and not a COALESCE predicate. Both windows carry the same bound
+    # values, and the IS NULL guard on the slot branch keeps them disjoint.
+    scheduled = (
+        select(
+            Appointment.id.label("appointment_id"),
+            Appointment.scheduled_for.label("visit_at"),
+        )
+        .where(Appointment.scheduled_for >= start_utc)
+        .where(Appointment.scheduled_for < end_utc)
+    )
+    from_slot = (
+        select(
+            Appointment.id.label("appointment_id"),
+            Slot.start_at.label("visit_at"),
+        )
+        .join(Slot, Slot.id == Appointment.slot_id)
+        .where(Appointment.scheduled_for.is_(None))
+        .where(Slot.start_at >= start_utc)
+        .where(Slot.start_at < end_utc)
+    )
+    day_rows = union_all(scheduled, from_slot).subquery("day")
 
     stmt = (
-        select(Appointment, Patient.name, Patient.mrn, visit_at)
+        select(Appointment, Patient.name, Patient.mrn, day_rows.c.visit_at)
+        .join(day_rows, day_rows.c.appointment_id == Appointment.id)
         .join(Patient, Patient.id == Appointment.patient_id, isouter=True)
-        .join(Slot, Slot.id == Appointment.slot_id, isouter=True)
-        .where(visit_at >= start_utc)
-        .where(visit_at < end_utc)
         # Exclusion, never an allowlist. `status` is free TEXT with no CHECK
         # constraint (db/schema.sql:84), so `status IN ('confirmed','completed')`
         # would silently drop any value added later — 'checked_in', 'arrived',
@@ -201,12 +233,13 @@ def list_day_schedule(
         # up in the queue; only an explicit cancellation is hidden. Wrong in the
         # visible direction, which is the one a front desk can correct.
         # 'completed' stays: the desk needs to see who has already been seen today.
+        # One site, on the outer query, so the two branches cannot drift apart.
         .where(Appointment.status != CANCELLED_STATUS)
         # id breaks ties: appointment times collide heavily (the seed alone has
         # five on one timestamp), and Postgres gives no stable order for equal
         # sort keys across separate queries — so an unbroken tie means a paging
         # caller can see one row twice and another not at all.
-        .order_by(visit_at, Appointment.id)
+        .order_by(day_rows.c.visit_at, Appointment.id)
         # One past the page, so "is there more" is answered without a COUNT.
         .limit(limit + 1)
         .offset(offset)

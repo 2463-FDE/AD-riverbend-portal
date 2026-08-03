@@ -86,6 +86,13 @@ CREATE TABLE IF NOT EXISTS appointments (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
+-- Day-queue indexes (migration 009, ADR 0018): GET /schedule filters each
+-- UNION ALL branch on one of these columns; slot_id also serves the
+-- slot-branch join (no FK, so nothing else indexes it).
+CREATE INDEX IF NOT EXISTS ix_appointments_scheduled_for ON appointments (scheduled_for);
+CREATE INDEX IF NOT EXISTS ix_appointments_slot_id       ON appointments (slot_id);
+CREATE INDEX IF NOT EXISTS ix_slots_start_at             ON slots (start_at);
+
 -- ---------------------------------------------------------------------------
 -- Clinical records
 -- ---------------------------------------------------------------------------

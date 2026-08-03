@@ -158,46 +158,58 @@ def test_configured_zone_is_honoured(monkeypatch):
 # --------------------------------------------------------------------------- #
 # the query
 # --------------------------------------------------------------------------- #
-_VISIT_AT = "coalesce(appointments.scheduled_for, slots.start_at)"
-
-
 def _compiled(session):
     compiled = session.stmt.compile()
     return str(compiled).lower(), compiled.params
 
 
-def _where(sql):
-    return sql.split("where", 1)[1].split("order by", 1)[0]
+def _branches(sql):
+    """The two UNION ALL halves of the compiled statement (ADR 0018).
+
+    The subquery is inlined into FROM, so everything before the UNION ALL is
+    the outer select plus the scheduled-for branch, and everything after it
+    opens with the slot branch. That containment is exactly what the callers
+    assert against, so the split is the right tool despite being textual.
+    """
+    assert "union all" in sql, f"day query is not the two-branch shape: {sql}"
+    scheduled, from_slot = sql.split("union all", 1)
+    return scheduled, from_slot
 
 
-def _bound_to(where, operator):
-    """The bind parameter name compared to the visit-time expression by
-    ``operator``. Resolved from the SQL rather than hardcoded, because
-    SQLAlchemy names anonymous binds after the expression they belong to and
-    those names shift when the expression does."""
-    m = re.search(re.escape(_VISIT_AT) + r"\s*" + re.escape(operator) + r"\s*:(\w+)", where)
-    assert m, f"no {operator!r} comparison against the visit time in: {where}"
+def _bound_to(fragment, column, operator):
+    """The bind parameter name ``column`` is compared to by ``operator``.
+    Resolved from the SQL rather than hardcoded, because SQLAlchemy names
+    anonymous binds after the column they belong to and those names shift when
+    the expression does."""
+    m = re.search(re.escape(column) + r"\s*" + re.escape(operator) + r"\s*:(\w+)", fragment)
+    assert m, f"no {operator!r} comparison against {column} in: {fragment}"
     return m.group(1)
 
 
 def test_the_window_bounds_each_side_of_the_right_operator():
-    """Wiring proof. The weaker version of this test asserted only that both
-    datetimes appeared *somewhere* in the bind parameters, which is satisfied by
-    a statement that swaps them (``>= end AND < start``) and returns zero rows
-    for every day, forever. So the assertion is on which value sits on which
-    side of which comparison, and on the interval being half-open.
+    """Wiring proof, per branch. The weaker version of this test asserted only
+    that both datetimes appeared *somewhere* in the bind parameters, which is
+    satisfied by a statement that swaps them (``>= end AND < start``) and
+    returns zero rows for every day, forever. So the assertion is on which
+    value sits on which side of which comparison, in **each** UNION ALL branch
+    — a branch with a swapped or missing bound silently loses only the rows
+    that take that branch — and on the interval being half-open.
     """
     session = _FakeSession()
     assert _client(session).get("/schedule?date=2026-08-01").status_code == 200
 
     sql, params = _compiled(session)
-    where = _where(sql)
+    scheduled, from_slot = _branches(sql)
+    start = datetime(2026, 8, 1, 4, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 2, 4, 0, tzinfo=timezone.utc)
 
-    assert params[_bound_to(where, ">=")] == datetime(2026, 8, 1, 4, 0, tzinfo=timezone.utc)
-    assert params[_bound_to(where, "<")] == datetime(2026, 8, 2, 4, 0, tzinfo=timezone.utc)
-    # Half-open: an inclusive upper edge would put the next day's midnight
-    # appointment in both days' queues.
-    assert "<=" not in where
+    assert params[_bound_to(scheduled, "appointments.scheduled_for", ">=")] == start
+    assert params[_bound_to(scheduled, "appointments.scheduled_for", "<")] == end
+    assert params[_bound_to(from_slot, "slots.start_at", ">=")] == start
+    assert params[_bound_to(from_slot, "slots.start_at", "<")] == end
+    # Half-open everywhere: an inclusive upper edge would put the next day's
+    # midnight appointment in both days' queues.
+    assert "<=" not in sql
 
 
 def test_the_visit_time_falls_back_to_the_slot_start():
@@ -208,30 +220,72 @@ def test_the_visit_time_falls_back_to_the_slot_start():
     filtering on that column alone returns nothing but seeded rows: a day queue
     that looks right in dev and is empty in production.
 
-    Asserted on the compiled statement because the filter runs in Postgres, not
-    in Python — the fake session cannot evaluate a predicate.
+    Since ADR 0018 the fallback is the UNION ALL's second branch: it selects
+    the slot's start_at as the visit time and joins slots to get it. Asserted
+    on the compiled statement because the filter runs in Postgres, not in
+    Python — the fake session cannot evaluate a predicate.
     """
     session = _FakeSession()
     assert _client(session).get("/schedule?date=2026-08-01").status_code == 200
 
     sql, _ = _compiled(session)
-    assert "coalesce(appointments.scheduled_for, slots.start_at)" in sql
-    # The same expression must drive filter AND sort, or a row is selected by
-    # one time and ordered by another.
-    assert sql.count("coalesce(appointments.scheduled_for, slots.start_at)") >= 3
+    _, from_slot = _branches(sql)
+    assert "slots.start_at as visit_at" in from_slot
+    assert "join slots" in from_slot
+    # Membership in a branch is what selects the row; the same subquery column
+    # must carry the time out to the sort and the response, or a row is
+    # selected by one time and ordered/rendered by another.
+    assert "day.appointment_id = appointments.id" in sql
+    assert "day.visit_at" in sql
 
 
-def test_slots_is_outer_joined_so_no_row_is_dropped_by_it():
-    """The slots join is back, and its shape is the whole point. An INNER join
-    is what codex r1 removed: appointments.slot_id has no FK and book() writes
-    any positive id, so an inner join silently drops an appointment with a stale
-    slot. An OUTER join recovers the time without ever removing a row.
+def test_the_branches_are_disjoint_so_no_row_pages_twice():
+    """The slot branch admits only rows with no ``scheduled_for`` of their own.
+    Without that guard an appointment with both times inside the window comes
+    back from both branches — the same visit rendered twice, and under
+    LIMIT/OFFSET a duplicate that pushes a real row off the page entirely.
     """
     session = _FakeSession()
     assert _client(session).get("/schedule?date=2026-08-01").status_code == 200
 
     sql, _ = _compiled(session)
-    assert "left outer join slots" in sql
+    _, from_slot = _branches(sql)
+    assert "appointments.scheduled_for is null" in from_slot
+
+
+def test_membership_join_is_inner_so_the_day_bounds_the_result():
+    """The subquery decides membership only if the join back to appointments is
+    INNER. Outer-joined, every non-cancelled appointment in the table comes
+    back with a NULL visit time — sorted last, so page one still looks right
+    and the leak surfaces on deep pages: a whole-table cross-patient export
+    from the endpoint whose scope argument is "one clinic day". This is the
+    single join type in the statement the other tests cannot see (the pre-push
+    pass proved the isouter mutation survived all of them).
+    """
+    session = _FakeSession()
+    assert _client(session).get("/schedule?date=2026-08-01").status_code == 200
+
+    sql, _ = _compiled(session)
+    assert "from appointments join (select" in sql
+    assert "left outer join (select" not in sql
+
+
+def test_a_stale_slot_cannot_drop_a_row_with_its_own_time():
+    """Codex r1's silent-drop invariant, restated for the two-branch shape.
+    ``appointments.slot_id`` has no FK and book() writes any positive id, so a
+    row must never lose its place in the queue to slot state it does not need:
+    the scheduled-for branch touches ``slots`` not at all. The slot branch's
+    inner join is the predicate itself — a row it drops is one whose visit time
+    does not exist, which the old outer-join-plus-COALESCE excluded
+    identically. ``patients`` stays an outer join: an orphaned patient_id
+    blanks the name, never hides the visit.
+    """
+    session = _FakeSession()
+    assert _client(session).get("/schedule?date=2026-08-01").status_code == 200
+
+    sql, _ = _compiled(session)
+    scheduled, _ = _branches(sql)
+    assert "slots" not in scheduled
     assert "left outer join patients" in sql
 
 
@@ -252,16 +306,23 @@ def test_cancelled_visits_are_excluded_from_the_queue():
     assert _client(session).get("/schedule?date=2026-08-01").status_code == 200
 
     sql, params = _compiled(session)
-    where = _where(sql)
 
-    m = re.search(r"appointments\.status\s*!=\s*:(\w+)", where)
-    assert m, f"no status exclusion against the day query in: {where}"
+    binds = re.findall(r"appointments\.status\s*!=\s*:(\w+)", sql)
+    assert binds, f"no status exclusion against the day query in: {sql}"
+    # Exactly one site, on the outer query — a copy per UNION ALL branch is two
+    # predicates that can drift apart, which is the r2 spelling-drift failure
+    # reintroduced inside a single statement. Outer means after the subquery
+    # CLOSES, not merely after the union all — anchoring on "union all" alone
+    # passes when the single copy sits inside the slot branch, filtering only
+    # the rows that take that branch (the pre-push pass caught exactly that).
+    assert len(binds) == 1, sql
+    assert sql.index(") as day") < re.search(r"appointments\.status\s*!=", sql).start(), sql
     # Both, and they are different assertions. The literal pins the value against
     # the rows already in the database — which no constant rename migrates. The
     # constant pins the reader to the writer, and without it the two halves are
     # coupled only by the same string being typed into two files.
-    assert params[m.group(1)] == "cancelled"
-    assert params[m.group(1)] == app_mod.CANCELLED_STATUS
+    assert params[binds[0]] == "cancelled"
+    assert params[binds[0]] == app_mod.CANCELLED_STATUS
 
 
 def test_no_status_but_the_cancelled_one_constrains_the_day_query():
@@ -351,6 +412,9 @@ def test_sort_breaks_ties_on_id():
 
     sql, _ = _compiled(session)
     order_by = sql.split("order by", 1)[1]
+    # The visit time leads and comes from the same subquery column that
+    # selected the row; the id breaks the tie.
+    assert order_by.strip().startswith("day.visit_at")
     assert "appointments.id" in order_by
 
 
@@ -396,7 +460,8 @@ def test_provider_id_does_not_filter_through_the_slot_join():
     that inner-joined ``slots``, so an appointment with a missing or stale slot
     row showed in the all-day queue and silently disappeared from the
     per-provider one — a clinician missing a visit with no error. The filter is
-    gone; the outer join above is a different thing and drops nothing.
+    gone; the slot branch's join recovers a time and drops nothing a COALESCE
+    kept (see test_a_stale_slot_cannot_drop_a_row_with_its_own_time).
 
     The parameter is passed here on purpose: asking for the day without it
     produces a predicate-free query under the old code too, so only the request
@@ -412,7 +477,7 @@ def test_provider_id_does_not_filter_through_the_slot_join():
 
     sql, _ = _compiled(session)
     assert "slots.provider_id" not in sql
-    assert "inner join slots" not in sql
+    assert "providers" not in sql
 
 
 # --------------------------------------------------------------------------- #
