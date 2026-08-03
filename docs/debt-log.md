@@ -172,6 +172,38 @@
 - **Ticket:** — (documented intentional gap, ARCHITECTURE.md §7)
 - **Status:** OPEN. Prerequisite for any AI feature touching patient records.
 
+### D15 — every domain service host-published with no auth of its own
+- **Location:** `docker-compose.yml` — `ports: 807N:807N` on all six domain
+  services (intake 8071, eligibility 8072, records 8073, scheduling 8074,
+  interop 8075, roi 8076).
+- **What:** no domain service carries any auth dependency (`Depends(get_db)`
+  and nothing else); the gateway's `require_session` is the only auth boundary
+  in the system. Publishing the ports made every service reachable from the
+  Docker host (and, via compose's default `0.0.0.0` bind, the LAN) with **no
+  login**: full charts + unscoped search (`records:8073`), ROI fulfillment
+  (`roi:8076`), a clinic day of names + MRNs (`scheduling:8074`, the route
+  Codex PR #26 r3 flagged), and an unauthenticated PHI **write** via
+  `POST /hl7/ingest` (`interop:8075`). Same class as D3b (Redis) and the
+  ai-assistant publish (PR #7 r3); surfaced as a class by PR #26 r3/r4, not
+  created by it.
+- **Business risk:** credential-free PHI reads and writes that bypass the only
+  session check, leaving no application audit trail to scope an exposure for a
+  breach assessment (45 CFR 164.400+). The write path additionally allows
+  fabricated clinical data (allergies, encounters) into charts.
+- **Ticket:** — (found via automated review on PR #26, not client-reported)
+- **Status:** **CLOSED at the topology layer (2026-08-02, ADR 0016).** All six
+  services are `expose`-only; host publishing is a closed allowlist
+  (`postgres`, `gateway`, `frontend`, `portal`) so a new service cannot publish
+  by default. Guarded by `tests/test_compose_topology.py` (per-service
+  no-`ports`, allowlist, gateway-URL agreement, compose-wide URL/port
+  agreement). Dev access via `docker compose exec` or a gitignored
+  `docker-compose.override.yml` (ADR 0016 §4).
+- **Residual (still open):** service-to-service calls on the compose network
+  remain unauthenticated (a compromised container reaches everything — W9/D8
+  territory); Postgres stays published on 5432 with plaintext PHI behind a
+  password (ADR 0016 §6); a real HL7 feed will need dedicated authenticated
+  ingress before 8075 ever reopens (ADR 0016 §5).
+
 ## Secondary entries
 
 | ID | Location | What / business risk | Ticket | Status |

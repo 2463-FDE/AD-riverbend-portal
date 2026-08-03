@@ -147,6 +147,11 @@ eval/ · scripts/ · logs/  # eval harness; local tooling (gitignored); local lo
   not cross it (ADR 0014); making `require_session` accept a cookie does, and stays approval-gated.
 - ⚠️ **IDOR on chart reads** — `GET /patients/{id}/records` requires a session but never binds it
   to `{patient_id}`; IDs are sequential and walkable. Intentional gap, documented in code.
+- ⚠️ **Domain services are network-internal** (D15, ADR 0016) — no domain service has auth of its
+  own; the gateway is the only session check, so 8071–8076 are `expose`-only and host publishing
+  is a closed allowlist in `tests/test_compose_topology.py`. Do not add `ports:` to a service (or
+  a new one) without an ADR + allowlist edit; local debugging uses `docker compose exec` or a
+  gitignored `docker-compose.override.yml`.
 - ⚠️ **ROI has no authorization enforcement** — disclosures go out with no recorded 45 CFR 164.508
   authorization and no accounting trail. Touches PHI + compliance.
 - ⚠️ **PHI handling** — `ssn`, `notes` etc. stored as plaintext `TEXT`; intake logs full bodies at

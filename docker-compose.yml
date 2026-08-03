@@ -116,8 +116,16 @@ services:
     env_file: .env
     environment:
       ELIGIBILITY_URL: http://eligibility-service:8072
-    ports:
-      - "8071:8071"
+    # Network-internal, like every domain service (ADR 0016, debt-log D15): no
+    # domain service carries any auth of its own — the gateway session check is
+    # the only auth boundary — so a published port is an unauthenticated
+    # PHI read/write path from the Docker host. The gateway reaches these
+    # services by compose DNS; `expose` documents the port its *_URL points at.
+    # Host-side debugging goes through `docker compose exec gateway curl
+    # http://<service>:<port>/...` or a gitignored docker-compose.override.yml
+    # (ADR 0016 §4). Guarded by tests/test_compose_topology.py.
+    expose:
+      - "8071"
     depends_on:
       postgres:
         condition: service_healthy
@@ -130,8 +138,9 @@ services:
   eligibility-service:
     build: ./services/eligibility-service
     env_file: .env
-    ports:
-      - "8072:8072"
+    # Network-internal — see intake-service / ADR 0016.
+    expose:
+      - "8072"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8072/healthz')\""]
       interval: 10s
@@ -141,8 +150,11 @@ services:
   records-service:
     build: ./services/records-service
     env_file: .env
-    ports:
-      - "8073:8073"
+    # Network-internal — see intake-service / ADR 0016. This one served full
+    # charts with clinical notes (and the unscoped /records/search) to any
+    # host-side caller, no login required.
+    expose:
+      - "8073"
     depends_on:
       postgres:
         condition: service_healthy
@@ -155,8 +167,11 @@ services:
   scheduling-service:
     build: ./services/scheduling-service
     env_file: .env
-    ports:
-      - "8074:8074"
+    # Network-internal — see intake-service / ADR 0016. Codex PR #26 r3/r4
+    # demonstrated GET /schedule (patient names + MRNs for a clinic day)
+    # reachable here unauthenticated.
+    expose:
+      - "8074"
     depends_on:
       postgres:
         condition: service_healthy
@@ -169,8 +184,12 @@ services:
   interop-service:
     build: ./services/interop-service
     env_file: .env
-    ports:
-      - "8075:8075"
+    # Network-internal — see intake-service / ADR 0016. POST /hl7/ingest was an
+    # unauthenticated PHI *write* path from the host. A real hospital ADT/ORU
+    # feed gets dedicated authenticated ingress when one exists (ADR 0016 §5),
+    # not a naked container port.
+    expose:
+      - "8075"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8075/healthz')\""]
       interval: 10s
@@ -180,8 +199,10 @@ services:
   roi-service:
     build: ./services/roi-service
     env_file: .env
-    ports:
-      - "8076:8076"
+    # Network-internal — see intake-service / ADR 0016. Fulfills
+    # release-of-information disclosures; was host-reachable with no auth.
+    expose:
+      - "8076"
     depends_on:
       postgres:
         condition: service_healthy
@@ -205,9 +226,10 @@ services:
       ELIGIBILITY_URL: http://eligibility-service:8072
     # Deliberately NOT published to the host (expose = compose-network only):
     # the endpoint has no auth of its own — the gateway session check is the
-    # auth boundary, and every request spends paid Bedrock capacity. Other
-    # services publish host ports as pre-existing dev topology; do not copy
-    # that pattern here. Guarded by tests/test_compose_topology.py.
+    # auth boundary, and every request spends paid Bedrock capacity. This was
+    # the first service to drop its host publish (PR #7 r3); ADR 0016 later
+    # applied the same rule to every domain service. Guarded by
+    # tests/test_compose_topology.py.
     expose:
       - "8077"
     healthcheck:

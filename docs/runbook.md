@@ -16,7 +16,8 @@ Endpoints once up:
 - Portal (legacy Next.js): http://localhost:3070
 - Portal (SvelteKit rebuild): http://localhost:3071 — no login yet; see `portal/README.md`
 - Gateway + OpenAPI docs: http://localhost:8070/docs
-- Per-service health: `GET http://localhost:807N/healthz`
+- Domain services (8071–8076) have **no host ports** (ADR 0016) — check health
+  with `make ps` or from inside the network (see Health checks below).
 
 ## First-boot data
 
@@ -43,9 +44,23 @@ All seeded users share password `portal123`, role `staff`. Examples:
 ## Health checks
 
 ```bash
-curl -s localhost:8070/healthz        # gateway
-for p in 8071 8072 8073 8074 8075 8076; do curl -s localhost:$p/healthz; echo; done
-curl -s localhost:3071/healthz        # SvelteKit portal
+make ps                               # healthcheck status for every container
+curl -s localhost:8070/healthz        # gateway (published)
+curl -s localhost:3071/healthz        # SvelteKit portal (published)
+```
+
+Domain services are network-internal since ADR 0016: curling their old 807x
+ports from the host gets **connection refused on a healthy stack** — that is
+the topology working, not six dead services. Do not "fix" it by republishing
+ports in an override. Probe from inside the network instead (the service images
+ship no curl, so use python):
+
+```bash
+for s in intake-service:8071 eligibility-service:8072 records-service:8073 \
+         scheduling-service:8074 interop-service:8075 roi-service:8076; do
+  docker compose exec -T gateway python -c \
+    "import urllib.request; print(urllib.request.urlopen('http://$s/healthz').read().decode())"
+done
 ```
 
 The portal's probe reports liveness today. Once the session module lands it also
