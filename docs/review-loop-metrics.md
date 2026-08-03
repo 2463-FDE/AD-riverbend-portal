@@ -162,6 +162,36 @@ alone. The novelty claim does not survive contact with CLAUDE.md §6, which alre
 as one class. The underlying finding is still correct; only its framing as a new trust boundary is
 not. Second round in a row where checking the prose against the repo changed the disposition.
 
+PR #27 r1 — 2 findings: 2 A / 0 B / 0 C · **[high] scoping, no code change** — "HL7 feed ingress
+removed without replacement": no live feed exists (nothing in repo or handover posts to
+interop-service; the only route in is the gateway's session-guarded `POST /hl7/ingest`, untouched).
+De-scope was already ADR 0016 §5's accepted decision; the real gap was ARCHITECTURE.md §6 still
+describing the feed with no statement that none is connected — recorded there (058074b). Machine
+ingress deferred to the ADR that connects a real feed (auth surface, approval-gated).
+**[medium] A, fixed** — runbook still curled the removed 807x host ports (two parameterized forms —
+`807N`, a `$p` loop — that the ADR's literal pre-landing grep could not match, so its "zero
+references" claim was false; corrected in place). Fix also exposed that ADR §4's `exec gateway curl`
+valve recipe never worked (image ships no curl) — replaced with the python form, executed verbatim
+against the live stack. Class guard added: any loopback spelling × domain host port (literal
+8071–8077, globs, `807N`, `$var`) across docs + `eval/` + `tests/`, regression-proven (058074b).
+
+PR #28 r1 — 2 findings: 2 A / 0 B / 0 C · both scoping, no code change — both restate decisions the
+PR's own artifacts already record. **[high]** "existing/defaulted users keep full access via `staff`":
+deliberate compatibility posture — ADR 0017 §1 + tradeoff #1, `RBAC-R6`/`RBAC-R10` (no-migration is a
+tested requirement, not an omission); the per-account UPDATE is deferred to client sign-off (spec §8
+open decision 1) and any migration is §6 approval-gated. **[high]** "role revocation does not reach
+live sessions": ADR 0017 tradeoff #7 records exactly this, spec §8 #1 makes session invalidation a
+precondition of any reassignment; root cause is D10 (no session TTL, CLAUDE.md §9), out of this PR's
+scope and §6-gated. Reviewer's own summary concedes "the ADR text acknowledges this."
+
+PR #28 r2 — 2 findings: same two as r1, restated verbatim (same anchors, same recommendations);
+0 new. The bot reviews the branch diff only and the RBAC diff was unchanged (r1 pushed only the
+main merge + this ledger), so a further tag on an unchanged diff reproduces the round — loop
+recognized and cut: dispositions stand as r1 recorded, no re-tag, merge proceeds on the human
+§6 approval this PR's review was designated to carry (ADR 0017 context; gate table in
+`docs/specs/rbac.md` §6). Method note: a scoped-out finding restated on an unchanged diff is
+recorded as a restatement, not a new A — it measures the bot's statelessness, not our defect rate.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`

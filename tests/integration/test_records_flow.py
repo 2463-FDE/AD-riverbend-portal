@@ -15,8 +15,8 @@ pytestmark = pytest.mark.integration
 GATEWAY = os.getenv("GATEWAY_URL", "http://localhost:8070")
 
 
-def _token() -> str:
-    r = httpx.post(f"{GATEWAY}/login", json={"username": "frontdesk", "password": "portal123"}, timeout=10)
+def _token(username: str = "frontdesk") -> str:
+    r = httpx.post(f"{GATEWAY}/login", json={"username": username, "password": "portal123"}, timeout=10)
     r.raise_for_status()
     return r.json()["token"]
 
@@ -31,20 +31,34 @@ def test_records_require_authentication():
     assert r.status_code == 401
 
 
-def test_authenticated_user_can_read_a_chart():
-    headers = {"Authorization": f"Bearer {_token()}"}
+def test_clinician_can_read_a_chart():
+    # drnguyen seeds as 'clinician', which holds records.read (ADR 0017).
+    headers = {"Authorization": f"Bearer {_token('drnguyen')}"}
     r = httpx.get(f"{GATEWAY}/patients/1042/records", headers=headers, timeout=10)
     assert r.status_code == 200
     assert r.json()["patient_id"] == 1042
 
 
+def test_front_desk_cannot_read_a_chart():
+    # RBAC (ADR 0017): 'front_desk' holds no records.read, so a chart read is
+    # 403 at the gateway. Needs a database seeded on or after ADR 0017 — an
+    # older volume still has role='staff' for every user (deliberate compat;
+    # reseed with a fresh volume if this fails on an old database).
+    headers = {"Authorization": f"Bearer {_token('frontdesk')}"}
+    r = httpx.get(f"{GATEWAY}/patients/1042/records", headers=headers, timeout=10)
+    assert r.status_code == 403
+
+
 @pytest.mark.xfail(
-    reason="IDOR (D11): any authenticated user can read ANY patient's chart — "
-    "the session is never bound to the patient. This SHOULD fail but doesn't.",
+    reason="IDOR (D11): any authenticated user WITH records.read can read ANY "
+    "patient's chart — the session is never bound to the patient. RBAC (ADR "
+    "0017) narrows who has records.read; it does not bind the session to a "
+    "patient. This SHOULD fail but doesn't.",
     strict=False,
 )
 def test_user_cannot_read_other_patients_chart():
-    # frontdesk pulling an unrelated chart should be forbidden — but isn't.
-    headers = {"Authorization": f"Bearer {_token()}"}
+    # A clinician pulling a chart with no care relationship should be
+    # forbidden — but isn't.
+    headers = {"Authorization": f"Bearer {_token('drnguyen')}"}
     r = httpx.get(f"{GATEWAY}/patients/1043/records", headers=headers, timeout=10)
     assert r.status_code == 403

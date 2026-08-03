@@ -172,6 +172,38 @@
 - **Ticket:** — (documented intentional gap, ARCHITECTURE.md §7)
 - **Status:** OPEN. Prerequisite for any AI feature touching patient records.
 
+### D15 — every domain service host-published with no auth of its own
+- **Location:** `docker-compose.yml` — `ports: 807N:807N` on all six domain
+  services (intake 8071, eligibility 8072, records 8073, scheduling 8074,
+  interop 8075, roi 8076).
+- **What:** no domain service carries any auth dependency (`Depends(get_db)`
+  and nothing else); the gateway's `require_session` is the only auth boundary
+  in the system. Publishing the ports made every service reachable from the
+  Docker host (and, via compose's default `0.0.0.0` bind, the LAN) with **no
+  login**: full charts + unscoped search (`records:8073`), ROI fulfillment
+  (`roi:8076`), a clinic day of names + MRNs (`scheduling:8074`, the route
+  Codex PR #26 r3 flagged), and an unauthenticated PHI **write** via
+  `POST /hl7/ingest` (`interop:8075`). Same class as D3b (Redis) and the
+  ai-assistant publish (PR #7 r3); surfaced as a class by PR #26 r3/r4, not
+  created by it.
+- **Business risk:** credential-free PHI reads and writes that bypass the only
+  session check, leaving no application audit trail to scope an exposure for a
+  breach assessment (45 CFR 164.400+). The write path additionally allows
+  fabricated clinical data (allergies, encounters) into charts.
+- **Ticket:** — (found via automated review on PR #26, not client-reported)
+- **Status:** **CLOSED at the topology layer (2026-08-02, ADR 0016).** All six
+  services are `expose`-only; host publishing is a closed allowlist
+  (`postgres`, `gateway`, `frontend`, `portal`) so a new service cannot publish
+  by default. Guarded by `tests/test_compose_topology.py` (per-service
+  no-`ports`, allowlist, gateway-URL agreement, compose-wide URL/port
+  agreement). Dev access via `docker compose exec` or a gitignored
+  `docker-compose.override.yml` (ADR 0016 §4).
+- **Residual (still open):** service-to-service calls on the compose network
+  remain unauthenticated (a compromised container reaches everything — W9/D8
+  territory); Postgres stays published on 5432 with plaintext PHI behind a
+  password (ADR 0016 §6); a real HL7 feed will need dedicated authenticated
+  ingress before 8075 ever reopens (ADR 0016 §5).
+
 ## Secondary entries
 
 | ID | Location | What / business risk | Ticket | Status |
@@ -221,7 +253,7 @@ live PHI and credentials.
 | `.env` committed with secrets | Tracked `.env` holds live credentials: `SESSION_SECRET` (forge any session → full portal access, since sessions never expire + single role), `DB_PASSWORD`, `PAYER_API_KEY`, HL7 feed endpoint. A repo leak hands all of these over with **no cracking required**. The secrets are in **git history**, so deleting the file is insufficient — history rewrite **and** rotation of every credential are required. | OPEN — see **Remediation runbook** above (steps 1–4) |
 | README claims "PHI is encrypted / fully HIPAA compliant" — contradicts reality | `README.md:1,82` assert all PHI is encrypted and the system is fully HIPAA compliant. `db/schema.sql` stores `ssn`, `notes`, `dob`, `address`, etc. as plaintext `TEXT`; the only encryption is disk/volume-level (`ARCHITECTURE.md:76`), which protects a stolen disk and nothing else (DB dump, SQL injection, compromised app, committed logs all see cleartext). The overstatement is itself compliance risk — a documented false assurance. `ARCHITECTURE.md §7` is the honest account. Fix: correct the README to match `ARCHITECTURE.md`, or implement column-level encryption to make the claim true. | OPEN — filed under **Follow-up tickets** above |
 | Seeded demo password reuse | All seeded accounts share `portal123` (`db/seed/generate_seed.py`); hashing scheme (pbkdf2_sha256, 260k iters) fully disclosed. If any non-dev environment reused the seed, these are live valid logins on repo leak. | OPEN |
-| Sessions never expire, single role, no MFA | Any leaked cookie is a permanent all-access credential | OPEN (approval-gated). Partially mitigated for the rebuilt portal only, at G2: `FE-R28` logs an idle operator off after 10 min via the existing `POST /logout`, which does destroy the Redis session. **The debt is not closed** — `create_session` still sets no TTL, so a session abandoned by closing the browser is never invalidated and a captured token stays valid forever. Only a gateway-side TTL closes it (W9/G4). ADR 0014 gap #1 |
+| Sessions never expire, single role, no MFA | Any leaked cookie is a permanent all-access credential | OPEN (approval-gated). The single-role part narrowed by ADR 0017: four real roles + per-route capability enforcement at the gateway — but every pre-RBAC `users` row keeps the full-capability `staff` role, so on an existing database a leaked token is still all-access; TTL and MFA unchanged. Partially mitigated for the rebuilt portal only, at G2: `FE-R28` logs an idle operator off after 10 min via the existing `POST /logout`, which does destroy the Redis session. **The debt is not closed** — `create_session` still sets no TTL, so a session abandoned by closing the browser is never invalidated and a captured token stays valid forever. Only a gateway-side TTL closes it (W9/G4). ADR 0014 gap #1 |
 | Session token in browser `localStorage` (portal) | `frontend/app/lib/session.ts:29-30` stores the bearer token — and the `PortalUser` incl. role — in `localStorage`, so any XSS on the origin exfiltrates a credential that never expires and, via D11, reads every chart in the network. It also persists in plaintext in the browser profile across reboot on shared front-desk workstations. This is the pattern OWASP's Authentication Cheat Sheet and SMART on FHIR browser-app guidance both name explicitly as the thing not to do; automatic logoff (45 CFR 164.312(a)(2)(iii), *addressable*) is absent entirely. Inherited from the handoff | OPEN on `main` — the legacy portal is deliberately not patched (spec §8 #1). Closed for the rebuilt portal at G2 by `FE-R27` (token held BFF-side behind an `httpOnly` cookie, unreadable by page script) + `FE-R28`. ADR 0014 |
 | No secret/dependency/image scanning in CI | Vulnerable deps and committed secrets ship silently | OPEN |
 | Intake payload contract break — registration is non-functional and reports success | See **Intake contract break** below | OPEN — fix folded into the frontend rebuild P2 (spec `FE-R1`–`FE-R3`, `FE-R21`, `FE-R22`), lands at G2 |

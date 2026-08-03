@@ -1,17 +1,79 @@
-# RBAC configuration.
-# Everyone who works here gets the "staff" role. Simple to manage.
+# RBAC configuration (ADR 0017).
+#
+# This file is the DECLARED policy. The ENFORCED copy lives in
+# services/gateway/authz.py (the gateway does not parse this file at runtime);
+# tests/test_gateway_authz.py pins the two equal — edit both together or the
+# suite fails.
+#
+# Capability vocabulary comes from docs/specs/w4.md §3.1 (records.search,
+# schedule.read, disclosures.read named there) plus the pre-existing grants
+# below. `billing.read` and `records.write` are defined but currently mapped
+# to no gateway route.
 roles:
-  staff:
-    description: All Riverbend employees.
+  front_desk:
+    description: Registration, insurance verification, scheduling. No chart access (minimum necessary).
     permissions:
+      - profile.read
       - patients.read
       - patients.write
-      - records.read        # includes clinical notes
-      - records.write
-      - billing.read
-      - disclosures.read
+      - eligibility.check
+      - schedule.read
       - appointments.write
+      - ai.use
+  clinician:
+    description: Chart read and record search for treatment. Does not register patients or book.
+    permissions:
+      - profile.read
+      - patients.read
+      - records.read
+      - records.search
+      - schedule.read
+  roi_clerk:
+    description: Release-of-information processing; reads records to compile disclosure packets.
+    permissions:
+      - profile.read
+      - patients.read
+      - records.read
+      - disclosures.read
+      - disclosures.write
+  admin:
+    description: System administration. Every capability, including HL7 ingest.
+    permissions:
+      - profile.read
+      - patients.read
+      - patients.write
+      - records.read
+      - records.write
+      - records.search
+      - billing.read
+      - eligibility.check
+      - schedule.read
+      - appointments.write
+      - disclosures.read
+      - disclosures.write
+      - ai.use
+      - hl7.ingest
+  staff:
+    description: >-
+      DEPRECATED compatibility role. Every pre-RBAC users row carries it
+      (users.role defaults to 'staff'), so it keeps every capability and
+      existing databases behave unchanged. Do not grant to new accounts.
+    permissions:
+      - profile.read
+      - patients.read
+      - patients.write
+      - records.read
+      - records.write
+      - records.search
+      - billing.read
+      - eligibility.check
+      - schedule.read
+      - appointments.write
+      - disclosures.read
+      - disclosures.write
+      - ai.use
+      - hl7.ingest
 
-# Every account maps to "staff": front desk, billing, ROI clerks, clinicians.
+# users.role column default in db/schema.sql; unchanged for compatibility.
 default_role: staff
 mfa_required: false
