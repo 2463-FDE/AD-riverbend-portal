@@ -309,14 +309,15 @@ def proxy_list_appointments(
 @app.get("/schedule")
 def proxy_day_schedule(
     date: str,
-    session: dict = Depends(require_session),
+    session: dict = Depends(require_capability("schedule.read")),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
     # One clinic day across all patients, for the front-desk queue. Additive:
     # /appointments requires a patient_id, so a day view was previously only
-    # reachable by fanning out per patient (the D8 N+1 pattern). Session check
-    # is the same as every other read here — this is not an authz change (D11).
+    # reachable by fanning out per patient (the D8 N+1 pattern). schedule.read
+    # (ADR 0017) gates who may see a cross-patient day; the D11 patient bind
+    # does not apply to a read that is cross-patient by construction (w4 §3.1).
     #
     # _get_checked, never _get: the legacy helper returns r.json() without
     # looking at r.status_code, so scheduling's 422 (bad date, over-limit) and

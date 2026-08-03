@@ -112,6 +112,7 @@ EXPECTED_ROUTE_CAPABILITIES = {
     ("GET", "/records/search"): "records.search",
     ("GET", "/slots"): "schedule.read",
     ("GET", "/appointments"): "schedule.read",
+    ("GET", "/schedule"): "schedule.read",
     ("POST", "/appointments"): "appointments.write",
     ("POST", "/appointments/{appointment_id}/cancel"): "appointments.write",
     ("GET", "/roi/requests"): "disclosures.read",
@@ -178,6 +179,8 @@ def _forbid_fanout(monkeypatch):
 
     monkeypatch.setattr(gw, "_get", _boom)
     monkeypatch.setattr(gw, "_post", _boom)
+    monkeypatch.setattr(gw, "_get_checked", _boom)
+    monkeypatch.setattr(gw, "_post_checked", _boom)
 
 
 @pytest.mark.parametrize(
@@ -191,6 +194,7 @@ def _forbid_fanout(monkeypatch):
         ("clinician", "POST", "/ai/intake-instructions"),
         ("roi_clerk", "GET", "/eligibility?insurance_id=BCBS123"),
         ("roi_clerk", "POST", "/hl7/ingest"),
+        ("roi_clerk", "GET", "/schedule?date=2026-08-03"),  # PR #26 r3 finding 2
     ],
 )
 def test_denied_role_gets_403_and_no_fanout(monkeypatch, role, method, path):
@@ -247,6 +251,7 @@ def test_staff_keeps_every_capability():
     [
         ("front_desk", "POST", "/intake"),
         ("front_desk", "GET", "/slots"),
+        ("front_desk", "GET", "/schedule?date=2026-08-03"),
         ("clinician", "GET", "/patients/1042/records"),
         ("clinician", "GET", "/records/search?q=gonzalez"),
         ("roi_clerk", "GET", "/roi/requests"),
@@ -258,6 +263,7 @@ def test_granted_role_reaches_the_downstream_proxy(monkeypatch, role, method, pa
     sentinel = {"proxied": True}
     monkeypatch.setattr(gw, "_get", lambda *a, **k: sentinel)
     monkeypatch.setattr(gw, "_post", lambda *a, **k: sentinel)
+    monkeypatch.setattr(gw, "_get_checked", lambda *a, **k: sentinel)
     _login_as(role)
     r = client.request(method, path, json={} if method == "POST" else None)
     assert r.status_code == 200

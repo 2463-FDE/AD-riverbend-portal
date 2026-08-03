@@ -142,12 +142,12 @@ eval/ · scripts/ · logs/  # eval harness; local tooling (gitignored); local lo
   not cross it (ADR 0014); making `require_session` accept a cookie does, and stays approval-gated.
 - ⚠️ **IDOR on chart reads** — `GET /patients/{id}/records` requires a session but never binds it
   to `{patient_id}`; IDs are sequential and walkable. Intentional gap, documented in code.
-  **Cross-patient reads are not only reachable by walking IDs:** `GET /records/search?q=` is
-  unscoped, `GET /roi/requests` takes `patient_id` as optional, and `GET /schedule?date=` (added
-  2026-08-01 for the front-desk day queue) returns a clinic day of appointments with patient name
-  and MRN across all patients. All three check only that a session exists. None of them *widened*
-  the authz gap — they are legitimate staff reads on a single-role system — but W4 must size the
-  D11 fix against this whole set, not against `/patients/{id}/records` alone.
+  **Cross-patient reads are not only reachable by walking IDs:** `GET /records/search?q=`,
+  `GET /roi/requests` (`patient_id` optional), and `GET /schedule?date=` (added 2026-08-01 for the
+  front-desk day queue) each return PHI across patients. Since ADR 0017 each requires its role
+  capability (`records.search` / `disclosures.read` / `schedule.read`), but a capability is not a
+  patient bind — these reads are cross-patient by construction — so W4 must size the D11 fix
+  against this whole set, not against `/patients/{id}/records` alone.
 - ⚠️ **Domain services are network-internal** (D15, ADR 0016) — no domain service has auth of its
   own; the gateway is the only session check, so 8071–8076 are `expose`-only and host publishing
   is a closed allowlist in `tests/test_compose_topology.py`. Do not add `ports:` to a service (or
