@@ -55,6 +55,7 @@ ADR 0017 · this spec.
 | `RBAC-R8` | IF a route is wired to a capability name outside the vocabulary, THEN the gateway shall fail at import rather than silently denying everyone. | `test_wiring_a_capability_outside_the_vocabulary_fails_at_import` | — (new scope) | PR review |
 | `RBAC-R9` | WHEN the seed is regenerated, seeded demo users shall carry the role matching their job function (registration → `front_desk`, physicians/RN → `clinician`, ROI clerk → `roi_clerk`, IT → `admin`, unmapped functions → `staff`). | inspection of `db/seed/seed.sql` diff (deterministic generator) | D8 | PR review |
 | `RBAC-R10` | The role model shall require no schema change (`users.role TEXT NOT NULL DEFAULT 'staff'` already exists; only seeded values change). | `test_default_role_matches_schema_default` + no `db/migrations/` diff in the PR | — | PR review |
+| `RBAC-R11` | The all-patient day queue (`GET /schedule`) shall require `schedule.day_queue.read`, granted to `front_desk`/`admin`/`staff` only; `clinician` shall retain `schedule.read` for per-patient schedule reads. (ADR 0017 amendment 2026-08-02, PR #26 r5.) | `test_route_capability_wiring_is_pinned` + clinician `/schedule` denial and clinician `/appointments` grant params | D7 | PR review |
 
 ## 6. Checkpoints / gates
 
@@ -82,6 +83,7 @@ ADR 0017 · this spec.
 
 - D8 (weak authz / no segregation of duties) → `RBAC-R1`–`R5`, `R7`, `R9` → `tests/test_gateway_authz.py`
 - D7 (minimum necessary unenforced) → `RBAC-R3`/`R4` role matrix (front desk holds no
-  `records.read`/`records.search`) → denial tests
+  `records.read`/`records.search`) and `RBAC-R11` (clinician holds no
+  `schedule.day_queue.read`) → denial tests
 - `RBAC-R6`, `R8`, `R10` map to no debt ID: deliberate compatibility, new hardening, and a
   factual no-migration constraint respectively.

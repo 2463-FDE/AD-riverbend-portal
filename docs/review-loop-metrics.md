@@ -235,6 +235,21 @@ recognized and cut: dispositions stand as r1 recorded, no re-tag, merge proceeds
 `docs/specs/rbac.md` §6). Method note: a scoped-out finding restated on an unchanged diff is
 recorded as a restatement, not a new A — it measures the bot's statelessness, not our defect rate.
 
+PR #26 r5 — 1 finding: 1 B (first on this PR) · **[high] fixed** — r3 gated `GET /schedule` with
+`schedule.read`, which ADR 0017 grants to clinicians, so any clinician session could pull the
+all-patient day queue (name, MRN, provider, reason). Capability split per the reviewer's shape
+after a design gate + §6 approval: `schedule.day_queue.read` (front_desk/admin/staff), clinician
+keeps `schedule.read` for `/slots` + per-patient `/appointments`. Labelled B, arguably softly: the
+clinician grant itself is ADR 0017's (main), but r3 chose the capability that made the combination
+effective on this route. Pre-push pass (general-purpose + pack, both lenses merged per the
+small-diff rule): 47k tokens, 2 tool calls, **0 orientation greps**, 0 code defects, 2 doc findings
+(stale CLAUDE.md §6 capability name; the split-is-conditional-on-role-migration caveat) — and it
+verified test discrimination against 4 mutations. Round also drove the real stack: rebuilt images,
+role-corrected demo users, and observed clinician 403 / front_desk 200 / anonymous 401 first-hand —
+which caught nothing the suite missed but converted two inferences into observations, including one
+gate claim that was wrong (the 5th deselected test is PR #28's records-flow addition, not a
+day-queue integration test as first asserted).
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`

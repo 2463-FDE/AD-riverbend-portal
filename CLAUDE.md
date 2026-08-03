@@ -145,9 +145,11 @@ eval/ · scripts/ · logs/  # eval harness; local tooling (gitignored); local lo
   **Cross-patient reads are not only reachable by walking IDs:** `GET /records/search?q=`,
   `GET /roi/requests` (`patient_id` optional), and `GET /schedule?date=` (added 2026-08-01 for the
   front-desk day queue) each return PHI across patients. Since ADR 0017 each requires its role
-  capability (`records.search` / `disclosures.read` / `schedule.read`), but a capability is not a
-  patient bind — these reads are cross-patient by construction — so W4 must size the D11 fix
-  against this whole set, not against `/patients/{id}/records` alone.
+  capability (`records.search` / `disclosures.read` / `schedule.day_queue.read` — the last split
+  from `schedule.read` per the ADR 0017 amendment so clinicians cannot pull the all-patient
+  queue), but a capability is not a patient bind — these reads are cross-patient by construction
+  — so W4 must size the D11 fix against this whole set, not against `/patients/{id}/records`
+  alone.
 - ⚠️ **Domain services are network-internal** (D15, ADR 0016) — no domain service has auth of its
   own; the gateway is the only session check, so 8071–8076 are `expose`-only and host publishing
   is a closed allowlist in `tests/test_compose_topology.py`. Do not add `ports:` to a service (or

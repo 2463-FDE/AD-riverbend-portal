@@ -26,6 +26,7 @@ CAPABILITIES = frozenset(
         "billing.read",
         "eligibility.check",
         "schedule.read",
+        "schedule.day_queue.read",
         "appointments.write",
         "disclosures.read",
         "disclosures.write",
@@ -42,6 +43,7 @@ ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
             "patients.write",
             "eligibility.check",
             "schedule.read",
+            "schedule.day_queue.read",
             "appointments.write",
             "ai.use",
         }

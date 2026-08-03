@@ -54,6 +54,22 @@ four real roles can be denied anything. No schema change: `users.role TEXT NOT N
 | ai.use | ✓ | | | ✓ | ✓ |
 | hl7.ingest | | | | ✓ | ✓ |
 
+**Amendment 2026-08-02 (PR #26 r5): `schedule.day_queue.read` added — 15 capabilities.**
+`schedule.read` alone gated both per-patient schedule reads (`/slots`,
+`GET /appointments?patient_id=`) and the all-patient day queue (`GET /schedule`), so the
+clinician grant above exposed the whole clinic's day — name, MRN, provider, reason, location,
+status — to a role whose stated need is *their own* day, which the endpoint cannot serve (no
+durable provider identity on appointments; see `docs/debt-log.md`). The new capability is
+granted to `front_desk`, `admin`, `staff` and gates `GET /schedule` only; clinicians keep
+`schedule.read` for the per-patient surface. Requirement `RBAC-R11` (`docs/specs/rbac.md`).
+Note the split is conditional on role migration: every pre-RBAC row still carries `staff`,
+which holds every capability including this one, so on an unmigrated database a clinician
+account on the compat role still reaches the queue (§8 open decision 1 owns the migration).
+
+| Capability | front_desk | clinician | roi_clerk | admin | staff |
+|---|---|---|---|---|---|
+| schedule.day_queue.read | ✓ | | | ✓ | ✓ |
+
 The judged lines: front desk registers, verifies insurance and books but reads no charts —
 `records.read`/`records.search` return clinical notes, which registration does not need. The
 ROI clerk reads records (compiling disclosure packets is the job) but cannot register or book.

@@ -8,7 +8,10 @@
 # Capability vocabulary comes from docs/specs/w4.md §3.1 (records.search,
 # schedule.read, disclosures.read named there) plus the pre-existing grants
 # below. `billing.read` and `records.write` are defined but currently mapped
-# to no gateway route.
+# to no gateway route. `schedule.day_queue.read` (ADR 0017 amendment,
+# PR #26 r5) splits the all-patient day queue from per-patient schedule
+# reads: clinicians keep schedule.read for /slots and /appointments but the
+# clinic-wide queue is front-desk/admin only.
 roles:
   front_desk:
     description: Registration, insurance verification, scheduling. No chart access (minimum necessary).
@@ -18,6 +21,7 @@ roles:
       - patients.write
       - eligibility.check
       - schedule.read
+      - schedule.day_queue.read
       - appointments.write
       - ai.use
   clinician:
@@ -48,6 +52,7 @@ roles:
       - billing.read
       - eligibility.check
       - schedule.read
+      - schedule.day_queue.read
       - appointments.write
       - disclosures.read
       - disclosures.write
@@ -68,6 +73,7 @@ roles:
       - billing.read
       - eligibility.check
       - schedule.read
+      - schedule.day_queue.read
       - appointments.write
       - disclosures.read
       - disclosures.write

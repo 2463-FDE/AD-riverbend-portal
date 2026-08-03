@@ -112,7 +112,7 @@ EXPECTED_ROUTE_CAPABILITIES = {
     ("GET", "/records/search"): "records.search",
     ("GET", "/slots"): "schedule.read",
     ("GET", "/appointments"): "schedule.read",
-    ("GET", "/schedule"): "schedule.read",
+    ("GET", "/schedule"): "schedule.day_queue.read",
     ("POST", "/appointments"): "appointments.write",
     ("POST", "/appointments/{appointment_id}/cancel"): "appointments.write",
     ("GET", "/roi/requests"): "disclosures.read",
@@ -195,6 +195,9 @@ def _forbid_fanout(monkeypatch):
         ("roi_clerk", "GET", "/eligibility?insurance_id=BCBS123"),
         ("roi_clerk", "POST", "/hl7/ingest"),
         ("roi_clerk", "GET", "/schedule?date=2026-08-03"),  # PR #26 r3 finding 2
+        # PR #26 r5: clinician keeps schedule.read (per-patient /slots,
+        # /appointments) but must not reach the all-patient day queue.
+        ("clinician", "GET", "/schedule?date=2026-08-03"),
     ],
 )
 def test_denied_role_gets_403_and_no_fanout(monkeypatch, role, method, path):
@@ -254,6 +257,9 @@ def test_staff_keeps_every_capability():
         ("front_desk", "GET", "/schedule?date=2026-08-03"),
         ("clinician", "GET", "/patients/1042/records"),
         ("clinician", "GET", "/records/search?q=gonzalez"),
+        # PR #26 r5: the day-queue split must not cost clinicians their
+        # per-patient schedule.read surface.
+        ("clinician", "GET", "/appointments?patient_id=1042"),
         ("roi_clerk", "GET", "/roi/requests"),
         ("staff", "GET", "/patients/1042/records"),  # pre-RBAC rows unchanged
         ("staff", "POST", "/roi/requests"),
