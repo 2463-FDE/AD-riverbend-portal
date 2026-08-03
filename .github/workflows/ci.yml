@@ -129,7 +129,7 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
-    needs: [frontend, portal, services, tests, secret-scan]
+    needs: [frontend, portal, services, tests, secret-scan, eval]
     steps:
       - uses: actions/checkout@v4
       # .env and .env.ai-proxy are gitignored (untracked secret files). Compose
