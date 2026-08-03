@@ -125,6 +125,15 @@ valve recipe never worked (image ships no curl) — replaced with the python for
 against the live stack. Class guard added: any loopback spelling × domain host port (literal
 8071–8077, globs, `807N`, `$var`) across docs + `eval/` + `tests/`, regression-proven (058074b).
 
+PR #28 r1 — 2 findings: 2 A / 0 B / 0 C · both scoping, no code change — both restate decisions the
+PR's own artifacts already record. **[high]** "existing/defaulted users keep full access via `staff`":
+deliberate compatibility posture — ADR 0017 §1 + tradeoff #1, `RBAC-R6`/`RBAC-R10` (no-migration is a
+tested requirement, not an omission); the per-account UPDATE is deferred to client sign-off (spec §8
+open decision 1) and any migration is §6 approval-gated. **[high]** "role revocation does not reach
+live sessions": ADR 0017 tradeoff #7 records exactly this, spec §8 #1 makes session invalidation a
+precondition of any reassignment; root cause is D10 (no session TTL, CLAUDE.md §9), out of this PR's
+scope and §6-gated. Reviewer's own summary concedes "the ADR text acknowledges this."
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
