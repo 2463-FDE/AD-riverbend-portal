@@ -112,6 +112,19 @@ did not stop r2. The class fix is giving the reviewer a runtime signal to check 
 inference, which is what `FE-R32` buys. If a round 3 lands another of these, the class fix did not
 work either and the next move is a design question rather than another comment.
 
+PR #27 r1 — 2 findings: 2 A / 0 B / 0 C · **[high] scoping, no code change** — "HL7 feed ingress
+removed without replacement": no live feed exists (nothing in repo or handover posts to
+interop-service; the only route in is the gateway's session-guarded `POST /hl7/ingest`, untouched).
+De-scope was already ADR 0016 §5's accepted decision; the real gap was ARCHITECTURE.md §6 still
+describing the feed with no statement that none is connected — recorded there (058074b). Machine
+ingress deferred to the ADR that connects a real feed (auth surface, approval-gated).
+**[medium] A, fixed** — runbook still curled the removed 807x host ports (two parameterized forms —
+`807N`, a `$p` loop — that the ADR's literal pre-landing grep could not match, so its "zero
+references" claim was false; corrected in place). Fix also exposed that ADR §4's `exec gateway curl`
+valve recipe never worked (image ships no curl) — replaced with the python form, executed verbatim
+against the live stack. Class guard added: any loopback spelling × domain host port (literal
+8071–8077, globs, `807N`, `$var`) across docs + `eval/` + `tests/`, regression-proven (058074b).
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
