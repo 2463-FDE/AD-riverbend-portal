@@ -54,7 +54,7 @@ seed-gen:      ## regenerate db/seed/seed.sql from the generator (deterministic)
 # cells), and the blind spots that remain are owned by the header of
 # eval/rag/check_drift.py — do not restate them here (§10.1). The mask and its red
 # paths are pinned by tests/test_drift_check.py.
-eval:          ## check eval/rag/REPORT.md is still current against db/seed/*
+eval:          ## check eval/rag/REPORT.md + db/seed/seed.sql are current against their sources
 	python3 eval/rag/check_drift.py
 
 psql: .env.ai-proxy .env.redis ## open a psql shell

@@ -49,6 +49,17 @@ accepted deliberately, is a blind spot:
     and occurred_at columns feed only masked cells — so rewriting every
     encounter summary invalidates the committed scores and still passes.
 
+SEPARATE FROM THE REPORT DIFF (added codex r3): db/seed/seed.sql — the file a
+fresh Postgres volume and `make seed` actually load — is byte-checked against
+its deterministic generator, db/seed/generate_seed.py. Without this, a
+hand-edited Maria row in seed.sql changes what the running system demonstrates
+while the report (which reads only the CSVs and goldset) stays green. The
+remaining gap there is TODO-40's duplication: generate_seed.py and the CSVs
+are two independent hardcoded copies of the same fixtures, so a generator
+edit with `make seed-gen` run leaves seed.sql, the CSVs and this report
+jointly stale and this check green. That closes only by deriving one from the
+other (TODO-40), not by another diff.
+
 Nothing else is masked, and the green message names exactly this scope rather
 than claiming the whole seed directory.
 
@@ -79,18 +90,40 @@ REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
 COMMITTED = os.path.join(HERE, "REPORT.md")
 RUN_PY = os.path.join(HERE, "run.py")
 
-if HERE not in sys.path:
-    sys.path.insert(0, HERE)
+def _retriever_default_model():
+    """Load eval/rag/retriever.py (torch-free at import) under a unique module
+    name, on demand. Not a plain `import retriever`: tests load THIS file by
+    path into their own process, and a bare import would register the generic
+    name `retriever` (and HERE on sys.path) for every later path-loaded module
+    to silently inherit — the collision class tests/conftest.py exists to
+    prevent."""
+    import importlib.util
 
-import retriever as retriever_mod  # noqa: E402  (module import is torch-free)
+    spec = importlib.util.spec_from_file_location(
+        "eval_rag_retriever", os.path.join(HERE, "retriever.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.DEFAULT_MODEL
 
 # `Retriever: **<label>**, top-k = <k>.` — report.py:155.
 RETRIEVER_RE = re.compile(r"^Retriever: \*\*(?P<label>.*)\*\*, top-k = (?P<k>\d+)\.$")
 MACRO_PREFIX = "**Macro recall "
 SCORE_HEADER = "| query | expected records | retrieved | recall | precision |"
 
+GENERATE_SEED = os.path.join(REPO_ROOT, "db", "seed", "generate_seed.py")
+SEED_SQL = os.path.join(REPO_ROOT, "db", "seed", "seed.sql")
+
 COMMITTED_SIDE = "eval/rag/REPORT.md"
 REGENERATED_SIDE = "the regenerated report"
+
+SEED_DIFF_MAX_LINES = 120
+
+SEED_REGENERATE = (
+    "rerun: make seed-gen   (python3 db/seed/generate_seed.py > db/seed/seed.sql)\n"
+    "then commit db/seed/seed.sql. If the regenerated file is the wrong one, the\n"
+    "edit belongs in db/seed/generate_seed.py, not in seed.sql by hand.\n"
+)
 
 REGENERATE = (
     "rerun: pip install -r eval/rag/requirements.txt && "
@@ -120,7 +153,7 @@ def _regenerate():
         if proc.returncode != 0:
             sys.stderr.write(proc.stderr.decode("utf-8", "replace"))
             _die("eval drift: the eval itself failed to run (above)\n")
-        with open(tmp_out) as f:
+        with open(tmp_out, encoding="utf-8") as f:
             return f.read()
     finally:
         # The leaked file is a full RIV-160 report, and report.py's own header
@@ -128,9 +161,60 @@ def _regenerate():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _check_seed_sql():
+    """db/seed/seed.sql is what Postgres actually loads (fresh-volume init and
+    `make seed`), and its generator is deterministic — so the committed file
+    must byte-match a regeneration. Catches a hand-edited or stale seed.sql,
+    i.e. the running system demonstrating data this report never read. Does
+    NOT catch a generator edit whose CSV twins went stale with it — see the
+    header's TODO-40 bullet. Exits 1 on mismatch, 2 if the generator cannot
+    run."""
+    proc = subprocess.run(
+        [sys.executable, GENERATE_SEED],
+        cwd=REPO_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr.decode("utf-8", "replace"))
+        _die("eval drift: db/seed/generate_seed.py failed to run (above)\n")
+    regenerated = proc.stdout
+
+    if not os.path.exists(SEED_SQL):
+        _die("eval drift: db/seed/seed.sql is missing\n%s" % SEED_REGENERATE)
+    # Bytes on both sides: a text-mode read folds CRLF to LF before comparing,
+    # which would bless a line-ending rewrite of the file Postgres loads.
+    with open(SEED_SQL, "rb") as f:
+        committed = f.read()
+
+    if regenerated == committed:
+        return
+
+    sys.stderr.write(
+        "eval drift: db/seed/seed.sql does not match db/seed/generate_seed.py\n"
+    )
+    diff = difflib.unified_diff(
+        committed.decode("utf-8", "replace").split("\n"),
+        regenerated.decode("utf-8", "replace").split("\n"),
+        fromfile="db/seed/seed.sql",
+        tofile="regenerated (generate_seed.py)",
+        lineterm="",
+    )
+    shown = 0
+    for line in diff:
+        if shown >= SEED_DIFF_MAX_LINES:
+            sys.stderr.write("... diff truncated at %d lines\n" % SEED_DIFF_MAX_LINES)
+            break
+        sys.stderr.write(line + "\n")
+        shown += 1
+    sys.stderr.write("\n" + SEED_REGENERATE)
+    sys.exit(1)
+
+
 def _check_committed_label(label):
     """The committed report must be embed-path output, not a stub regeneration."""
-    if retriever_mod.DEFAULT_MODEL in label:
+    default_model = _retriever_default_model()
+    if default_model in label:
         return
     _die(
         "eval drift: %s was generated with the wrong retriever.\n"
@@ -138,7 +222,7 @@ def _check_committed_label(label):
         "  expected the embed-path label naming %s.\n"
         "A stub-generated report scores every query 1.00, which contradicts the "
         "§4 prose\nbeneath it and destroys what the RIV-160 report is for.\n%s"
-        % (COMMITTED_SIDE, label, retriever_mod.DEFAULT_MODEL, REGENERATE)
+        % (COMMITTED_SIDE, label, default_model, REGENERATE)
     )
 
 
@@ -226,8 +310,10 @@ def _mask(text, source):
 def main():
     if not os.path.exists(COMMITTED):
         _die("eval drift: %s is missing\n" % COMMITTED)
-    with open(COMMITTED) as f:
+    with open(COMMITTED, encoding="utf-8") as f:
         committed = f.read()
+
+    _check_seed_sql()
 
     regenerated = _regenerate()
 
@@ -236,15 +322,16 @@ def main():
 
     if left == right:
         print(
-            "eval: REPORT.md matches what db/seed/* renders into it — the "
-            "SSN-cluster rows of\n      patients.csv, their allergy/medication "
-            "columns in encounters.csv, and goldset.json's\n      queries and "
-            "cited records"
+            "eval: db/seed/seed.sql matches its generator, and REPORT.md "
+            "matches what db/seed/*\n      renders into it — the SSN-cluster "
+            "rows of patients.csv, their allergy/medication\n      columns in "
+            "encounters.csv, and goldset.json's queries and cited records"
         )
         print(
-            "      (unchecked: non-clustered rows, the summary/provider/type/"
-            "date columns, and §4's\n      retrieved/recall/precision cells — "
-            "scope owned by this script's header)"
+            "      (unchecked: the generator's own fixture literals vs the "
+            "CSVs (TODO-40),\n      non-clustered rows, the summary/provider/"
+            "type/date columns, and §4's\n      retrieved/recall/precision "
+            "cells — scope owned by this script's header)"
         )
         return 0
 
@@ -259,4 +346,20 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Uphold the documented exit contract: 1 means "drifted — regenerate and
+    # commit" and nothing else. An unexpected crash (bad encoding, OSError)
+    # must not exit 1 and send an operator regenerating a report to fix an
+    # environment problem.
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
+        sys.stderr.write(
+            "eval drift: unexpected failure (above) — not a drift verdict; "
+            "nothing needs regenerating\n"
+        )
+        sys.exit(2)

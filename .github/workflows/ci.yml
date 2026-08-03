@@ -92,8 +92,9 @@ jobs:
         # paths is thin — tracked in RIV-201.
         run: pytest -m "not integration" -q
 
-  # Drift guard for the committed eval/rag/REPORT.md (RIV-160 deliverable): it is
-  # derived from db/seed/*, and a seed change that leaves it stale was previously
+  # Drift guard for the committed eval/rag/REPORT.md (RIV-160 deliverable) and for
+  # db/seed/seed.sql (the file Postgres actually loads, byte-checked against its
+  # deterministic generator): a seed change that left either stale was previously
   # invisible. No install step on purpose — the stub retriever path is standard
   # library only (eval/rag/retriever.py defers numpy and sentence-transformers into
   # EmbeddingRetriever._load), so this job must never pull eval/rag/requirements.txt
@@ -106,7 +107,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Check eval/rag/REPORT.md against db/seed/*
+      - name: Check eval/rag/REPORT.md and db/seed/seed.sql against their sources
         run: python eval/rag/check_drift.py
 
   # Secret scanning — recurrence guard for D9 (committed-secret exposure).

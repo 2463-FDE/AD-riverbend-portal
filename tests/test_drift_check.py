@@ -236,3 +236,72 @@ def test_red_when_a_goldset_case_is_removed(tmp_path):
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
     assert "is stale vs db/seed" in proc.stderr
+
+
+# --- seed.sql must match its generator (codex r3: the file Postgres loads) ---
+
+
+def test_red_when_seed_sql_is_hand_edited(tmp_path):
+    """A hand-edit to seed.sql changes what the running system demonstrates
+    without touching anything the report reads — the gate must go red on the
+    seed check, not stay green on the report diff. The quoted needle anchors
+    the mutation to Maria's 1330 encounter INSERT (the clinical row this test
+    claims to pin), not the header comment that also mentions penicillin."""
+    def mutate(work):
+        sql = work / "db" / "seed" / "seed.sql"
+        mutated = sql.read_text().replace("'penicillin'", "'sulfa'", 1)
+        assert mutated != sql.read_text(), "needle missing — update this test"
+        sql.write_text(mutated)
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 1
+    assert "seed.sql does not match db/seed/generate_seed.py" in proc.stderr
+    assert "make seed-gen" in proc.stderr
+
+
+def test_red_when_seed_sql_line_endings_change(tmp_path):
+    """The compare is bytes, not universal-newlines text: a CRLF rewrite of
+    the file Postgres loads must not be blessed as 'matches its generator'."""
+    def mutate(work):
+        sql = work / "db" / "seed" / "seed.sql"
+        sql.write_bytes(sql.read_bytes().replace(b"\n", b"\r\n"))
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 1
+    assert "seed.sql does not match db/seed/generate_seed.py" in proc.stderr
+
+
+def test_unexpected_failure_exits_2_not_1(tmp_path):
+    """Exit 1 means 'drifted — regenerate and commit', and nothing else may
+    claim it: an undecodable REPORT.md is an environment/corruption problem,
+    and telling the operator to regenerate would 'fix' it by destroying the
+    committed embed-path report."""
+    def mutate(work):
+        report = work / "eval" / "rag" / "REPORT.md"
+        report.write_bytes(report.read_bytes() + b"\xff\xfe garbage")
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 2
+    assert "not a drift verdict" in proc.stderr
+
+
+def test_loading_check_drift_does_not_register_generic_module_names():
+    """This file loads check_drift.py by path into the test process; the
+    module must not plant the generic name `retriever` in sys.modules, where
+    a later path-loaded module's `import retriever` would silently receive
+    the eval harness instead of its own sibling. (conftest.load_module's
+    sys.path insert of eval/rag is its documented sibling-import mechanism,
+    shared by every loaded module — not asserted here.)"""
+    assert "retriever" not in sys.modules
+
+
+def test_red_when_generator_and_seed_sql_skew(tmp_path):
+    """The other direction of the same skew: the generator changes and the
+    committed seed.sql is left stale."""
+    def mutate(work):
+        gen = work / "db" / "seed" / "generate_seed.py"
+        gen.write_text(gen.read_text().replace("penicillin", "sulfa"))
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 1
+    assert "seed.sql does not match db/seed/generate_seed.py" in proc.stderr
