@@ -48,14 +48,12 @@ seed-gen:      ## regenerate db/seed/seed.sql from the generator (deterministic)
 # the system Python (3.8) like seed-gen and status, needs no container, no database
 # and no network — and diffs against the committed file.
 #
-# §4's retrieval NUMBERS are masked out of the diff: the committed report is
-# embed-path output and they are not reproducible without the model. Cost of masking
-# the whole table rather than the differing rows: whatever feeds §4 alone goes unseen
-# — goldset.json entirely, and encounters.csv's summary/provider/type/date columns.
-# The §4 retriever LABEL is checked rather than masked, so a report regenerated the
-# easy way (--retriever stub, which scores 1.00 everywhere) is rejected instead of
-# passing forever. Full rationale in the header of eval/rag/check_drift.py; the mask
-# and its red paths are pinned by tests/test_drift_check.py.
+# §4's model-dependent cells are masked out of the diff: the committed report is
+# embed-path output and its scores are not reproducible without the model. What is
+# masked, what is deliberately NOT (the retriever label, each row's goldset-derived
+# cells), and the blind spots that remain are owned by the header of
+# eval/rag/check_drift.py — do not restate them here (§10.1). The mask and its red
+# paths are pinned by tests/test_drift_check.py.
 eval:          ## check eval/rag/REPORT.md is still current against db/seed/*
 	python3 eval/rag/check_drift.py
 

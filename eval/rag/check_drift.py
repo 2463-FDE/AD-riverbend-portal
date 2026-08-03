@@ -19,23 +19,35 @@ WHAT IS AND IS NOT CHECKED — one tradeoff, stated in full:
 
 The committed REPORT.md is EMBED-path output, so §4's retrieval numbers cannot
 be reproduced without the model. This check masks §4's numeric content in both
-texts before diffing: the score table body and the macro line. Everything else
-— §1 headline and cluster table, §2 patient-safety gaps, §3 match-key
-analysis, §5 conclusion — is compared byte for byte.
+texts before diffing — but only the cells that genuinely depend on the model:
+in each score-table row, the `retrieved` / `recall` / `precision` cells, and
+the macro line. The row itself survives, so its `query` and
+`expected records` cells — goldset.json content, identical on both paths — are
+compared, and so is the row COUNT: a reworded query, a changed cites_records
+list, or an added/removed case all turn the gate red. Everything else — §1
+headline and cluster table, §2 patient-safety gaps, §3 match-key analysis, §5
+conclusion — is compared byte for byte.
 
-Masking the WHOLE table body, rather than only the rows that currently differ
-between the stub and embed paths, keeps this check decoupled from score
-stability: a model or hardware change must never turn the drift gate red. The
-cost, accepted deliberately, is a blind spot, and it is wider than the scores
-themselves:
+Masking whole cells, rather than only the values that currently differ between
+the stub and embed paths, keeps this check decoupled from score stability: a
+model or hardware change must never turn the drift gate red. The cost,
+accepted deliberately, is a blind spot:
 
-  * db/seed/goldset.json feeds §4 alone, so a goldset edit — reworded query,
-    changed expected record ids, an added or removed case — passes unnoticed.
-  * Of db/seed/encounters.csv, only patient_id, allergies and medications
-    reach the compared text (via §2). encounter_type, provider, summary and
-    occurred_at reach the report only through retriever.encounter_document,
-    i.e. only into masked §4 — so rewriting every encounter summary invalidates
-    the committed scores and still passes.
+  * Of goldset.json, only each case's query and cites_records reach the
+    report. expected_patient_id, expected_answer and the file's description
+    field appear nowhere in it, so edits to those pass unnoticed — that is
+    run.py's scope, not a mask decision.
+  * Of db/seed/patients.csv and encounters.csv, only rows in an SSN candidate
+    cluster render into compared text at all: §1's cluster tables list only
+    fragmented/conflict/ambiguous identities, and §2's gaps are built solely
+    from status == "candidate" SSN identities (run.py). A non-clustered
+    patient's name — or an allergy planted on their encounter — reaches the
+    report only through retriever.encounter_document, i.e. only into masked
+    cells, and passes unnoticed. Also run.py's rendering scope, not the
+    mask's.
+  * Even for cluster rows, encounters.csv's encounter_type, provider, summary
+    and occurred_at columns feed only masked cells — so rewriting every
+    encounter summary invalidates the committed scores and still passes.
 
 Nothing else is masked, and the green message names exactly this scope rather
 than claiming the whole seed directory.
@@ -148,8 +160,20 @@ def _count_anchors(lines):
     return hits
 
 
+def _mask_score_row(line):
+    """Blank one score-table row's model-dependent cells — `retrieved`,
+    `recall`, `precision` — keeping the goldset-derived `query` and
+    `expected records` cells (and the row itself) comparable. rsplit from the
+    right so a query containing `|` cannot shift which cells are masked. The
+    `|---|` separator row has nothing model-dependent and passes through."""
+    if not line.strip("|- "):
+        return line
+    head = line.rstrip().rstrip("|").rsplit("|", 3)[0]
+    return head + "| <masked: retrieved> | <masked: recall> | <masked: precision> |"
+
+
 def _mask(text, source):
-    """Blank §4's numeric content. Exits 2 if the anchors moved."""
+    """Blank §4's model-dependent content. Exits 2 if the anchors moved."""
     lines = text.split("\n")
 
     for anchor, count in sorted(_count_anchors(lines).items()):
@@ -190,8 +214,8 @@ def _mask(text, source):
         if line == SCORE_HEADER:
             out.append(line)
             i += 1
-            out.append("<masked: score table body>")
             while i < len(lines) and lines[i].startswith("|"):
+                out.append(_mask_score_row(lines[i]))
                 i += 1
             continue
         out.append(line)
@@ -212,12 +236,15 @@ def main():
 
     if left == right:
         print(
-            "eval: REPORT.md matches db/seed/patients.csv and the "
-            "allergy/medication columns of encounters.csv"
+            "eval: REPORT.md matches what db/seed/* renders into it — the "
+            "SSN-cluster rows of\n      patients.csv, their allergy/medication "
+            "columns in encounters.csv, and goldset.json's\n      queries and "
+            "cited records"
         )
         print(
-            "      (masked: §4 retrieval scores — so goldset.json and the "
-            "summary/provider/type/date columns are unchecked)"
+            "      (unchecked: non-clustered rows, the summary/provider/type/"
+            "date columns, and §4's\n      retrieved/recall/precision cells — "
+            "scope owned by this script's header)"
         )
         return 0
 

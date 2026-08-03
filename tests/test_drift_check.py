@@ -12,6 +12,7 @@ red ones are not red for a trivial reason.
 The end-to-end cases mutate a COPY of the seed CSVs under tmp_path; the real
 db/seed/ is never written to.
 """
+import json
 import os
 import shutil
 import subprocess
@@ -121,8 +122,20 @@ def test_a_markdown_table_outside_section_4_is_still_compared(report_text):
     masked = "\n".join(drift._mask(report_text, drift.REGENERATED_SIDE))
     assert "| 1042 | Maria Gonzalez | 1971-03-02 | self_service |" in masked
     assert "| `ssn` | 3 | 2 |" in masked
-    # and the §4 body is gone
-    assert "| show me Maria Gonzalez's allergies |" not in masked
+
+
+def test_score_rows_keep_goldset_cells_and_lose_model_cells(report_text):
+    """The mask is per-cell, not per-row: each row's query and expected
+    records — goldset.json content, identical on both retriever paths — stay
+    comparable, so a goldset edit drifts. Only the model-dependent cells go."""
+    masked = "\n".join(drift._mask(report_text, drift.REGENERATED_SIDE))
+    assert (
+        "| show me Maria Gonzalez's allergies | [1] | <masked: retrieved> | "
+        "<masked: recall> | <masked: precision> |"
+    ) in masked
+    # the committed embed-path values must not survive anywhere
+    assert "| 1.00 | 1.00 |" not in masked
+    assert "| 0.00 | 0.00 |" not in masked
 
 
 def test_section_4_prose_survives_the_mask(report_text):
@@ -175,6 +188,50 @@ def test_red_when_a_seed_allergy_changes(tmp_path):
     def mutate(work):
         csv = work / "db" / "seed" / "encounters.csv"
         csv.write_text(csv.read_text().replace("penicillin", "sulfa"))
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 1
+    assert "is stale vs db/seed" in proc.stderr
+
+
+# --- goldset.json edits must be observable (codex r2: the wide mask hid them) ---
+
+
+def _mutate_goldset(work, transform):
+    path = work / "db" / "seed" / "goldset.json"
+    goldset = json.loads(path.read_text())
+    transform(goldset)
+    path.write_text(json.dumps(goldset, indent=2))
+
+
+def test_red_when_a_goldset_query_is_reworded(tmp_path):
+    def mutate(work):
+        def transform(goldset):
+            goldset["cases"][0]["query"] = "list Maria Gonzalez's allergies"
+        _mutate_goldset(work, transform)
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 1
+    assert "is stale vs db/seed" in proc.stderr
+
+
+def test_red_when_goldset_cited_records_change(tmp_path):
+    def mutate(work):
+        def transform(goldset):
+            goldset["cases"][0]["cites_records"] = [2]
+        _mutate_goldset(work, transform)
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 1
+    assert "is stale vs db/seed" in proc.stderr
+
+
+def test_red_when_a_goldset_case_is_removed(tmp_path):
+    """The row count is compared too, not just the surviving cells."""
+    def mutate(work):
+        def transform(goldset):
+            goldset["cases"].pop()
+        _mutate_goldset(work, transform)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
