@@ -165,6 +165,23 @@ unmasked text, and the pass *reproduced* a non-clustered rename + planted allerg
 the Makefile mask comment still described the r1 whole-body mask (§10.1 stale-copy class, cut to a
 pointer at check_drift.py's header). Fix commit `c7b8247`.
 
+PR #29 r3 — 1 finding: 1 A · re-raise of r1's other parked follow-up (TODO-40's seed.sql half),
+conceded via design gate (option (a): stateless regen-and-diff now; TODO-40's derive-one-copy
+rewrite stays parked — structural change on the fresh-volume seed path, not a mid-review edit).
+**[medium] fixed** — the gate never checked `db/seed/seed.sql`, the file Postgres actually loads;
+`check_drift` now regenerates it from the deterministic generator and fails on any byte
+difference, before the report diff. Two end-to-end tests (seed.sql hand-edited / generator
+edited), both regression-proven red against the r2 check. CI job comment + step name + Makefile
+help line rescoped to what is actually covered; remaining CSV↔generator duplication stays named
+in the header and the green output. Pre-push pass (diff-reviewer): 99k tokens, 17 calls, **0
+orientation greps**, 4 findings, all low, all real, all fixed pre-push with regression-proven
+tests (3 red on the round's own first cut): text-mode seed compare blessed a CRLF rewrite (now
+bytes); an uncaught crash exited 1 — the "regenerate and commit" code — instead of 2 (now
+wrapped); module-level `import retriever` planted a generic name in the host process's
+sys.modules when path-loaded by tests (now on-demand under a unique name); the hand-edit test's
+mutation hit the header comment, not the clinical INSERT row it claimed to pin (now anchored).
+Fix commit `4ef0571`.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
