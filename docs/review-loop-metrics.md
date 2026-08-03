@@ -142,6 +142,29 @@ recognized and cut: dispositions stand as r1 recorded, no re-tag, merge proceeds
 `docs/specs/rbac.md` §6). Method note: a scoped-out finding restated on an unchanged diff is
 recorded as a restatement, not a new A — it measures the bot's statelessness, not our defect rate.
 
+PR #29 r1 — 1 finding: 1 A · **[medium] parked** — score-table mask blanks whole rows, so
+goldset.json edits are invisible to the gate (shape shipped in the original push `97297b9`, where
+the docstring priced it as a score-stability tradeoff). Triaged as accepted-tradeoff and parked as
+the corpus-hash follow-up (TODO-41) rather than fixed. Separately, the prose-level `needs:` item
+(eval job not gating docker-build) was first called out of scope, then the call was reversed in the
+reply — the `needs:` list is a gate list, `secret-scan` proves it — and fixed in `808aaaf`.
+(Backfilled with r2: this line was not written when the round closed.)
+
+PR #29 r2 — 2 findings: 2 A · both re-raise r1's parked mask finding, now conceded — the bot's
+narrower shape (compare goldset cells, mask only scores) beats the parked corpus-hash one and costs
+a smaller diff. **[medium] fixed** — mask made per-cell: each row survives with its `query` /
+`expected records` cells (goldset content, identical on both retriever paths) and the row count
+compared; only `retrieved`/`recall`/`precision` cells blanked, rsplit from the right so a
+pipe-in-query cannot shift the mask. **[medium] fixed** — three end-to-end bite tests (reworded
+goldset query, changed `cites_records`, removed case), each + the per-cell unit test
+regression-proven red against the r1 mask (4 fail stashed / 17 pass popped). Pre-push pass
+(diff-reviewer): 77k tokens, 18 calls, **0 orientation greps**, 2 findings, both real, both fixed
+pre-push: the green message overclaimed compared scope — only SSN-cluster rows render into
+unmasked text, and the pass *reproduced* a non-clustered rename + planted allergy passing green
+(message + docstring rescoped; blind spot widened into TODO-41, closable by the corpus hash) — and
+the Makefile mask comment still described the r1 whole-body mask (§10.1 stale-copy class, cut to a
+pointer at check_drift.py's header). Fix commit `c7b8247`.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
