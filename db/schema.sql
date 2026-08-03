@@ -9,14 +9,15 @@
 -- Authentication
 -- ---------------------------------------------------------------------------
 -- Portal + staff logins. Passwords are PBKDF2 (django-style string). Note:
--- there is exactly one role for everyone (see config/roles.yaml) and sessions
--- issued at login never expire (see services/gateway/auth.yaml).
+-- roles are per job function since ADR 0017 (see config/roles.yaml; 'staff'
+-- is the deprecated full-capability compat default) and sessions issued at
+-- login never expire (see services/gateway/auth.yaml).
 CREATE TABLE IF NOT EXISTS users (
     id            SERIAL PRIMARY KEY,
     username      TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     full_name     TEXT,
-    role          TEXT NOT NULL DEFAULT 'staff',   -- single role for everyone
+    role          TEXT NOT NULL DEFAULT 'staff',   -- compat default; see config/roles.yaml
     is_active     BOOLEAN NOT NULL DEFAULT TRUE,
     last_login_at TIMESTAMPTZ,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()

@@ -7,17 +7,17 @@
 
 INSERT INTO users (id, username, password_hash, full_name, role, created_at) VALUES
  (1, 'mokonkwo', 'pbkdf2_sha256$260000$riverbend01saltval0$d4W6Mr76sOsF1290B0966R7BiSlcC4CD8wUq2Xo9a3E=', 'Maya Okonkwo (COO)', 'staff', now()),
- (2, 'frontdesk', 'pbkdf2_sha256$260000$riverbend02saltval0$OWsdELUkEqvUoHY2Prx1GBzgckIxBsEEl2CKaCPF1pU=', 'Front Desk (Riverbend Main)', 'staff', now()),
- (3, 'rdelgado', 'pbkdf2_sha256$260000$riverbend03saltval0$T5BDWpCFaqjd8MQdjlkqe8V3lYABrcJa0yeT/Ggkrbc=', 'Rosa Delgado (Registration)', 'staff', now()),
- (4, 'jpark', 'pbkdf2_sha256$260000$riverbend04saltval0$3PrZm0V5n4X/a61MAXyZ2JBNL7cwNc538hFWb2e4K38=', 'Jin Park (Registration)', 'staff', now()),
- (5, 'drpatel', 'pbkdf2_sha256$260000$riverbend05saltval0$uuKpGNin5j5apcw2SjLG3d+Oycox2EGfcC0k4LK//sU=', 'Dr. Anil Patel', 'staff', now()),
- (6, 'drnguyen', 'pbkdf2_sha256$260000$riverbend06saltval0$jcuSkMTcLzR76lH8mCV0H/acttv4fZhlfQBtk53L8S8=', 'Dr. Anita Nguyen', 'staff', now()),
- (7, 'drlee', 'pbkdf2_sha256$260000$riverbend07saltval0$UctW6Cywcmm7N+1eDI0BhNdUyl8Q0gjOUY5HTvO6b6I=', 'Dr. Sandra Lee', 'staff', now()),
+ (2, 'frontdesk', 'pbkdf2_sha256$260000$riverbend02saltval0$OWsdELUkEqvUoHY2Prx1GBzgckIxBsEEl2CKaCPF1pU=', 'Front Desk (Riverbend Main)', 'front_desk', now()),
+ (3, 'rdelgado', 'pbkdf2_sha256$260000$riverbend03saltval0$T5BDWpCFaqjd8MQdjlkqe8V3lYABrcJa0yeT/Ggkrbc=', 'Rosa Delgado (Registration)', 'front_desk', now()),
+ (4, 'jpark', 'pbkdf2_sha256$260000$riverbend04saltval0$3PrZm0V5n4X/a61MAXyZ2JBNL7cwNc538hFWb2e4K38=', 'Jin Park (Registration)', 'front_desk', now()),
+ (5, 'drpatel', 'pbkdf2_sha256$260000$riverbend05saltval0$uuKpGNin5j5apcw2SjLG3d+Oycox2EGfcC0k4LK//sU=', 'Dr. Anil Patel', 'clinician', now()),
+ (6, 'drnguyen', 'pbkdf2_sha256$260000$riverbend06saltval0$jcuSkMTcLzR76lH8mCV0H/acttv4fZhlfQBtk53L8S8=', 'Dr. Anita Nguyen', 'clinician', now()),
+ (7, 'drlee', 'pbkdf2_sha256$260000$riverbend07saltval0$UctW6Cywcmm7N+1eDI0BhNdUyl8Q0gjOUY5HTvO6b6I=', 'Dr. Sandra Lee', 'clinician', now()),
  (8, 'billing1', 'pbkdf2_sha256$260000$riverbend08saltval0$rNBze1DjcEp77zjJUWB+T/PsrlRyI+5SE++tDkj1JbQ=', 'Tom Reyes (Billing)', 'staff', now()),
- (9, 'roiclerk', 'pbkdf2_sha256$260000$riverbend09saltval0$E2x4uRjbO3fGyhLOjdhH3x1SKrZ8RPdCbK+IM0ZpN1g=', 'Dana White (ROI Clerk)', 'staff', now()),
+ (9, 'roiclerk', 'pbkdf2_sha256$260000$riverbend09saltval0$E2x4uRjbO3fGyhLOjdhH3x1SKrZ8RPdCbK+IM0ZpN1g=', 'Dana White (ROI Clerk)', 'roi_clerk', now()),
  (10, 'labtech', 'pbkdf2_sha256$260000$riverbend10saltval0$foQLZvzL5VE1DicUMngxFRVEoHee5XZqfO2Vkg0Ltkk=', 'Lab Intake', 'staff', now()),
- (11, 'nurse_kc', 'pbkdf2_sha256$260000$riverbend11saltval0$mccK64T/hIlQYtgWgTK7i+DGLH/sftxHqECHgtsexC0=', 'Karen Cole, RN', 'staff', now()),
- (12, 'itadmin', 'pbkdf2_sha256$260000$riverbend12saltval0$IUYsIcUdl0ludp6kkVgRboYSPtmaEoTRZKKT22MqkhI=', 'Helix Support', 'staff', now());
+ (11, 'nurse_kc', 'pbkdf2_sha256$260000$riverbend11saltval0$mccK64T/hIlQYtgWgTK7i+DGLH/sftxHqECHgtsexC0=', 'Karen Cole, RN', 'clinician', now()),
+ (12, 'itadmin', 'pbkdf2_sha256$260000$riverbend12saltval0$IUYsIcUdl0ludp6kkVgRboYSPtmaEoTRZKKT22MqkhI=', 'Helix Support', 'admin', now());
 SELECT setval('users_id_seq', 12, true);
 
 INSERT INTO patients (id, mrn, name, dob, ssn, gender, address, phone, email, notes, created_via, created_at) VALUES
