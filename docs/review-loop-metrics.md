@@ -134,6 +134,14 @@ live sessions": ADR 0017 tradeoff #7 records exactly this, spec §8 #1 makes ses
 precondition of any reassignment; root cause is D10 (no session TTL, CLAUDE.md §9), out of this PR's
 scope and §6-gated. Reviewer's own summary concedes "the ADR text acknowledges this."
 
+PR #28 r2 — 2 findings: same two as r1, restated verbatim (same anchors, same recommendations);
+0 new. The bot reviews the branch diff only and the RBAC diff was unchanged (r1 pushed only the
+main merge + this ledger), so a further tag on an unchanged diff reproduces the round — loop
+recognized and cut: dispositions stand as r1 recorded, no re-tag, merge proceeds on the human
+§6 approval this PR's review was designated to carry (ADR 0017 context; gate table in
+`docs/specs/rbac.md` §6). Method note: a scoped-out finding restated on an unchanged diff is
+recorded as a restatement, not a new A — it measures the bot's statelessness, not our defect rate.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
