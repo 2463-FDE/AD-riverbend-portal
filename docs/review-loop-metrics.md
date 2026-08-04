@@ -182,6 +182,47 @@ sys.modules when path-loaded by tests (now on-demand under a unique name); the h
 mutation hit the header comment, not the clinical INSERT row it claimed to pin (now anchored).
 Fix commit `4ef0571`.
 
+PR #29 r4 — 1 finding: 0 A / **1 B** / 0 C · **[medium] fixed** — the seed check r3 added
+validated `seed.sql` against `generate_seed.py`, while the report was regenerated from
+`patients.csv` / `encounters.csv` / `goldset.json`, and nothing tied the two sources together: a
+generator-side fixture edit plus `make seed-gen` left seed.sql matching its generator, the report
+matching the untouched CSVs, and the gate green over a fresh volume holding different data than
+the committed RIV-160 report claims. **Labelled B, by §5 step 4** — the flagged mechanism
+(`_check_seed_sql`) is absent from the original push `97297b9`; r3 wrote it. Not C: no earlier
+round tried and failed to close this, because before r3 there was no seed check to be anchored to
+the wrong source. First B on this PR, and it is the predicted shape — the round that adds a
+checker adds the next round's surface.
+Closed by **deleting the second copy** (r1/r3's parked TODO-40, now taken) rather than
+cross-checking it: the generator reads its fixture rows' shared columns from the CSVs and keeps
+only the columns the eval never sees (mrn/gender/phone/email/notes; encounter
+id/reason/location/status), keyed to the CSV rows and dying loudly on a missing file, changed ids,
+reordered rows, or a content swap under a stable patient_id. `seed.sql` regenerated
+value-identical (whitespace-only, on three hand-aligned encounter rows). Five discrimination tests
+on the derivation itself, each proven red against the pre-derivation code.
+Pre-push pass (diff-reviewer): 124k tokens, 23 calls, **0 orientation greps**, 5 findings — 3
+medium, 2 low — all real, 4 fixed pre-push with regression-proven tests, 1 parked. Two of the
+three mediums were in the round's own first cut, i.e. B-class defects caught before they became
+rounds: `make seed-gen`'s plain `> db/seed/seed.sql` truncates the target *before* the generator
+runs, harmless while the generator read no files and could not fail, and now a way to leave a
+0-byte seed for `docker-compose.yml` to mount into a fresh volume's initdb without complaint (temp
+file + rename); and the new timeout test pinned the handler but not the arming — the reviewer
+mutation-proved both `timeout=` kwargs deletable with the whole file still green (the fake now
+asserts `kwargs["timeout"]`, and the same mutation KeyErrors). The third medium was an overclaim
+in the r4 header itself: "no generator-side fixture copy left to edit" was false — `audit_logs`'
+intake row hand-copied 1042's name/dob/ssn (D1's PHI-in-logs fixture) and `records` id 2's note
+paraphrases `encounters.csv`'s allergy column. The derivable half was derived (seed.sql still
+byte-identical; a test now asserts no copy of the old SSN survives anywhere in the seed), the
+prose half is named in the header as uncovered. The low fixed: `"retriever" not in sys.modules`
+asserted a process-global that would go red pointing at an innocent `check_drift.py` the day any
+test path-loads `run.py` — now a sys.modules snapshot across the call.
+**Parked, named here rather than fixed:** the seed byte-check makes cross-interpreter determinism
+of `generate_seed.py` load-bearing (local `make eval` runs children under system 3.8, CI under
+3.12) and nothing pins it; verified identical sha256 under both today, so it is latent. The fix is
+an interpreter pin or a CI matrix leg — new CI surface, which is a §3 design call and not a
+mid-review edit. Also noted for honesty: `test_red_when_the_eval_itself_fails` is characterization,
+not regression — it pins behaviour r3 already shipped and was green against the pre-r4 code.
+Fix commit `caea30c`.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
