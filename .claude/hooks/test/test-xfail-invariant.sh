@@ -24,16 +24,20 @@ verdict() {
   printf '%s' "$1" | jq -r '.hookSpecificOutput.permissionDecision // "allow"' 2>/dev/null || printf 'allow'
 }
 
-# decision <command> <fixture> -> prints allow|deny
+# decision <command> <fixture> [cwd] -> prints allow|deny
 decision() {
-  local out
-  out=$(printf '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"}}' "$1" \
-        | XFAIL_INVARIANT_OUTPUT="$2" bash "$HOOK" 2>/dev/null)
+  local out payload
+  if [ -n "${3:-}" ]; then
+    payload=$(printf '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}' "$1" "$3")
+  else
+    payload=$(printf '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"}}' "$1")
+  fi
+  out=$(printf '%s' "$payload" | XFAIL_INVARIANT_OUTPUT="$2" bash "$HOOK" 2>/dev/null)
   verdict "$out"
 }
 
-expect() { # expect <want> <label> <command> <fixture>
-  local got; got="$(decision "$3" "$4")"
+expect() { # expect <want> <label> <command> <fixture> [cwd]
+  local got; got="$(decision "$3" "$4" "${5:-}")"
   [ "$got" = "$1" ] && ok "$2" "$got" || bad "$2" "$1" "$got"
 }
 
@@ -59,6 +63,26 @@ case "$reason" in
   *) bad "auth-change wording present" "the mandated sentence" "${reason:-<empty>}" ;;
 esac
 
+# Discriminating: green fixture WOULD allow, so a deny proves the cross-tree
+# check fired (and that the broadened matcher caught the redirected form at all —
+# the old substring matcher never matched "git -C <dir> push").
+echo "Cross-tree push forms must deny even on a green suite (PR #36 r2):"
+expect deny  "git -C <elsewhere> push"            "git -C /tmp push"                 "$FIX/pytest-ok.txt"
+expect deny  "cd <elsewhere> && git push"         "cd /tmp && git push"              "$FIX/pytest-ok.txt"
+expect deny  "--work-tree redirection"            "git --work-tree=/tmp push origin" "$FIX/pytest-ok.txt"
+expect deny  "unresolvable cd target (variable)"  "cd \$W && git push"               "$FIX/pytest-ok.txt"
+expect deny  "GIT_DIR env-prefix push"            "GIT_DIR=/tmp/x/.git git push"     "$FIX/pytest-ok.txt"
+expect deny  "bare git push, cwd elsewhere"       "git push"                         "$FIX/pytest-ok.txt" "/tmp"
+expect allow "cd tests && git push (same repo)"   "cd tests && git push"             "$FIX/pytest-ok.txt"
+expect allow "bare git push, cwd project subdir"  "git push origin HEAD"             "$FIX/pytest-ok.txt" "$PROJECT_DIR/tests"
+
+# Discriminating: the failed fixture WOULD deny if the matcher fired — an allow
+# proves `git stash push` is no longer treated as a push (r2 reviewer: the
+# broad word-match ran/denied the suite before every stash on a red tree,
+# breaking verify-stack §4's manual fallback).
+echo "git stash push is not a push:"
+expect allow "git stash push -- <files>"          "git stash push -- app.py"         "$FIX/pytest-failed.txt"
+
 # Discriminating: these use the XPASS fixture, which WOULD deny if the hook ran
 # its check — so an "allow" here proves the command matcher short-circuited.
 echo "Non-push commands must short-circuit (never run the suite):"
@@ -66,6 +90,16 @@ expect allow "git status"      "git status"                 "$FIX/pytest-xpass.t
 expect allow "git commit"      "git commit -m wip"          "$FIX/pytest-xpass.txt"
 expect allow "ls"              "ls -la"                     "$FIX/pytest-xpass.txt"
 expect allow "empty command"   ""                           "$FIX/pytest-xpass.txt"
+
+echo "ALLOW_CROSS_TREE_GIT=1 skips the cross-tree check but NOT the suite:"
+got=$(verdict "$(printf '{"tool_input":{"command":"git -C /tmp push"}}' \
+      | ALLOW_CROSS_TREE_GIT=1 XFAIL_INVARIANT_OUTPUT="$FIX/pytest-ok.txt" bash "$HOOK" 2>/dev/null)")
+[ "$got" = allow ] && ok "escape: cross-tree push, green suite" "allow" \
+                   || bad "escape: cross-tree push, green suite" allow "$got"
+got=$(verdict "$(printf '{"tool_input":{"command":"git -C /tmp push"}}' \
+      | ALLOW_CROSS_TREE_GIT=1 XFAIL_INVARIANT_OUTPUT="$FIX/pytest-failed.txt" bash "$HOOK" 2>/dev/null)")
+[ "$got" = deny ] && ok "escape: red suite still denies" "deny" \
+                  || bad "escape: red suite still denies" deny "$got"
 
 echo "The bypass must allow an otherwise-denied push:"
 got=$(verdict "$(printf '{"tool_input":{"command":"git push"}}' \

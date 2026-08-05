@@ -36,19 +36,23 @@ stage() { # <repo> <relpath> <content>
   git -C "$repo" add "$rel"
 }
 
-verdict() { # <repo> [command] -> prints deny|allow
-  local out
-  out=$(printf '{"tool_input":{"command":"%s"}}' "${2:-git commit -m x}" \
-    | CLAUDE_PROJECT_DIR="$1" bash "$HOOK" 2>/dev/null)
+verdict() { # <repo> [command] [cwd] -> prints deny|allow
+  local out payload
+  if [ -n "${3:-}" ]; then
+    payload=$(printf '{"tool_input":{"command":"%s"},"cwd":"%s"}' "${2:-git commit -m x}" "$3")
+  else
+    payload=$(printf '{"tool_input":{"command":"%s"}}' "${2:-git commit -m x}")
+  fi
+  out=$(printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$1" bash "$HOOK" 2>/dev/null)
   case "$out" in
     *permissionDecision*deny*) echo deny ;;
     *) echo allow ;;
   esac
 }
 
-expect() { # <want> <label> <repo> [command]
+expect() { # <want> <label> <repo> [command] [cwd]
   local want="$1" label="$2" got
-  got=$(verdict "$3" "${4:-git commit -m x}")
+  got=$(verdict "$3" "${4:-git commit -m x}" "${5:-}")
   if [ "$got" = "$want" ]; then
     printf '  ok    %-42s %s\n' "$label" "$got"; pass=$((pass+1))
   else
@@ -87,6 +91,61 @@ r=$(new_repo); stage "$r" "docs/note.md" "nothing sensitive here"
 expect allow "clean staged diff" "$r"
 r=$(new_repo)
 expect allow "empty stage" "$r"
+
+echo "Cross-tree redirection must deny fail-closed (PR #36 r2):"
+r=$(new_repo); other=$(new_repo)
+expect deny  "git -C <other repo> commit, clean session"  "$r" "git -C $other commit -m x"
+expect deny  "cd <other repo> && git commit"              "$r" "cd $other && git commit -m x"
+expect deny  "git --git-dir redirection"                  "$r" "git --git-dir=$other/.git commit -m x"
+expect deny  "unresolvable cd target (variable)"          "$r" "cd \$DIR && git commit -m x"
+expect deny  "nonexistent -C target"                      "$r" "git -C /no/such/dir commit -m x"
+expect deny  "pushd <other repo> compound"                "$r" "pushd $other && git commit -m x"
+expect deny  "GIT_DIR env-prefix redirection"             "$r" "GIT_DIR=$other/.git git commit -m x"
+expect deny  "GIT_WORK_TREE env-prefix redirection"       "$r" "GIT_WORK_TREE=$other git commit -m x"
+
+echo "A nested checkout INSIDE the project dir is still another index:"
+r=$(new_repo); nested="$r/.claude/worktrees/wf_x-1"
+mkdir -p "$nested" && git -C "$nested" init -q >/dev/null 2>&1
+expect deny  "cd <nested checkout> && git commit"         "$r" "cd .claude/worktrees/wf_x-1 && git commit -m x"
+expect deny  "git -C <nested checkout> commit"            "$r" "git -C $nested commit -m x"
+
+echo "Session cwd decides bare git commit (payload .cwd):"
+r=$(new_repo); other=$(new_repo)
+expect deny  "bare git commit, cwd in other repo"         "$r" "git commit -m x" "$other"
+r=$(new_repo); stage "$r" "docs/note.md" "nothing sensitive"
+expect allow "bare git commit, cwd project subdir"        "$r" "git commit -m x" "$r/docs"
+
+echo "...but same-repo redirection still allows (and still scans):"
+r=$(new_repo); stage "$r" "docs/note.md" "nothing sensitive"
+expect allow "git -C <this repo> commit"                  "$r" "git -C $r commit -m x"
+expect allow "cd docs && git commit (same-repo subdir)"   "$r" "cd docs && git commit -m x"
+r=$(new_repo); stage "$r" "services/gw/settings.py" "$SECRET_ASSIGN"
+expect deny  "git -C <this repo> commit still scanned"    "$r" "git -C $r commit -m x"
+
+echo "Broadened matcher: options between git and commit are caught:"
+r=$(new_repo); stage "$r" "services/gw/settings.py" "$SECRET_ASSIGN"
+expect deny  "git -c a=b commit is pattern-scanned"       "$r" "git -c user.name=x commit -m x"
+
+echo "Post-subcommand and other-tool flags are NOT repo redirection:"
+r=$(new_repo); stage "$r" "docs/note.md" "nothing sensitive"
+expect allow "git commit -C HEAD (reuse-message flag)"    "$r" "git commit -C HEAD"
+expect allow "make -C elsewhere, then git commit"         "$r" "make -C /tmp build && git commit -m x"
+
+echo "ALLOW_CROSS_TREE_GIT=1 skips the cross-tree check but NOT the scan:"
+r=$(new_repo); other=$(new_repo)
+got=$(printf '{"tool_input":{"command":"git -C %s commit -m x"}}' "$other" \
+  | ALLOW_CROSS_TREE_GIT=1 CLAUDE_PROJECT_DIR="$r" bash "$HOOK" 2>/dev/null)
+case "$got" in
+  *permissionDecision*deny*) printf '  FAIL  %-42s want allow got deny\n' "escape: cross-tree cmd allowed"; fail=$((fail+1)) ;;
+  *) printf '  ok    %-42s allow\n' "escape: cross-tree cmd allowed"; pass=$((pass+1)) ;;
+esac
+r=$(new_repo); stage "$r" "services/gw/settings.py" "$SECRET_ASSIGN"
+got=$(printf '{"tool_input":{"command":"git -C %s commit -m x"}}' "$r" \
+  | ALLOW_CROSS_TREE_GIT=1 CLAUDE_PROJECT_DIR="$r" bash "$HOOK" 2>/dev/null)
+case "$got" in
+  *permissionDecision*deny*) printf '  ok    %-42s deny\n' "escape: pattern scan still denies"; pass=$((pass+1)) ;;
+  *) printf '  FAIL  %-42s want deny got allow\n' "escape: pattern scan still denies"; fail=$((fail+1)) ;;
+esac
 
 echo "Degenerate payloads must allow (never block on bad input):"
 for payload in '' 'not json' '{}' '{"tool_input":null}' '{"tool_input":{"command":123}}'; do

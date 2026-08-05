@@ -32,10 +32,12 @@ EXPECT_FAILED=0
 input=$(cat)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
 
-case "$cmd" in
-  *"git push"*) ;;
-  *) exit 0 ;;
-esac
+# Match a git invocation whose SUBCOMMAND is push, not the literal substring —
+# `git -C <dir> push` never contained "git push" (PR #36 r2) — and not any
+# command merely containing the word: a bare word-match caught `git stash push`,
+# which would run (and on red, deny) the suite before every stash (r2 reviewer).
+GIT_INV_RE='(^|[^[:alnum:]_])git([[:space:]]+(-C|-c)[[:space:]]+[^[:space:]]+|[[:space:]]+-[^[:space:]]+)*[[:space:]]+push([^[:alnum:]_-]|$)'
+printf '%s' "$cmd" | grep -qE "$GIT_INV_RE" || exit 0
 
 [ "${ALLOW_UNVERIFIED_PUSH:-}" = "1" ] && exit 0
 
@@ -51,6 +53,86 @@ deny() { # <reason>
   }'
   exit 0
 }
+
+cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
+
+# A push that targets another git index must not be green-lit by this
+# checkout's suite (PR #36 r2 / TODO-50): any repo-redirection form — `git -C`,
+# --git-dir/--work-tree, GIT_DIR=/GIT_WORK_TREE=/GIT_INDEX_FILE= env prefixes,
+# a cd/pushd compound, or a session cwd elsewhere — denies unless every target
+# provably resolves onto THIS checkout's git index (`rev-parse
+# --absolute-git-dir` identity, not path containment: a nested checkout such as
+# a regression-proof worktree under .claude/worktrees/ sits inside the project
+# dir yet owns a different index — r2 reviewer, reproduced). Unresolvable
+# targets ($VAR, ~, quotes, substitution) deny too: a guard that must
+# out-parse the shell loses. ALLOW_UNVERIFIED_PUSH=1 above still bypasses, as
+# the explicit human override.
+# Duplicated in phi-secret-guard.sh deliberately — hooks are standalone, no
+# shared lib; keep the two copies in sync (only GIT_INV_RE differs, per hook).
+cross_tree_reason() { # <cmd> <cwd> -> prints a reason iff the target may be another git index
+  local cmd="$1" cwd="$2" root root_gitdir t d targets git_segs
+  root=$(cd "$repo" 2>/dev/null && pwd -P) || { printf 'project dir does not resolve'; return; }
+  root_gitdir=$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null) || root_gitdir=""
+  [ -z "$root_gitdir" ] && { printf 'project dir is not a git checkout'; return; }
+
+  same_index() { # <dir> -> succeeds iff <dir> is on this checkout's git index
+    local g
+    g=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+    [ "$g" = "$root_gitdir" ]
+  }
+
+  if [ -n "$cwd" ] && ! same_index "$cwd"; then
+    printf "session cwd %s is not on this checkout's git index" "$cwd"
+    return
+  fi
+
+  if printf '%s' "$cmd" | grep -qE '(^|[[:space:]])GIT_(DIR|WORK_TREE|INDEX_FILE)='; then
+    printf 'GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE environment redirection'
+    return
+  fi
+
+  # Scope flag extraction to the matched git invocation(s): a `-C` after the
+  # subcommand (`git commit -C HEAD`) or on another tool (`make -C`) is not a
+  # repo redirection (r2 reviewer false-deny class).
+  git_segs=$(printf '%s' "$cmd" | grep -oE "$GIT_INV_RE")
+  if printf '%s\n' "$git_segs" | grep -qE -- '--(git-dir|work-tree)'; then
+    printf 'git --git-dir/--work-tree redirection'
+    return
+  fi
+
+  targets=$(
+    printf '%s\n' "$git_segs" | grep -oE '(^|[[:space:]])-C[[:space:]]+[^[:space:]]+' \
+      | sed -E 's/^[[:space:]]*-C[[:space:]]+//'
+    printf '%s' "$cmd" | grep -oE '(^|[^[:alnum:]_-])(cd|pushd)[[:space:]]+[^[:space:];|&]+' \
+      | sed -E 's/^[^[:alnum:]]*(cd|pushd)[[:space:]]+//'
+  )
+  while IFS= read -r t; do
+    [ -z "$t" ] && continue
+    case "$t" in
+      *'$'*|*'`'*|'~'*|*'"'*|*"'"*) printf 'unresolvable target %s' "$t"; return ;;
+    esac
+    case "$t" in
+      /*) d=$(cd "$t" 2>/dev/null && pwd -P) || d="" ;;
+      *)  d=$(cd "${cwd:-$root}" 2>/dev/null && cd "$t" 2>/dev/null && pwd -P) || d="" ;;
+    esac
+    [ -z "$d" ] && { printf 'target %s does not resolve' "$t"; return; }
+    same_index "$d" || { printf "target %s is not on this checkout's git index" "$t"; return; }
+  done <<<"$targets"
+}
+
+# ALLOW_CROSS_TREE_GIT=1 skips ONLY the cross-tree check (the suite still
+# runs) — for false positives where the command merely MENTIONS a redirection
+# form. Same doctrine as the other escape env vars: user-confirmed, never a
+# routine prefix.
+if [ "${ALLOW_CROSS_TREE_GIT:-}" != "1" ]; then
+  xtr=$(cross_tree_reason "$cmd" "$cwd")
+  [ -n "$xtr" ] && deny "Cross-tree push blocked fail-closed: $xtr. The suite this \
+hook runs validates only THIS checkout, so a push aimed at another repository \
+would be green-lit by the wrong tree's tests. Push from a session rooted in that \
+tree. If the command only MENTIONS a redirection form, re-run with \
+ALLOW_CROSS_TREE_GIT=1 after the user confirms; ALLOW_UNVERIFIED_PUSH=1 skips \
+the suite too."
+fi
 
 if [ -n "${XFAIL_INVARIANT_OUTPUT:-}" ]; then
   out=$(cat "$XFAIL_INVARIANT_OUTPUT" 2>/dev/null) || out=""

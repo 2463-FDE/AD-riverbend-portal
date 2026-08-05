@@ -418,3 +418,23 @@ worktree copies), xfail-invariant timeout 120→600 (cold-clone fail-open), reti
 tooling untracked (dead G0–G6 vocabulary), untracked-era claims corrected in
 regression-proof/verify-stack/doc-drift, memory-lint roster corpus → tracked CLAUDE.md — and 2
 parked with reasoning (TODO-50 guard cwd-scope design fork, TODO-51 reviewer pack cost).
+
+PR #36 r2 — 2 findings: 2 A · [high] phi-secret-guard scanned `${CLAUDE_PROJECT_DIR:-$PWD}`
+regardless of which repo the command commits; [medium] xfail-invariant, same shape for push.
+Both are TODO-50 verbatim (parked at r1; the round forced it). Design-gated (three Claude-side
+shapes + git-native follow-up weighed; fail-closed deny chosen): subcommand-position matcher
+(the substring form never even fired on redirected commits — full bypass, not just wrong-index)
++ cross-tree deny of every repo-redirection form (`-C`, `--git-dir`/`--work-tree`,
+`GIT_DIR=`/`GIT_WORK_TREE=`/`GIT_INDEX_FILE=` prefixes, cd/pushd compounds, session cwd) unless
+the target resolves onto this checkout's git index (`rev-parse --absolute-git-dir` identity).
+Pre-push diff-reviewer ran DELTA-pack by explicit user approval (§6 deviation on record;
+TODO-51's tiering not yet landed): 87k tokens/13 calls vs r1's 129k full-branch, and it earned
+it — 2 reproduced highs (GIT_DIR= env bypass; nested checkout inside the project dir — path
+containment was the wrong predicate), 1 regression (broad matcher blocked stash-push on red
+trees — §4's own fallback), 2 mediums (cwd branch untested; false-deny breadth: reuse-message
+`-C HEAD`, make's `-C`) — all fixed in-round. Harnesses 37+30 cases; layer A stash-proof 13+6
+red; mutations (index identity / matcher / env grep) red 6/1/2. The false-deny residual fired
+LIVE on first post-fix use (a heredoc whose text mentions redirection forms) — answered with
+the doctrine-standard escape `ALLOW_CROSS_TREE_GIT=1` (skips only the cross-tree check;
+scan/suite still run; 2 harness cases each). Git-native gate (`.githooks/` + `core.hooksPath`)
+split to its own design PR (TODO-50 tail).
