@@ -479,8 +479,13 @@ def test_every_internal_url_in_compose_targets_a_port_that_service_exposes():
 # (eval/, tests/) the original sweep claimed. The `$var` arm deliberately
 # over-blocks parameterized PUBLISHED ports too; hardcode those in docs.
 # Excluded: adr/ (quotes the removed commands as history) and this file.
+#
+# CLAUDE.md left this list on 2026-08-05 when it was untracked — it is not in a
+# fresh clone, so reading it by path is a FileNotFoundError in CI, and a tracked
+# test cannot guard an untracked file. Accepted coverage loss, and the standing
+# consequence of untracking anything (a hook can check it; CI cannot).
 
-DOC_SURFACES = ["Makefile", "README.md", "ARCHITECTURE.md", "CLAUDE.md"]
+DOC_SURFACES = ["Makefile", "README.md", "ARCHITECTURE.md"]
 _HOST_PORT_REF = re.compile(
     r"(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(?:807[1-7N\[]|\$)"
 )
