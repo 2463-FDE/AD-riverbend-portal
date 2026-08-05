@@ -603,11 +603,17 @@ def test_mid_run_corpus_edit_refuses_fingerprint(tmp_path):
     """TOCTOU (diff-review r7 pre-push finding): an input file changes while
     the embed run is underway — here, the shim's encode() appends to
     encounters.csv mid-run. REPORT.md was then computed from bytes that no
-    longer exist, so run.py must refuse the sidecar write and exit 2
-    unusable, not hash the new bytes and bless the divergence."""
+    longer exist, so run.py must refuse and exit 2 unusable, not hash the
+    new bytes and bless the divergence. Refusal must be total (codex r9): not
+    just the sidecar preserved, but REPORT.md and GOLDSET.md byte-for-byte
+    untouched — the original guard fired only after both were overwritten."""
     work = _copy_eval_and_seed(tmp_path)
     sidecar = work / "eval" / "rag" / "corpus.sha256"
+    report_md = work / "eval" / "rag" / "REPORT.md"
+    goldset_md = work / "eval" / "rag" / "GOLDSET.md"
     before = sidecar.read_text()
+    report_before = report_md.read_bytes()
+    goldset_before = goldset_md.read_bytes()
 
     env = dict(
         os.environ,
@@ -625,6 +631,10 @@ def test_mid_run_corpus_edit_refuses_fingerprint(tmp_path):
     assert proc.returncode == 2
     assert "changed while this run was underway" in proc.stderr
     assert sidecar.read_text() == before
+    assert report_md.read_bytes() == report_before
+    assert goldset_md.read_bytes() == goldset_before
+    leftovers = [p.name for p in report_md.parent.glob("*.tmp")]
+    assert leftovers == []
 
 
 def test_fingerprint_destination_gating(tmp_path):

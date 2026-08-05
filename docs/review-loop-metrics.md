@@ -337,3 +337,18 @@ the §10.1 duplicated-instruction shape in predicate form; extracted
 `is_committed_report_location`, both writers consult it; (accepted, TODO-42) the test file's
 ~25 subprocess e2e cases roughly double the pre-push hook's warm wall — named as a decision,
 not a surprise. 811/5/1 container, gate green under 3.8.
+
+PR #29 r9 — 1 finding: 0 A / **1 B** / 0 C · **[medium] fixed** — r7's mid-run corpus guard
+fired AFTER `main()` had already overwritten REPORT.md and GOLDSET.md, so the exact case its
+test covers exited 2 saying "did not bless this result" while leaving a half-updated tree;
+writes were also non-atomic (crash mid-write → truncated committed artifact). Fixed by
+validating the post-run fingerprint before ANY file is touched (`settled_corpus_fingerprint`,
+check split from write) and routing all three committed-artifact writes through temp-file +
+`os.replace` (`atomic_write`). Reviewer's requested regression added: the mid-run test now
+snapshots REPORT.md and GOLDSET.md and asserts byte-identity plus no leftover `.tmp` on the
+exit-2 path — stash-proven red vs the r8 tip (fails on REPORT.md bytes), green with the fix.
+Pre-push pass (diff-reviewer): SKIPPED on a user call, judgment on record — ~40-line delta,
+single-threaded CLI, no contract callers, no cross-layer surface, and the byte-level
+regression proof covers the finding's exact failure mode; §6's replaced-code lens closed
+inline (only deleted behavior is the bug). Residual named: the fixed `.tmp` suffix clashes
+under concurrent runs — accepted for a single-user CLI. 811/5/1 container.

@@ -60,6 +60,17 @@ def fingerprint_destination(retriever_name, out_path):
 GOLDSET_MD = os.path.join(HERE, "GOLDSET.md")
 
 
+def atomic_write(dest, content):
+    """Every committed-artifact write goes through here: temp file beside the
+    destination, then os.replace — atomic on POSIX — so a crash mid-write can
+    truncate only the temp file, never REPORT.md / GOLDSET.md / corpus.sha256
+    (codex r9)."""
+    tmp = dest + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(content)
+    os.replace(tmp, dest)
+
+
 def write_goldset_summary():
     """Render db/seed/goldset.json into eval/rag/GOLDSET.md (codex r8).
 
@@ -72,34 +83,33 @@ def write_goldset_summary():
     the embed run and this one need not be."""
     with open(os.path.join(REPO_ROOT, "db", "seed", "goldset.json")) as f:
         goldset = json.load(f)
-    with open(GOLDSET_MD, "w") as f:
-        f.write(report.render_goldset_summary(goldset))
+    atomic_write(GOLDSET_MD, report.render_goldset_summary(goldset))
     print("wrote eval/rag/GOLDSET.md")
 
 
-def refresh_fingerprint_sidecar(dest, before):
-    """Write the corpus fingerprint this run is entitled to vouch for.
+def settled_corpus_fingerprint(before):
+    """Return the corpus fingerprint this run is entitled to vouch for.
 
     `before` is the fingerprint taken before the input files were loaded. An
     embed run is a minutes-long window on first use (model download) — long
     enough for a branch switch or a CSV edit to rewrite an input mid-run, in
-    which case REPORT.md was computed from bytes that no longer exist and
+    which case the report was computed from bytes that no longer exist and
     hashing the current bytes would bless exactly that divergence. Refuse and
-    die unusable (exit 2, nothing written) instead; the remaining window is
-    the microseconds between the pre-load hash and the loads themselves.
+    die unusable (exit 2) instead; the remaining window is the microseconds
+    between the pre-load hash and the loads themselves. Called BEFORE any
+    committed artifact is written (codex r9: the guard used to fire after
+    REPORT.md and GOLDSET.md were already overwritten, leaving a half-updated
+    tree behind an exit code that says nothing was blessed).
     """
     after = check_drift.corpus_fingerprint()
     if after != before:
         sys.stderr.write(
             "eval: the corpus files changed while this run was underway — "
-            "REPORT.md was computed\nfrom inputs that no longer exist. Not "
-            "writing eval/rag/corpus.sha256; rerun on the\nsettled tree.\n"
+            "the report was computed\nfrom inputs that no longer exist. "
+            "Writing nothing; rerun on the settled tree.\n"
         )
         sys.exit(2)
-    with open(dest, "w") as f:
-        f.write(after + "\n")
-    print(f"wrote {check_drift.CORPUS_SHA_SIDE} ({after})")
-    print("commit it together with the regenerated REPORT.md")
+    return after
 
 
 def build_retriever(name: str, patients, encounters, cases):
@@ -160,18 +170,26 @@ def main() -> None:
     md = report.render_report(
         patients, identities_by_key, dup, gaps, scores, label, args.k
     )
-    with open(args.out, "w") as f:
-        f.write(md)
 
+    # Validation happens before ANY file is touched; only then do the (atomic)
+    # writes run, so an exit-2 run leaves every committed artifact byte-for-byte
+    # as it found them (codex r9).
+    fingerprint_dest = fingerprint_destination(args.retriever, args.out)
+    fingerprint = (
+        settled_corpus_fingerprint(corpus_before) if fingerprint_dest else None
+    )
+
+    atomic_write(args.out, md)
     print(f"wrote {args.out}")
     if is_committed_report_location(args.out):
         # Any run producing the committed report location keeps the rendered
         # goldset summary in step with it; --out elsewhere (check_drift's own
         # temp regeneration) must not touch the tree.
         write_goldset_summary()
-    fingerprint_dest = fingerprint_destination(args.retriever, args.out)
     if fingerprint_dest:
-        refresh_fingerprint_sidecar(fingerprint_dest, corpus_before)
+        atomic_write(fingerprint_dest, fingerprint + "\n")
+        print(f"wrote {check_drift.CORPUS_SHA_SIDE} ({fingerprint})")
+        print("commit it together with the regenerated REPORT.md")
     print(
         f"candidate duplicate rate: {dup.candidate_duplicate_rows}/{dup.total_rows} rows "
         f"({dup.rate:.0%}) — {dup.candidate_identities} candidate identities"
