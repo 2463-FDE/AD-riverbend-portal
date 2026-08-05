@@ -13,8 +13,7 @@ make ps        # service status (docker compose ps)
 ```
 
 Endpoints once up:
-- Portal (legacy Next.js): http://localhost:3070
-- Portal (SvelteKit rebuild): http://localhost:3071 — no login yet; see `portal/README.md`
+- Portal (Next.js): http://localhost:3070 — the only frontend
 - Gateway + OpenAPI docs: http://localhost:8070/docs
 - Domain services (8071–8076) have **no host ports** (ADR 0016) — check health
   with `make ps` or from inside the network (see Health checks below).
@@ -47,7 +46,6 @@ All seeded users share password `portal123`, role `staff`. Examples:
 ```bash
 make ps                               # healthcheck status for every container
 curl -s localhost:8070/healthz        # gateway (published)
-curl -s localhost:3071/healthz        # SvelteKit portal (published)
 ```
 
 Domain services are network-internal since ADR 0016: curling their old 807x
@@ -64,9 +62,11 @@ for s in intake-service:8071 eligibility-service:8072 records-service:8073 \
 done
 ```
 
-The portal's probe reports liveness today. Once the session module lands it also
-fails when the cookie encryption key or `ORIGIN` is missing, so `make ps` shows
-the service unhealthy instead of up — it never echoes the key or a stack trace.
+The Next.js portal has no compose healthcheck: it reports up as soon as the
+container starts, whether or not it can reach the gateway. The one frontend that
+had a fail-closed `/healthz` was the SvelteKit rebuild, now descoped (branch
+`alt/sveltekit-portal`), so a dead-but-running UI is currently invisible to
+`make ps`.
 
 A service that won't become healthy is almost always (a) Postgres not ready yet
 or (b) bad DB creds in `.env`. Check `make logs`.

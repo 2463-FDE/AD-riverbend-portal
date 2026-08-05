@@ -1,6 +1,12 @@
 # ADR 0012 — Rebuild the staff portal on SvelteKit, behind an unchanged gateway contract
 
-**Status:** Proposed
+**Status:** Superseded 2026-08-05 — the frontend rebuild is descoped and this decision is not being
+executed. The engagement returned to the curriculum weeks (W1–W4), and the inherited Next.js portal
+is the only frontend. **The scaffold, the spec, the design set and this ADR's unchanged text are on
+branch `alt/sveltekit-portal`.** What still stands independently of the framework choice: §3's
+finding that the gateway contract needs no change either way, and the operator-shift evidence in
+the design set that motivated a rebuild at all. Nothing below has been edited to reflect the
+descope — read it as the decision as taken, not as current plan.
 **Date:** 2026-07-30
 **Author:** Riverbend engagement team
 **Debt:** none directly — new scope (`docs/specs/frontend-rebuild.md`). Adjacent to D4, D6, D8 and

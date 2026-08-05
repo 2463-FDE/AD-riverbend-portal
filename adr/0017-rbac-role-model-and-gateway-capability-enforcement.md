@@ -134,14 +134,14 @@ prose.
 5. **Legacy portal UX on fresh volumes:** any legacy page outside the account's new role now
    403s — `frontdesk` on records, clinicians on intake and booking, `roiclerk` on eligibility
    and slots. The legacy UI surfaces these as plain errors (`!res.ok` is checked; the 403 is
-   not masked). Accepted — the legacy portal is deliberately unpatched (spec
-   `frontend-rebuild.md` §8 #1) and existing dev volumes are unaffected.
+   not masked). Accepted — the Next.js portal is deliberately unpatched (`docs/debt-log.md`)
+   and existing dev volumes are unaffected.
 6. **Role changes need a gateway restart** (policy is in code). Acceptable at this scale; a
    runtime store is a future decision if roles become operator-editable.
 7. **A role change does not reach already-issued sessions.** `require_capability` reads the
    role frozen into the session hash at login, and sessions never expire (D10) — so an
-   `UPDATE users SET role=…` (spec §8 #1) is a silent no-op for every outstanding token,
-   including any legacy-portal token persisted in `localStorage`, until re-login or explicit
+   `UPDATE users SET role=…` is a silent no-op for every outstanding token,
+   including any portal token persisted in `localStorage`, until re-login or explicit
    session invalidation. Any real-account reassignment must therefore ship with session
    invalidation (or the D10 TTL) to be enforceable; recorded on the spec's open decision.
 8. **Denials are logged per hit with no dedupe or cap.** A valid low-privilege token can loop
@@ -155,8 +155,8 @@ New `services/gateway/authz.py` (policy seam) and `require_capability` in `app.p
 `config/roles.yaml` (now with a pinned enforced twin); seed assigns real roles (fresh volumes
 only); `GET /me` requires `profile.read`, which every role holds. Fresh-deploy default:
 `users.role` still defaults to `'staff'` — a row inserted outside the seed gets full
-capability, which is the documented compat posture, not an accident. The portal rebuild's
-role-aware shell (`FE-R14`, gate G4) can now read a real role from `/me`. Tests holding the
+capability, which is the documented compat posture, not an accident. `GET /me` now returns a
+real role, which any future role-aware UI can read — no portal reads it today. Tests holding the
 line: `tests/test_gateway_authz.py` (27 tests: pinning, coverage, denials, fail-closed,
 grants); `tests/integration/test_records_flow.py` re-actors chart reads to a clinician login
 and adds the front-desk 403 (needs a volume seeded on or after this ADR).

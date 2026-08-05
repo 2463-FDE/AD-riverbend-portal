@@ -1,4 +1,4 @@
-.PHONY: up down logs ps build seed seed-gen psql test test-docker test-frontend frontend-dev portal-dev config status eval
+.PHONY: up down logs ps build seed seed-gen psql test test-docker frontend-dev config eval
 
 # Scoped gateway->ai-assistant secret file. Compose refuses to parse when a
 # listed env_file is missing, so every compose target depends on this. The
@@ -80,35 +80,19 @@ test-docker:   ## run unit tests in the python:3.12 container (mirrors CI)
 	docker run --rm -v "$$PWD":/repo -w /repo riverbend-test:py312 \
 	  pytest $(if $(ARGS),$(ARGS),-m "not integration" -q)
 
-# The JS gate, invocable the way the Python one is (ADR 0013 §5). It is a
-# convenience over the same commands the CI `portal` job runs, NOT a second
-# definition of the gate: this machine's Node is not the Node that deploys
-# (CI and the runtime image both pin 22), so a green run here is evidence and
-# CI is the proof. Needs `npx playwright install chromium` once for the
-# browser project.
-test-frontend: ## run the portal's JS gate (svelte-check, eslint, vitest)
-	cd portal && npm ci && npm run check && npm run lint && npm test
-
-frontend-dev:  ## run the legacy Next.js dev server (port 3070)
+# There is no JS gate. `test-frontend` ran svelte-check, eslint and Vitest over
+# the SvelteKit rebuild, which is descoped (branch alt/sveltekit-portal), and
+# nothing equivalent exists for the inherited Next.js app: CI builds it and that
+# is all. Adding one is real work, not a target rename.
+frontend-dev:  ## run the Next.js dev server (port 3070)
 	cd frontend && npm install && npm run dev
-
-portal-dev:    ## run the SvelteKit portal dev server (port 3071)
-	cd portal && npm install && npm run dev -- --port 3071
 
 config: .env.ai-proxy .env.redis ## validate the compose file
 	docker compose config -q && echo "compose OK"
 
-# Derives docs/status/dashboard.html from docs/specs/frontend-rebuild.md,
-# docs/status/fe-verdicts.md, docs/todo.md and docs/debt-log.md. Reads only; stdlib only, so
-# it runs under the system Python (3.8) without the test container. OPEN=1 opens the page.
-#
-# LOCAL-ONLY. scripts/ is gitignored (local tooling, CLAUDE.md §10.1), so this target
-# does not work in a fresh clone — hence the guard rather than a confusing traceback.
-# Two of its doc inputs (docs/status/fe-verdicts.md, docs/todo.md) are untracked too.
-status:        ## regenerate the status dashboard (local only; needs scripts/status.py)
-	@test -f scripts/status.py || { \
-	  echo "make status: scripts/status.py is absent."; \
-	  echo "  It is local-only tooling and is gitignored, so it does not ship with a clone."; \
-	  exit 1; }
-	python3 scripts/status.py
-	@if [ -n "$(OPEN)" ]; then open docs/status/dashboard.html; fi
+# `make status` is retired. It rendered docs/status/dashboard.html, and most of
+# what it rendered was the frontend rebuild's requirement and gate track, which
+# is descoped (branch alt/sveltekit-portal). What would have survived is a view
+# over docs/todo.md and docs/debt-log.md — two files that are already short
+# enough to read directly, and that no longer disagree with a generated copy.
+# Engagement status now comes from the specs, the debt log and `gh pr list`.

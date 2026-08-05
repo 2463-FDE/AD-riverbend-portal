@@ -26,7 +26,8 @@ resolution, enforcement (403) on every session-protected gateway route.
 **Out of scope:** the D11 patient bind (a capability says *what kind* of read a role may do;
 binding a session to *which patient* is W4's fix), ROI per-disclosure 164.508 authorization
 (D12), session TTL (D10), MFA, any domain-service-side auth (the gateway is the sole boundary —
-ADR 0016), portal role-aware UI (`FE-R14`, gate G4).
+ADR 0016), any role-aware UI in the portal (unscheduled — the rebuild that owned it is descoped,
+branch `alt/sveltekit-portal`, and the Next.js portal has no role-aware shell).
 
 ## 3. Definitions
 

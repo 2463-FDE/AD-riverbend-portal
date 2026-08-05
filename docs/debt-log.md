@@ -252,10 +252,10 @@ live PHI and credentials.
 | `.env` committed with secrets | Tracked `.env` holds live credentials: `SESSION_SECRET` (forge any session → full portal access, since sessions never expire + single role), `DB_PASSWORD`, `PAYER_API_KEY`, HL7 feed endpoint. A repo leak hands all of these over with **no cracking required**. The secrets are in **git history**, so deleting the file is insufficient — history rewrite **and** rotation of every credential are required. | OPEN — see **Remediation runbook** above (steps 1–4) |
 | README claims "PHI is encrypted / fully HIPAA compliant" — contradicts reality | `README.md:1,82` assert all PHI is encrypted and the system is fully HIPAA compliant. `db/schema.sql` stores `ssn`, `notes`, `dob`, `address`, etc. as plaintext `TEXT`; the only encryption is disk/volume-level (`ARCHITECTURE.md:76`), which protects a stolen disk and nothing else (DB dump, SQL injection, compromised app, committed logs all see cleartext). The overstatement is itself compliance risk — a documented false assurance. `ARCHITECTURE.md §7` is the honest account. Fix: correct the README to match `ARCHITECTURE.md`, or implement column-level encryption to make the claim true. | OPEN — filed under **Follow-up tickets** above |
 | Seeded demo password reuse | All seeded accounts share `portal123` (`db/seed/generate_seed.py`); hashing scheme (pbkdf2_sha256, 260k iters) fully disclosed. If any non-dev environment reused the seed, these are live valid logins on repo leak. | OPEN |
-| Sessions never expire, single role, no MFA | Any leaked cookie is a permanent all-access credential | OPEN (approval-gated). The single-role part narrowed by ADR 0017: four real roles + per-route capability enforcement at the gateway — but every pre-RBAC `users` row keeps the full-capability `staff` role, so on an existing database a leaked token is still all-access; TTL and MFA unchanged. Partially mitigated for the rebuilt portal only, at G2: `FE-R28` logs an idle operator off after 10 min via the existing `POST /logout`, which does destroy the Redis session. **The debt is not closed** — `create_session` still sets no TTL, so a session abandoned by closing the browser is never invalidated and a captured token stays valid forever. Only a gateway-side TTL closes it (W9/G4). ADR 0014 gap #1 |
-| Session token in browser `localStorage` (portal) | `frontend/app/lib/session.ts:29-30` stores the bearer token — and the `PortalUser` incl. role — in `localStorage`, so any XSS on the origin exfiltrates a credential that never expires and, via D11, reads every chart in the network. It also persists in plaintext in the browser profile across reboot on shared front-desk workstations. This is the pattern OWASP's Authentication Cheat Sheet and SMART on FHIR browser-app guidance both name explicitly as the thing not to do; automatic logoff (45 CFR 164.312(a)(2)(iii), *addressable*) is absent entirely. Inherited from the handoff | OPEN on `main` — the legacy portal is deliberately not patched (spec §8 #1). Closed for the rebuilt portal at G2 by `FE-R27` (token held BFF-side behind an `httpOnly` cookie, unreadable by page script) + `FE-R28`. ADR 0014 |
+| Sessions never expire, single role, no MFA | Any leaked cookie is a permanent all-access credential | OPEN (approval-gated). The single-role part narrowed by ADR 0017: four real roles + per-route capability enforcement at the gateway — but every pre-RBAC `users` row keeps the full-capability `staff` role, so on an existing database a leaked token is still all-access; TTL and MFA unchanged. The idle-logoff mitigation that ADR 0014 specified is **gone with the frontend rebuild** (descoped 2026-08-05, branch `alt/sveltekit-portal`), so nothing logs an idle operator off anywhere today. `create_session` still sets no TTL: a session abandoned by closing the browser is never invalidated and a captured token stays valid forever. Only a gateway-side TTL closes it — approval-gated under CLAUDE.md §6, unscheduled. ADR 0014 gap #1 |
+| Session token in browser `localStorage` (portal) | `frontend/app/lib/session.ts:29-30` stores the bearer token — and the `PortalUser` incl. role — in `localStorage`, so any XSS on the origin exfiltrates a credential that never expires and, via D11, reads every chart in the network. It also persists in plaintext in the browser profile across reboot on shared front-desk workstations. This is the pattern OWASP's Authentication Cheat Sheet and SMART on FHIR browser-app guidance both name explicitly as the thing not to do; automatic logoff (45 CFR 164.312(a)(2)(iii), *addressable*) is absent entirely. Inherited from the handoff | OPEN, and now **unscheduled**. The fix was a rebuilt portal holding the token BFF-side behind an `httpOnly` cookie (ADR 0014); the rebuild is descoped (branch `alt/sveltekit-portal`) and the Next.js portal, which is the only frontend, is deliberately not patched. Retrofitting the cookie into it is real work nobody has costed |
 | No secret/dependency/image scanning in CI | Vulnerable deps and committed secrets ship silently | OPEN |
-| Intake payload contract break — registration is non-functional and reports success | See **Intake contract break** below | OPEN — fix folded into the frontend rebuild P2 (spec `FE-R1`–`FE-R3`, `FE-R21`, `FE-R22`), lands at G2 |
+| Intake payload contract break — registration is non-functional and reports success | See **Intake contract break** below | OPEN and **unscheduled** — the fix was folded into the frontend rebuild, which is descoped (2026-08-05). The defect is backend-side and outlived its plan; it needs a home in a curriculum week. Tracked as TODO-1 |
 
 ### Intake contract break (no D-number)
 
@@ -273,9 +273,11 @@ surfaces when the patient arrives with no chart. Nothing in the stack alerts on 
 
 **Why a green build and 730 passing tests missed it.** Nothing asserts the two sides of the
 payload against one shared fixture; each side is internally consistent and tested, and the
-mismatch lives only in the space between them. `FE-R3` (one intake payload fixture asserted by
-both a pytest test and a JS test, both in CI) is the artifact that makes this *class* impossible;
-this bug, not a synthetic one, is the harness's first regression test.
+mismatch lives only in the space between them. The artifact that would make this *class*
+impossible is one intake payload fixture asserted by both a pytest test and a JS test, both in CI.
+That was scoped as part of the frontend rebuild and is descoped with it (branch
+`alt/sveltekit-portal`), and there is no JavaScript test harness in this repository, so **the
+class is currently unguarded** — only this instance is known.
 
 **The four layers — the reason it presents as success.** Reading only the last layer misdiagnoses
 this as a UI bug:
@@ -304,22 +306,26 @@ clearing the 422 frontend-side alone would discard a legal financial attestation
 `InsuranceCoverage`) yet feeds the AI checklist facts. The consent half is resolved: the enum is
 widened by `financial_responsibility_ack` and `communications_opt_in` — no migration
 (`consents.kind` is plain `TEXT`, `db/schema.sql:121`, no `CHECK`), but it is a deliberate touch
-to a **documented PHI control** and carries `FE-R22`'s re-proof obligation.
+to a **documented PHI control**, so whichever week ships it re-proves the consent-storage
+behaviour rather than assuming the widening is inert.
 
-**`policy_holder` resolved 2026-07-31 (user): the rebuilt form drops the free-text field** and
+**`policy_holder` resolved 2026-07-31 (user): the form drops the free-text field** and
 collects a "Policy holder is the patient" checkbox instead. The AI checklist consumes only
 `policy_holder_is_self`, a boolean derived from the field's emptiness at
 `frontend/app/intake/page.tsx:147` — the name string reaches nothing but the Review display — so
-the checkbox supplies everything downstream uses. Rationale in `docs/specs/frontend-rebuild.md`
-§8.1; do not restate it here.
+the checkbox supplies everything downstream uses. The measurement behind that call is on branch
+`alt/sveltekit-portal` (`docs/specs/frontend-rebuild.md` §8.1); the decision stands on its own and
+is not restated here.
 
 **The debt this leaves, recorded because the fix removes the field rather than storing it:** the
 system captures no policy-holder identity at all. If a policy holder who is not the patient must
 ever be named — a coordination-of-benefits or billing requirement — it needs a new
 `InsuranceCoverage` column plus the hand-synced migration, not just a form field. Until then the
-absence is deliberate, not an oversight. The legacy Next.js portal keeps collecting and dropping
-the field; it is not patched (spec §8 #1).
+absence is deliberate, not an oversight. The Next.js portal keeps collecting and dropping the
+field, and is not patched.
 
-**Not restated here:** the requirements and their verification are `FE-R1`, `FE-R2`, `FE-R3`,
-`FE-R15`, `FE-R16`, `FE-R21`, `FE-R22` in `docs/specs/frontend-rebuild.md`; the enum analysis is
-its §8.1. Read those, not a copy.
+**No requirements own this defect any more.** The `FE-R*` requirements that specified the fix, and
+the enum analysis behind it, went to branch `alt/sveltekit-portal` with the frontend rebuild on
+2026-08-05. Everything needed to fix it is above — the four layers, the payload table, and the
+consent-enum decision. It needs a curriculum week; until it has one, TODO-1 is the only thing
+holding it.
