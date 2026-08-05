@@ -1,10 +1,12 @@
 # ADR 0008 — Frontend date entry: adopt `react-day-picker`
 
-**Status:** Superseded in part by ADR 0012 (2026-07-30) — the **dependency choice** is void, the
-**finding is not.** ADR 0012 rebuilds the portal on SvelteKit, so `react-day-picker` cannot be
-consumed. What stands: month-by-month traversal to a 1974 birth year is unusable for a DOB field,
-which is still owed by `FE-R7` and must now be re-implemented natively. The native `<input type="date">` option this ADR rejected returns to scope on its own
-merits. Fully superseded once the Next.js portal is retired (ADR 0012, "Future").
+**Status:** Accepted — **un-superseded 2026-08-05.** This ADR was marked superseded-in-part by
+ADR 0012 on the grounds that the portal was being rebuilt on SvelteKit and `react-day-picker`
+could not be consumed. ADR 0012 is now itself superseded (the rebuild is descoped), the Next.js
+portal is the only frontend, and it is not being retired — so the dependency choice this ADR takes
+is live again, exactly as written, and the F3 finding it answers is still answered here. The
+descope also removes the `FE-R7` requirement that was to re-implement the picker natively; nothing
+now schedules a replacement.
 **Date:** 2026-07-20
 **Author:** Riverbend engagement team
 **Relates to:** ADR 0001 (monorepo & stack — "frontend has zero UI/form

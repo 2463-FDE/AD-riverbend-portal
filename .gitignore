@@ -29,15 +29,12 @@ dist/
 # merge belongs in .github/workflows/ or the Makefile instead.
 .claude/
 
-# Local-only helper scripts (status dashboard generator, renderers). Same reasoning as
-# .claude/ above: they are personal tooling, not a project deliverable, so they stay out
-# of git. `make status` guards on their absence rather than failing obscurely.
+# Local-only helper scripts (renderers and similar). Same reasoning as .claude/ above:
+# they are personal tooling, not a project deliverable, so they stay out of git. No
+# Makefile target depends on anything here — `make status` and its generator were
+# retired with the frontend rebuild, and a target that needs an untracked file to run
+# does not belong in a tracked Makefile.
 scripts/
-
-# Status dashboard — derived from docs/specs/, docs/todo.md and docs/debt-log.md by
-# `make status`. The inputs are tracked; the render is not, so it cannot drift from them.
-docs/status/dashboard.html
-docs/status/snapshot.json
 
 # `make seed-gen` writes here and renames onto db/seed/seed.sql on success, so a
 # failed generation cannot truncate the file a fresh Postgres volume loads. Only

@@ -1,6 +1,12 @@
 # ADR 0015 — Serve staff and patients from separate origins, and make the origin runtime config
 
-**Status:** Proposed
+**Status:** Superseded 2026-08-05 — descoped with the frontend rebuild (ADR 0012). Text on branch
+`alt/sveltekit-portal`; the `ORIGIN` variable it defined is gone from `.env.example` and
+`docker-compose.yml` with the portal service. **What survives the descope is the audience question,
+not the mechanism:** there is still no patient-facing surface, it is still blocked on D11
+(session→`patient_id` binding, W4), and §4's reasoning — that a patient surface sharing an origin
+with the staff app puts an XSS in reach of staff credentials — is the constraint any future patient
+surface inherits, whatever framework serves it.
 **Date:** 2026-07-31
 **Author:** Riverbend engagement team
 **Debt:** none directly — new scope (`docs/specs/frontend-rebuild.md` §8 #16, `FE-R30`–`FE-R31`).

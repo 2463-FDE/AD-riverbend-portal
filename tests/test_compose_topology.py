@@ -397,8 +397,10 @@ DOMAIN_SERVICES = {
 
 # The full sanctioned host surface. postgres stays published for local psql
 # access (ADR 0016 §6 — password-authenticated, unlike the domain services);
-# the gateway is the auth boundary; the two portals are the UIs.
-HOST_PUBLISHABLE = {"postgres", "gateway", "frontend", "portal"}
+# the gateway is the auth boundary; frontend is the UI. `portal` (the SvelteKit
+# rebuild) was removed from this set when the rebuild was descoped — putting it
+# back requires the same deliberate decision any new publishable service does.
+HOST_PUBLISHABLE = {"postgres", "gateway", "frontend"}
 
 
 def test_no_domain_service_publishes_a_host_port():
@@ -503,84 +505,27 @@ def test_no_operator_doc_or_tool_hits_a_domain_service_host_port():
             )
 
 
-# --- the SvelteKit portal's place in the topology (ADR 0012, 0015) ------------
-# Two frontends run side by side until FE-R1-FE-R3 pass on the new one
-# (FE-R15), which is a coexistence window with two failure modes worth holding
-# structurally: the legacy portal quietly stops being built/served, or the new
-# one arrives without the health surface its fail-closed startup guard needs
-# (ADR 0014's Consequences — a guard with no health signal shows a green
-# dashboard over a dead service).
+# --- the frontend's place in the topology ------------------------------------
+# The SvelteKit rebuild that was to replace the inherited Next.js app is
+# descoped (branch alt/sveltekit-portal), so `frontend` is the only UI. Three
+# tests that guarded the rebuild went with it: the two-portal coexistence pair,
+# the portal's /healthz surface, and the CI step that started its image. What
+# survives is the half that was never about the rebuild — the one remaining
+# frontend must actually be reachable, because "the UI stopped being served"
+# fails silently in a compose file.
 
 
 def _published_host_ports(svc):
     return {str(p).split(":")[0] for p in svc.get("ports", [])}
 
 
-def test_both_portals_stay_separately_runnable():
-    frontend, portal = _service("frontend"), _service("portal")
+def test_the_frontend_stays_published():
+    frontend = _service("frontend")
     assert "3070" in _published_host_ports(frontend), (
-        "the legacy Next.js portal must keep its own published port for the "
-        "FE-R15 coexistence window — it is replaced by deletion, not by being "
-        "quietly unplugged"
+        "the Next.js portal is the only UI and must keep its published port — "
+        "an unplugged frontend is a dead product with a green build"
     )
-    assert "3071" in _published_host_ports(portal)
-    assert frontend["build"] != portal["build"], (
-        "the two portals must build from their own directories: a SvelteKit app "
-        "cannot be a route group inside the Next.js one (ADR 0012 §1)"
+    assert frontend["build"] == "./frontend", (
+        "frontend must build from its own directory, not from a path that "
+        "another service could quietly take over"
     )
-
-
-def test_portal_has_a_health_surface():
-    # ADR 0014 requires GET /healthz to report a missing/unusable cookie key,
-    # and ADR 0015 the same for a missing ORIGIN. Neither guard is worth
-    # anything if nothing polls it, so the healthcheck lands with the service
-    # rather than with the guard.
-    svc = _service("portal")
-    probe = " ".join(svc["healthcheck"]["test"])
-    assert "/healthz" in probe, (
-        "portal needs a compose healthcheck on /healthz so a fail-closed "
-        "startup shows as unhealthy in `make ps` instead of as up"
-    )
-
-
-def test_portal_origin_is_runtime_config_with_no_production_default():
-    # FE-R31 / ADR 0015 §3: the origin is resolved from the environment, and the
-    # only default anywhere is the local stack's. A hostname baked in here would
-    # be the same scar as a build-time GATEWAY_URL, one variable over.
-    origin = _service("portal")["environment"]["ORIGIN"]
-    assert origin.startswith("${ORIGIN"), (
-        "portal's ORIGIN must interpolate from the environment, not be pinned "
-        "to a literal — a deployment sets it, the image does not carry it"
-    )
-    assert "localhost" in origin, "the only in-repo default may be the local stack's"
-    for candidate in (origin, (COMPOSE.parent / ".env.example").read_text()):
-        assert "riverbend.example.com" not in candidate, (
-            "no production hostname belongs in a tracked default: an unset ORIGIN "
-            "must fail visibly rather than resolve to a plausible-looking guess"
-        )
-
-
-def test_ci_starts_the_portal_image_and_polls_the_port_compose_publishes():
-    # FE-R32. `docker compose build` is not evidence that anything runs, and the
-    # portal is where those come apart: adapter-node bundles its runtime into
-    # build/, so the runtime stage's `npm ci --omit=dev` leaves a near-empty
-    # dependency tree and a working image is indistinguishable from a broken one
-    # at build time. Two review rounds read that shape as a startup crash. Only a
-    # started container answering the health surface separates the cases.
-    #
-    # The port and the path are read out of compose rather than written here, so
-    # republishing the portal on another port, or moving the health surface,
-    # fails this test instead of leaving CI curling an address nothing serves.
-    ci = (COMPOSE.parent / ".github/workflows/ci.yml").read_text()
-    assert "docker compose up -d --no-deps portal" in ci, (
-        "the docker gate must START the portal image, not only build it; "
-        "--no-deps keeps the gateway's Postgres/Redis chain out of an image job"
-    )
-    probe = " ".join(_service("portal")["healthcheck"]["test"])
-    path = re.search(r"(/[\w\-/]*healthz)", probe).group(1)
-    for host_port in _published_host_ports(_service("portal")):
-        assert f"http://localhost:{host_port}{path}" in ci, (
-            f"CI must poll http://localhost:{host_port}{path} — the port compose "
-            f"publishes and the path its healthcheck probes, not a hardcoded pair "
-            f"that can drift from either"
-        )

@@ -238,9 +238,12 @@ services:
       timeout: 3s
       retries: 5
 
-  # The legacy Next.js portal. It stays runnable until FE-R1-FE-R3 pass on the
-  # SvelteKit portal below (FE-R15), and registration is BROKEN in it on purpose
-  # -- see docs/debt-log.md. Do not patch it; it is being replaced.
+  # The inherited Next.js portal -- the only frontend. The SvelteKit rebuild that
+  # was to replace it is descoped (branch alt/sveltekit-portal), so "it is being
+  # replaced" no longer holds and this service is not a coexistence-window
+  # tenant. Registration is still BROKEN in it and still reports success -- see
+  # docs/debt-log.md; that is now a live defect with no scheduled replacement,
+  # not a defect waiting out a rewrite.
   frontend:
     build: ./frontend
     environment:
@@ -249,30 +252,6 @@ services:
       - "3070:3070"
     depends_on:
       - gateway
-
-  # The SvelteKit staff portal (ADR 0012). Second service rather than a route
-  # group, because a Next.js app cannot host it -- and because two services is
-  # what keeps "which app is under test" answerable during the coexistence
-  # window.
-  portal:
-    build: ./portal
-    environment:
-      GATEWAY_URL: http://gateway:8070
-      # Runtime config, never a build constant (ADR 0015 section 3): adapter-node
-      # derives the cookie's Secure flag and SvelteKit's csrf.checkOrigin target
-      # from this. There is deliberately NO production default -- a deploy that
-      # does not set it must fail visibly rather than guess localhost and produce
-      # a login loop with no error message.
-      ORIGIN: ${ORIGIN:-http://localhost:3071}
-    ports:
-      - "3071:3071"
-    depends_on:
-      - gateway
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3071/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
-      interval: 10s
-      timeout: 3s
-      retries: 5
 
 volumes:
   pgdata:

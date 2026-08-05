@@ -1,6 +1,12 @@
 # ADR 0013 — Test the new frontend with Vitest in two projects: real-browser component tests, Node contract tests
 
-**Status:** Proposed
+**Status:** Superseded 2026-08-05 — descoped with the frontend rebuild (ADR 0012); the harness it
+specifies shipped in PR #25 and was removed from `main` with the SvelteKit portal. Text and harness
+both live on branch `alt/sveltekit-portal`. **The gap it was written against is still open and now
+has nothing scheduled against it:** there is no JavaScript test harness in this repository, and the
+intake contract break that §4 deliverable 3 was to make impossible as a *class* is still live on
+`main` (`docs/debt-log.md`, "Intake contract break"). A future JS gate should re-read §2's
+measurement before re-deciding.
 **Date:** 2026-07-30
 **Author:** Riverbend engagement team
 **Debt:** none directly — new scope (`docs/specs/frontend-rebuild.md` §4 deliverable 3). The gap it

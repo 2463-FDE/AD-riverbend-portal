@@ -1,6 +1,13 @@
 # ADR 0014 — Hold the gateway token server-side behind an httpOnly cookie, and log an idle operator off after 10 minutes
 
-**Status:** Proposed
+**Status:** Superseded 2026-08-05 — descoped with the frontend rebuild (ADR 0012). Text on branch
+`alt/sveltekit-portal`. **Read the debt it does not close, because nothing else does:** D10
+(sessions never expire) is untouched — the gateway still stores `session:<token>` in Redis with no
+TTL — and the inherited portal still keeps the bearer token and the user's role in `localStorage`
+(`frontend/app/lib/session.ts:29-30`), which is the exact storage this ADR was written to end. Both
+remain in `docs/debt-log.md`, now with no scheduled fix. Note also §Context's boundary reading: a
+cookie between a browser and our own BFF does not cross the CLAUDE.md §6 auth boundary, but making
+the gateway's `require_session` accept a cookie does, and stays approval-gated.
 **Date:** 2026-07-31
 **Author:** Riverbend engagement team
 **Debt:** D10 (no session expiry) · D1/D3 (PHI at rest, for the storage half) · new scope for the
