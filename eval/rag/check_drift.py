@@ -60,6 +60,19 @@ deleted at codex r7.) What no check prevents: a hand-written sidecar (echo a
 hex digest) or a hand-edited REPORT.md can still lie; both arrive in review
 as a corpus.sha256 hunk without a paired REPORT.md hunk.
 
+THE FINGERPRINT MAKES INPUT DRIFT LOUD; GOLDSET.md MAKES IT READABLE (codex
+r8). The gold-set carries semantics the eval never surfaces: expected_
+patient_id and expected_answer are loaded and fingerprinted, but scoring uses
+cites_records alone and the report renders only the query and citations — so
+an edit to either passes cleanly through the blessed embed re-run, leaving
+review a hash diff plus a goldset.json hunk but no rendered artifact of what
+expectation changed. eval/rag/GOLDSET.md is that artifact: every field of
+every case, rendered by report.render_goldset_summary, regenerated here and
+diffed against the committed copy. It is a pure function of goldset.json, so
+its writer (run.py --write-goldset-summary, also written by any run producing
+the default REPORT.md location) needs no r7-style gating: a stale or forged
+copy cannot survive the re-derivation diff.
+
 SEPARATE FROM THE REPORT DIFF (added codex r3): db/seed/seed.sql — the file a
 fresh Postgres volume and `make seed` actually load — is byte-checked against
 its deterministic generator, db/seed/generate_seed.py. Without this, a
@@ -97,6 +110,7 @@ ignores.
 """
 import difflib
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -109,21 +123,24 @@ REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
 COMMITTED = os.path.join(HERE, "REPORT.md")
 RUN_PY = os.path.join(HERE, "run.py")
 
-def _retriever_default_model():
-    """Load eval/rag/retriever.py (torch-free at import) under a unique module
-    name, on demand. Not a plain `import retriever`: tests load THIS file by
-    path into their own process, and a bare import would register the generic
-    name `retriever` (and HERE on sys.path) for every later path-loaded module
-    to silently inherit — the collision class tests/conftest.py exists to
-    prevent."""
+def _load_local(filename, module_name):
+    """Load a sibling eval/rag module under a unique name, on demand. Not a
+    plain `import`: tests load THIS file by path into their own process, and a
+    bare import would register the generic name (and HERE on sys.path) for
+    every later path-loaded module to silently inherit — the collision class
+    tests/conftest.py exists to prevent."""
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
-        "eval_rag_retriever", os.path.join(HERE, "retriever.py")
+        module_name, os.path.join(HERE, filename)
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.DEFAULT_MODEL
+    return module
+
+
+def _retriever_default_model():
+    return _load_local("retriever.py", "eval_rag_retriever").DEFAULT_MODEL
 
 # `Retriever: **<label>**, top-k = <k>.` — report.py:155.
 RETRIEVER_RE = re.compile(r"^Retriever: \*\*(?P<label>.*)\*\*, top-k = (?P<k>\d+)\.$")
@@ -142,6 +159,9 @@ SEED_SQL = os.path.join(REPO_ROOT, "db", "seed", "seed.sql")
 CORPUS_INPUTS = ("patients.csv", "encounters.csv", "goldset.json")
 CORPUS_SHA = os.path.join(HERE, "corpus.sha256")
 CORPUS_SHA_SIDE = "eval/rag/corpus.sha256"
+
+GOLDSET_MD = os.path.join(HERE, "GOLDSET.md")
+GOLDSET_SIDE = "eval/rag/GOLDSET.md"
 
 COMMITTED_SIDE = "eval/rag/REPORT.md"
 REGENERATED_SIDE = "the regenerated report"
@@ -165,14 +185,25 @@ SEED_REGENERATE = (
 REGENERATE = (
     "rerun: pip install -r eval/rag/requirements.txt && "
     "python3 eval/rag/run.py --retriever embed\n"
+    "(sentence-transformers needs Python >=3.9; this machine's python3 is 3.8 — "
+    "use the 3.12\ninterpreter, e.g. .venv/bin/python, for both steps.)\n"
     "then commit eval/rag/REPORT.md. Use --retriever embed, NOT --retriever stub: "
     "the committed report\nis the embed-path one, and a stub-generated report is "
     "rejected by this check.\n"
 )
 
+GOLDSET_REGENERATE = (
+    "rerun: python3 eval/rag/run.py --write-goldset-summary\n"
+    "then commit eval/rag/GOLDSET.md. It is generated from db/seed/goldset.json — "
+    "if the\nregenerated content is wrong, the edit belongs in goldset.json, not in "
+    "GOLDSET.md\nby hand.\n"
+)
+
 FINGERPRINT_REGENERATE = (
     "rerun: pip install -r eval/rag/requirements.txt && "
     "python3 eval/rag/run.py --retriever embed\n"
+    "(sentence-transformers needs Python >=3.9; this machine's python3 is 3.8 — "
+    "use the 3.12\ninterpreter, e.g. .venv/bin/python, for both steps.)\n"
     "then commit eval/rag/REPORT.md and eval/rag/corpus.sha256 together — that "
     "run writes\nboth, so the fingerprint cannot be refreshed without "
     "regenerating the report it\nvouches for.\n"
@@ -311,6 +342,43 @@ def _check_corpus_fingerprint():
     sys.exit(1)
 
 
+def _check_goldset_summary():
+    """The gold-set carries semantics the eval never surfaces (codex r8):
+    expected_patient_id / expected_answer are loaded and fingerprinted, but
+    scoring uses cites_records alone and the report renders only the query
+    and citations — so an edit to either passes cleanly through the blessed
+    embed re-run with no rendered artifact showing what changed. GOLDSET.md
+    (every field of every case) is that artifact; here it is diffed against
+    a fresh render of the current goldset.json. Model-free and fully
+    re-derivable, so unlike corpus.sha256 its writer needs no gating — a
+    stale or hand-edited copy cannot survive this diff no matter who wrote
+    it. Exits 1 on mismatch, 2 if the committed copy is missing."""
+    if not os.path.exists(GOLDSET_MD):
+        _die("eval drift: %s is missing\n%s" % (GOLDSET_SIDE, GOLDSET_REGENERATE))
+    report_mod = _load_local("report.py", "eval_rag_report_for_goldset")
+    with open(os.path.join(REPO_ROOT, "db", "seed", "goldset.json")) as f:
+        goldset = json.load(f)
+    expected = report_mod.render_goldset_summary(goldset)
+    with open(GOLDSET_MD, encoding="utf-8") as f:
+        committed = f.read()
+    if committed == expected:
+        return
+    sys.stderr.write(
+        "eval drift: eval/rag/GOLDSET.md does not match db/seed/goldset.json\n"
+    )
+    diff = difflib.unified_diff(
+        committed.split("\n"),
+        expected.split("\n"),
+        fromfile=GOLDSET_SIDE,
+        tofile="regenerated (render_goldset_summary)",
+        lineterm="",
+    )
+    for line in diff:
+        sys.stderr.write(line + "\n")
+    sys.stderr.write("\n" + GOLDSET_REGENERATE)
+    sys.exit(1)
+
+
 def _check_committed_label(label):
     """The committed report must be embed-path output, not a stub regeneration."""
     default_model = _retriever_default_model()
@@ -415,6 +483,7 @@ def main():
 
     _check_seed_sql()
     _check_corpus_fingerprint()
+    _check_goldset_summary()
 
     regenerated = _regenerate()
 
@@ -425,8 +494,9 @@ def main():
         print(
             "eval: db/seed/seed.sql matches its generator, the corpus "
             "fingerprint pins every byte\n      of patients.csv / "
-            "encounters.csv / goldset.json, and REPORT.md matches what\n"
-            "      db/seed/* renders into it"
+            "encounters.csv / goldset.json, GOLDSET.md matches the "
+            "gold-set's\n      full content, and REPORT.md matches what "
+            "db/seed/* renders into it"
         )
         print(
             "      (unchecked: §4's retrieved/recall/precision cells — the "

@@ -311,3 +311,29 @@ with a PYTHONPATH shim faking sentence_transformers/numpy, making the real embed
 its mid-run guard run e2e in tests. Five new tests total: refresh-flag-removed and
 destination-gating stash-proven red vs r6; stub-run-no-write mutation-proven (unconditional
 writer → red); embed-writes layer-A red vs r6; TOCTOU layer-B red vs the guard-less first cut.
+
+PR #29 r8 — 1 finding: 0 A / **1 B** / 0 C · **[medium] fixed** — the fingerprint blesses
+goldset semantics no rendered artifact shows: `expected_patient_id`/`expected_answer` are
+loaded and fingerprinted but scoring uses `cites_records` alone and REPORT.md renders only
+query + citations, so an edit to either passes cleanly through the blessed embed re-run.
+Premise half-contested in the reply with evidence: the corpus files are tracked, so the edit
+always arrives in review as a readable goldset.json hunk beside the sidecar hunk — review is
+never meaning-blind; the real residue is that the fields are dead weight the eval never
+validates. Closed at a design gate (user call, Option 1 of 3 = reviewer's own alternative):
+committed `eval/rag/GOLDSET.md` — every field of every case, keys sorted, values as JSON,
+rendered by `report.render_goldset_summary` — regenerated in-process by `check_drift.py` and
+diffed (new layer between fingerprint and report diff). Writer (`run.py
+--write-goldset-summary`, also any run writing the default REPORT.md location) is deliberately
+UNgated, and the reply explains why that is not r7's escape hatch reborn: the summary is a pure
+function of goldset.json the check re-derives, so a stale or forged copy cannot survive; the
+fingerprint had no re-derivation, which is why ITS writer is gated. Four new tests incl. the
+reviewer's requested regression (edit expected_answer → red; blessed embed run → GOLDSET.md
+carries the change → green), all four stash-proven red vs the r7 tip. Pre-push pass
+(diff-reviewer): 123k tokens, 21 calls, 0 orientation greps, **3 low** — (fixed) red-path
+remediation printed a command whose pip step cannot run under local 3.8 (sentence-transformers
+needs >=3.9); message now names the 3.12 interpreter; (fixed) the committed-report-location
+predicate existed twice (GOLDSET gate inline, fingerprint gate in `fingerprint_destination`) —
+the §10.1 duplicated-instruction shape in predicate form; extracted
+`is_committed_report_location`, both writers consult it; (accepted, TODO-42) the test file's
+~25 subprocess e2e cases roughly double the pre-push hook's warm wall — named as a decision,
+not a surprise. 811/5/1 container, gate green under 3.8.

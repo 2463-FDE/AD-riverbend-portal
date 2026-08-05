@@ -12,6 +12,7 @@ report it vouches for. Corpus embeddings are cached under eval/rag/.cache/ and
 reused across runs (quota guard: embed once).
 """
 import argparse
+import json
 import os
 import sys
 
@@ -29,6 +30,16 @@ import retriever as retriever_mod  # noqa: E402
 MATCH_KEYS = ("none", "name_dob", "ssn")
 
 
+def is_committed_report_location(out_path):
+    """Is out_path the committed eval/rag/REPORT.md? The ONE definition both
+    committed-artifact writers (corpus.sha256, GOLDSET.md) consult — two
+    copies of this predicate drifting apart would let an embed run refresh
+    one artifact but not its pair, red-ing the gate at the wrong layer."""
+    return os.path.realpath(out_path) == os.path.realpath(
+        os.path.join(HERE, "REPORT.md")
+    )
+
+
 def fingerprint_destination(retriever_name, out_path):
     """Where this run may write eval/rag/corpus.sha256 — or None.
 
@@ -41,9 +52,29 @@ def fingerprint_destination(retriever_name, out_path):
     """
     if retriever_name != "embed":
         return None
-    if os.path.realpath(out_path) != os.path.realpath(os.path.join(HERE, "REPORT.md")):
+    if not is_committed_report_location(out_path):
         return None
     return check_drift.CORPUS_SHA
+
+
+GOLDSET_MD = os.path.join(HERE, "GOLDSET.md")
+
+
+def write_goldset_summary():
+    """Render db/seed/goldset.json into eval/rag/GOLDSET.md (codex r8).
+
+    Standalone on purpose, unlike the deleted `--write-fingerprint`: the
+    summary is a pure function of goldset.json that check_drift.py re-derives
+    and diffs, so this writer cannot bless anything false — a stale or forged
+    GOLDSET.md goes red on the next check regardless of who wrote it. The
+    fingerprint had no such re-derivation (the embed scores are
+    unreproducible without the model), which is why ITS writer is gated to
+    the embed run and this one need not be."""
+    with open(os.path.join(REPO_ROOT, "db", "seed", "goldset.json")) as f:
+        goldset = json.load(f)
+    with open(GOLDSET_MD, "w") as f:
+        f.write(report.render_goldset_summary(goldset))
+    print("wrote eval/rag/GOLDSET.md")
 
 
 def refresh_fingerprint_sidecar(dest, before):
@@ -88,7 +119,16 @@ def main() -> None:
     parser.add_argument("--retriever", choices=("embed", "stub"), default="embed")
     parser.add_argument("--k", type=int, default=1, help="top-k records retrieved per query")
     parser.add_argument("--out", default=os.path.join(HERE, "REPORT.md"))
+    parser.add_argument(
+        "--write-goldset-summary", action="store_true",
+        help="only regenerate eval/rag/GOLDSET.md from db/seed/goldset.json; "
+        "touches no other file (safe standalone: check_drift re-derives it)",
+    )
     args = parser.parse_args()
+
+    if args.write_goldset_summary:
+        write_goldset_summary()
+        return
 
     seed_dir = os.path.join(REPO_ROOT, "db", "seed")
     # Hashed BEFORE the loads below: refresh_fingerprint_sidecar re-hashes at
@@ -124,6 +164,11 @@ def main() -> None:
         f.write(md)
 
     print(f"wrote {args.out}")
+    if is_committed_report_location(args.out):
+        # Any run producing the committed report location keeps the rendered
+        # goldset summary in step with it; --out elsewhere (check_drift's own
+        # temp regeneration) must not touch the tree.
+        write_goldset_summary()
     fingerprint_dest = fingerprint_destination(args.retriever, args.out)
     if fingerprint_dest:
         refresh_fingerprint_sidecar(fingerprint_dest, corpus_before)

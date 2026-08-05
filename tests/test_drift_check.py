@@ -210,6 +210,20 @@ def _forge_fingerprint(work):
         f.write(_inputs_fingerprint(work) + "\n")
 
 
+def _refresh_goldset_summary(work):
+    """Regenerate the copy's GOLDSET.md with the legitimate writer, so a
+    goldset edit gets past the summary layer and the layer a test pins is
+    the one that goes red. Unlike _forge_fingerprint this is not an
+    adversary: the summary is re-derived by the check itself, so the writer
+    cannot bless anything."""
+    proc = subprocess.run(
+        [sys.executable, str(work / "eval" / "rag" / "run.py"),
+         "--write-goldset-summary"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
 def test_green_against_the_committed_seed(tmp_path):
     """The control. Without this, every red test above could be red by accident."""
     proc = _run_in_copy(tmp_path, lambda work: None)
@@ -259,6 +273,7 @@ def test_red_when_a_goldset_query_is_reworded(tmp_path):
             goldset["cases"][0]["query"] = "list Maria Gonzalez's allergies"
         _mutate_goldset(work, transform)
         _forge_fingerprint(work)
+        _refresh_goldset_summary(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -271,6 +286,7 @@ def test_red_when_goldset_cited_records_change(tmp_path):
             goldset["cases"][0]["cites_records"] = [2]
         _mutate_goldset(work, transform)
         _forge_fingerprint(work)
+        _refresh_goldset_summary(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -284,6 +300,7 @@ def test_red_when_a_goldset_case_is_removed(tmp_path):
             goldset["cases"].pop()
         _mutate_goldset(work, transform)
         _forge_fingerprint(work)
+        _refresh_goldset_summary(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -635,6 +652,99 @@ def test_fingerprint_destination_gating(tmp_path):
     assert embed_default.endswith("corpus.sha256")
     assert stub_default == "none"
     assert embed_elsewhere == "none"
+
+
+# --- GOLDSET.md: goldset semantics must live in a rendered artifact (r8) ---
+
+
+def test_red_when_expected_answer_changes_and_summary_stale(tmp_path):
+    """The r8 finding's core: expected_answer feeds neither the scores nor
+    REPORT.md, so with a forged fingerprint nothing else notices the edit.
+    The GOLDSET.md layer must — the committed summary no longer matches a
+    fresh render of the gold-set."""
+    def mutate(work):
+        gs = work / "db" / "seed" / "goldset.json"
+        mutated = gs.read_text().replace(
+            "No known allergies on file.", "Penicillin allergy on file."
+        )
+        assert mutated != gs.read_text(), "needle missing — update this test"
+        gs.write_text(mutated)
+        _forge_fingerprint(work)
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 1
+    assert "GOLDSET.md does not match" in proc.stderr
+    assert "--write-goldset-summary" in proc.stderr
+
+
+def test_blessed_embed_run_surfaces_goldset_semantics(tmp_path):
+    """The reviewer's r8 regression, both branches: edit only expected_answer,
+    and (a) the gate is red before any regeneration; (b) after the legitimate
+    blessed embed writer runs, the gate is green ONLY because a rendered,
+    reviewed artifact — GOLDSET.md — now carries the changed expectation."""
+    work = _copy_eval_and_seed(tmp_path)
+    gs = work / "db" / "seed" / "goldset.json"
+    gs.write_text(
+        gs.read_text().replace(
+            "No known allergies on file.", "Penicillin allergy on file."
+        )
+    )
+
+    check = [sys.executable, str(work / "eval" / "rag" / "check_drift.py")]
+    red = subprocess.run(check, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         universal_newlines=True)
+    assert red.returncode == 1
+
+    env = dict(os.environ, PYTHONPATH=str(_fake_embed_shim(tmp_path)))
+    blessed = subprocess.run(
+        [sys.executable, str(work / "eval" / "rag" / "run.py"),
+         "--retriever", "embed"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+        env=env,
+    )
+    assert blessed.returncode == 0, blessed.stderr
+
+    summary = (work / "eval" / "rag" / "GOLDSET.md").read_text()
+    assert "Penicillin allergy on file." in summary
+
+    green = subprocess.run(check, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           universal_newlines=True)
+    assert green.returncode == 0, green.stderr
+
+
+def test_write_goldset_summary_touches_only_goldset_md(tmp_path):
+    """The r8 writer is standalone BECAUSE it cannot lie (the check
+    re-derives the content) — but it must stay in its lane: refreshing the
+    summary must not refresh the fingerprint or the report, or it becomes
+    the r7 escape hatch under a new name."""
+    work = _copy_eval_and_seed(tmp_path)
+    report_before = (work / "eval" / "rag" / "REPORT.md").read_bytes()
+    sidecar_before = (work / "eval" / "rag" / "corpus.sha256").read_bytes()
+    (work / "eval" / "rag" / "GOLDSET.md").write_text("stale\n")
+
+    proc = subprocess.run(
+        [sys.executable, str(work / "eval" / "rag" / "run.py"),
+         "--write-goldset-summary"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "GOLDSET.md" in proc.stdout
+    assert "corpus.sha256" not in proc.stdout
+
+    assert (work / "eval" / "rag" / "GOLDSET.md").read_text() != "stale\n"
+    assert (work / "eval" / "rag" / "REPORT.md").read_bytes() == report_before
+    assert (work / "eval" / "rag" / "corpus.sha256").read_bytes() == sidecar_before
+
+
+def test_missing_goldset_summary_dies_2(tmp_path):
+    """No committed summary is a broken checkout, not a drift verdict — exit
+    2, never 1, and the message says how to create it."""
+    def mutate(work):
+        os.remove(str(work / "eval" / "rag" / "GOLDSET.md"))
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 2
+    assert "GOLDSET.md is missing" in proc.stderr
 
 
 def test_generator_dies_when_fixture_csv_is_missing(tmp_path):
