@@ -50,13 +50,15 @@ definition with the gate green. Fingerprinting the .py files would close that
 at the cost of every comment edit demanding an embed re-run; rejected. What IS
 pinned on the code side: the model (label check) and top-k (compared). The
 fingerprint deliberately cannot verify the §4 SCORES against the new inputs
-(nothing can without the model); its job is to make input drift loud, and the
-red message states the obligation that follows: regenerate the embed-path
-report, then refresh the fingerprint (`check_drift.py --write-fingerprint`),
-and commit both together. An operator who refreshes the fingerprint without
-regenerating the report is lying to the gate the same way hand-editing
-REPORT.md would be — visible in review (the .sha256 hunk arrives without a
-REPORT.md hunk), not preventable here.
+(nothing can without the model); its job is to make input drift loud. The ONLY
+writer of eval/rag/corpus.sha256 is run.py, and only when an embed-path run
+writes the committed REPORT.md location — report and fingerprint refresh in
+the same step, so the sidecar cannot bless inputs the report never saw. (The
+standalone `--write-fingerprint` escape hatch shipped at r6 broke exactly
+that: refresh the sidecar, skip the report, gate green on stale scores —
+deleted at codex r7.) What no check prevents: a hand-written sidecar (echo a
+hex digest) or a hand-edited REPORT.md can still lie; both arrive in review
+as a corpus.sha256 hunk without a paired REPORT.md hunk.
 
 SEPARATE FROM THE REPORT DIFF (added codex r3): db/seed/seed.sql — the file a
 fresh Postgres volume and `make seed` actually load — is byte-checked against
@@ -171,10 +173,9 @@ REGENERATE = (
 FINGERPRINT_REGENERATE = (
     "rerun: pip install -r eval/rag/requirements.txt && "
     "python3 eval/rag/run.py --retriever embed\n"
-    "then:  python3 eval/rag/check_drift.py --write-fingerprint\n"
-    "and commit eval/rag/REPORT.md and eval/rag/corpus.sha256 together. "
-    "Refreshing the\nfingerprint without regenerating the report pins the "
-    "committed scores to a corpus\nthat no longer exists.\n"
+    "then commit eval/rag/REPORT.md and eval/rag/corpus.sha256 together — that "
+    "run writes\nboth, so the fingerprint cannot be refreshed without "
+    "regenerating the report it\nvouches for.\n"
 )
 
 
@@ -270,9 +271,11 @@ def _check_seed_sql():
     sys.exit(1)
 
 
-def _corpus_fingerprint():
+def corpus_fingerprint():
     """sha256 over the raw bytes of every file run.py reads, each prefixed by
-    its name so content cannot migrate between files without a change."""
+    its name so content cannot migrate between files without a change.
+    Public: run.py imports this so the value it writes into corpus.sha256 and
+    the value this check recomputes are one definition, not two copies."""
     h = hashlib.sha256()
     for name in CORPUS_INPUTS:
         with open(os.path.join(REPO_ROOT, "db", "seed", name), "rb") as f:
@@ -285,16 +288,17 @@ def _check_corpus_fingerprint():
     """The report diff below only sees what run.py renders; goldset fields the
     report never shows (expected_patient_id, expected_answer) and CSV columns
     that feed only masked score cells would otherwise drift green (codex r6).
-    The fingerprint makes any input-file change visible; regenerating the
-    embed-path report is then the operator's obligation, stated in the
-    remediation — no check can re-score §4 without the model."""
+    The fingerprint makes any input-file change visible, and the only writer
+    is run.py's embed path regenerating the committed report (codex r7), so
+    going green again implies the report was re-run on the new inputs — no
+    check can re-score §4 without the model."""
     if not os.path.exists(CORPUS_SHA):
         _die(
             "eval drift: %s is missing\n%s" % (CORPUS_SHA_SIDE, FINGERPRINT_REGENERATE)
         )
     with open(CORPUS_SHA, encoding="utf-8") as f:
         committed = f.read().strip()
-    actual = _corpus_fingerprint()
+    actual = corpus_fingerprint()
     if committed == actual:
         return
     sys.stderr.write(
@@ -305,18 +309,6 @@ def _check_corpus_fingerprint():
         "exist.\n%s" % (CORPUS_SHA_SIDE, committed, actual, FINGERPRINT_REGENERATE)
     )
     sys.exit(1)
-
-
-def _write_fingerprint():
-    value = _corpus_fingerprint()
-    with open(CORPUS_SHA, "w") as f:
-        f.write(value + "\n")
-    print("wrote %s (%s)" % (CORPUS_SHA_SIDE, value))
-    print(
-        "commit it only alongside a REPORT.md regenerated on the embed path — "
-        "see the header\nof eval/rag/check_drift.py"
-    )
-    return 0
 
 
 def _check_committed_label(label):
@@ -459,12 +451,11 @@ if __name__ == "__main__":
     # must not exit 1 and send an operator regenerating a report to fix an
     # environment problem.
     try:
-        if sys.argv[1:] == ["--write-fingerprint"]:
-            sys.exit(_write_fingerprint())
         if sys.argv[1:]:
-            sys.stderr.write(
-                "usage: python3 eval/rag/check_drift.py [--write-fingerprint]\n"
-            )
+            # --write-fingerprint lived here until codex r7: a standalone
+            # sidecar writer that could bless inputs the committed report
+            # never saw. run.py's embed path is now the only writer.
+            sys.stderr.write("usage: python3 eval/rag/check_drift.py\n")
             sys.exit(2)
         sys.exit(main())
     except SystemExit:

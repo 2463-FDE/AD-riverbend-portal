@@ -12,6 +12,7 @@ red ones are not red for a trivial reason.
 The end-to-end cases mutate a COPY of the seed CSVs under tmp_path; the real
 db/seed/ is never written to.
 """
+import hashlib
 import json
 import os
 import re
@@ -150,15 +151,21 @@ def test_section_4_prose_survives_the_mask(report_text):
 # --- end to end, against a mutated copy of the seed ---
 
 
-def _run_in_copy(tmp_path, mutate, argv=()):
-    """Copy the eval + seed into tmp_path, mutate, run the check, return the
-    completed process."""
+def _copy_eval_and_seed(tmp_path):
+    """Copy the eval + seed trees into tmp_path/repo; return that root."""
     work = tmp_path / "repo"
     (work / "eval").mkdir(parents=True)
     (work / "db").mkdir(parents=True)
     shutil.copytree(os.path.join(REPO_ROOT, "eval", "rag"), str(work / "eval" / "rag"),
                     ignore=shutil.ignore_patterns(".cache", "__pycache__"))
     shutil.copytree(os.path.join(REPO_ROOT, "db", "seed"), str(work / "db" / "seed"))
+    return work
+
+
+def _run_in_copy(tmp_path, mutate, argv=()):
+    """Copy the eval + seed into tmp_path, mutate, run the check, return the
+    completed process."""
+    work = _copy_eval_and_seed(tmp_path)
     mutate(work)
     return subprocess.run(
         [sys.executable, str(work / "eval" / "rag" / "check_drift.py")] + list(argv),
@@ -178,18 +185,29 @@ def _regen_seed(work):
         )
 
 
-def _refresh_fingerprint(work):
-    """Rerun --write-fingerprint in the copy. The report-diff tests below call
-    this so their input edit gets past the fingerprint layer (which fires
-    first) and the layer each test pins is the one that goes red — which also
-    proves renderable-field drift is caught even when an operator refreshes
-    the fingerprint without regenerating the report."""
-    proc = subprocess.run(
-        [sys.executable, str(work / "eval" / "rag" / "check_drift.py"),
-         "--write-fingerprint"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
-    )
-    assert proc.returncode == 0, proc.stderr
+def _inputs_fingerprint(work):
+    """The copy's current-input fingerprint. Mirrors
+    check_drift.corpus_fingerprint's scheme; if that scheme changes, the
+    tests using this fail on the corpus layer instead of their own — noisy
+    red, not silent green."""
+    h = hashlib.sha256()
+    for name in ("patients.csv", "encounters.csv", "goldset.json"):
+        with open(str(work / "db" / "seed" / name), "rb") as f:
+            h.update(b"\x00" + name.encode("utf-8") + b"\x00")
+            h.update(f.read())
+    return h.hexdigest()
+
+
+def _forge_fingerprint(work):
+    """HAND-FORGE the copy's corpus.sha256 to match its current inputs — the
+    `echo <hash> > corpus.sha256` adversary, since codex r7 deleted the last
+    tool that could do this (`--write-fingerprint`). The report-diff tests
+    below call this so their input edit gets past the fingerprint layer (which
+    fires first) and the layer each test pins is the one that goes red — which
+    also proves renderable-field drift stays caught even against a forged
+    sidecar."""
+    with open(str(work / "eval" / "rag" / "corpus.sha256"), "w") as f:
+        f.write(_inputs_fingerprint(work) + "\n")
 
 
 def test_green_against_the_committed_seed(tmp_path):
@@ -204,7 +222,7 @@ def test_red_when_a_seed_patient_changes(tmp_path):
         csv = work / "db" / "seed" / "patients.csv"
         csv.write_text(csv.read_text().replace("Maria Gonzales,", "Maria Gonzalez,", 1))
         _regen_seed(work)
-        _refresh_fingerprint(work)
+        _forge_fingerprint(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -218,7 +236,7 @@ def test_red_when_a_seed_allergy_changes(tmp_path):
         csv = work / "db" / "seed" / "encounters.csv"
         csv.write_text(csv.read_text().replace("penicillin", "sulfa"))
         _regen_seed(work)
-        _refresh_fingerprint(work)
+        _forge_fingerprint(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -240,7 +258,7 @@ def test_red_when_a_goldset_query_is_reworded(tmp_path):
         def transform(goldset):
             goldset["cases"][0]["query"] = "list Maria Gonzalez's allergies"
         _mutate_goldset(work, transform)
-        _refresh_fingerprint(work)
+        _forge_fingerprint(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -252,7 +270,7 @@ def test_red_when_goldset_cited_records_change(tmp_path):
         def transform(goldset):
             goldset["cases"][0]["cites_records"] = [2]
         _mutate_goldset(work, transform)
-        _refresh_fingerprint(work)
+        _forge_fingerprint(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -265,7 +283,7 @@ def test_red_when_a_goldset_case_is_removed(tmp_path):
         def transform(goldset):
             goldset["cases"].pop()
         _mutate_goldset(work, transform)
-        _refresh_fingerprint(work)
+        _forge_fingerprint(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -406,7 +424,7 @@ def test_red_when_goldset_expected_patient_flips(tmp_path):
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
     assert "corpus changed" in proc.stderr
-    assert "--write-fingerprint" in proc.stderr
+    assert "--retriever embed" in proc.stderr
 
 
 def test_red_when_encounter_summary_rewritten(tmp_path):
@@ -456,12 +474,12 @@ def test_missing_fingerprint_dies_2(tmp_path):
     assert "corpus.sha256 is missing" in proc.stderr
 
 
-def test_write_fingerprint_then_green(tmp_path):
-    """The operator path end-to-end: edit an input, refresh the fingerprint,
-    and the check is green again — proving --write-fingerprint writes the
-    value the checker computes. This is also the documented limit, on
-    purpose: the gate cannot know the embed report was actually re-run; the
-    paired REPORT.md + corpus.sha256 hunks in review are that guard."""
+def test_fingerprint_refresh_without_report_regen_stays_red(tmp_path):
+    """The flip of r6's test_write_fingerprint_then_green — the codex r7
+    finding. The old operator path (edit an input, regenerate the seed, run
+    `--write-fingerprint`, no report regeneration) turned the gate green on
+    stale §4 scores. Now the flag is gone: the refresh attempt exits 2 usage,
+    touches nothing, and the full check stays red on the corpus layer."""
     def mutate(work):
         csv_path = work / "db" / "seed" / "encounters.csv"
         csv_path.write_text(
@@ -470,16 +488,153 @@ def test_write_fingerprint_then_green(tmp_path):
             )
         )
         _regen_seed(work)
+        sidecar = work / "eval" / "rag" / "corpus.sha256"
+        before = sidecar.read_text()
         refresh = subprocess.run(
             [sys.executable, str(work / "eval" / "rag" / "check_drift.py"),
              "--write-fingerprint"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
         )
-        assert refresh.returncode == 0
-        assert "wrote eval/rag/corpus.sha256" in refresh.stdout
+        assert refresh.returncode == 2
+        assert "usage:" in refresh.stderr
+        assert sidecar.read_text() == before, "removed flag still wrote the sidecar"
 
     proc = _run_in_copy(tmp_path, mutate)
-    assert proc.returncode == 0
+    assert proc.returncode == 1
+    assert "corpus changed" in proc.stderr
+
+
+def test_stub_run_does_not_write_fingerprint(tmp_path):
+    """run.py is now the only fingerprint writer, but only the embed path
+    writing the committed REPORT.md location may do it. A stub run to the
+    default location — the cheap invocation in every operator's history, and
+    the shape of check_drift.py's own regeneration — must leave the sidecar
+    untouched, or the gate blesses itself."""
+    work = _copy_eval_and_seed(tmp_path)
+    sidecar = work / "eval" / "rag" / "corpus.sha256"
+    before = sidecar.read_text()
+
+    proc = subprocess.run(
+        [sys.executable, str(work / "eval" / "rag" / "run.py"),
+         "--retriever", "stub"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "corpus.sha256" not in proc.stdout
+    assert sidecar.read_text() == before
+
+
+def _fake_embed_shim(tmp_path):
+    """A PYTHONPATH dir faking sentence_transformers + numpy, so the embed
+    path — the only legitimate corpus.sha256 writer — actually executes in
+    tests without the real model. Vectors are all-zero: retrieval quality is
+    irrelevant to what these tests pin (the write path and its mid-run
+    guard). If DRIFT_TEST_MUTATE_DURING_ENCODE names a file, the first
+    encode() appends to it — an input edit landing while the run is underway."""
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    (shim / "numpy.py").write_text(
+        "import json\n"
+        "class _Vecs(list):\n"
+        "    def __matmul__(self, q):\n"
+        "        return [sum(a * b for a, b in zip(row, q)) for row in self]\n"
+        "def save(path, arr):\n"
+        "    with open(path, 'w') as f:\n"
+        "        json.dump(list(arr), f)\n"
+        "def load(path):\n"
+        "    with open(path) as f:\n"
+        "        return _Vecs(json.load(f))\n"
+    )
+    (shim / "sentence_transformers.py").write_text(
+        "import os\n"
+        "import numpy\n"
+        "class SentenceTransformer:\n"
+        "    def __init__(self, name):\n"
+        "        self.name = name\n"
+        "    def encode(self, texts, normalize_embeddings=False):\n"
+        "        target = os.environ.pop('DRIFT_TEST_MUTATE_DURING_ENCODE', None)\n"
+        "        if target:\n"
+        "            with open(target, 'a') as f:\n"
+        "                f.write('# mutated mid-run\\n')\n"
+        "        return numpy._Vecs([[0.0] for _ in texts])\n"
+    )
+    return shim
+
+
+def test_embed_run_writes_fingerprint(tmp_path):
+    """The positive direction of the r7 invariant, executed for real: an
+    embed-path run to the default location rewrites corpus.sha256 with the
+    value the checker recomputes. Sidecar pre-poisoned so this can only pass
+    if the run actually wrote it."""
+    work = _copy_eval_and_seed(tmp_path)
+    sidecar = work / "eval" / "rag" / "corpus.sha256"
+    sidecar.write_text("0" * 64 + "\n")
+
+    env = dict(os.environ, PYTHONPATH=str(_fake_embed_shim(tmp_path)))
+    proc = subprocess.run(
+        [sys.executable, str(work / "eval" / "rag" / "run.py"),
+         "--retriever", "embed"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "wrote eval/rag/corpus.sha256" in proc.stdout
+    assert sidecar.read_text().strip() == _inputs_fingerprint(work)
+
+
+def test_mid_run_corpus_edit_refuses_fingerprint(tmp_path):
+    """TOCTOU (diff-review r7 pre-push finding): an input file changes while
+    the embed run is underway — here, the shim's encode() appends to
+    encounters.csv mid-run. REPORT.md was then computed from bytes that no
+    longer exist, so run.py must refuse the sidecar write and exit 2
+    unusable, not hash the new bytes and bless the divergence."""
+    work = _copy_eval_and_seed(tmp_path)
+    sidecar = work / "eval" / "rag" / "corpus.sha256"
+    before = sidecar.read_text()
+
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(_fake_embed_shim(tmp_path)),
+        DRIFT_TEST_MUTATE_DURING_ENCODE=str(
+            work / "db" / "seed" / "encounters.csv"
+        ),
+    )
+    proc = subprocess.run(
+        [sys.executable, str(work / "eval" / "rag" / "run.py"),
+         "--retriever", "embed"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+        env=env,
+    )
+    assert proc.returncode == 2
+    assert "changed while this run was underway" in proc.stderr
+    assert sidecar.read_text() == before
+
+
+def test_fingerprint_destination_gating(tmp_path):
+    """The write condition itself: embed + default REPORT.md location writes
+    the sidecar; a stub run or an --out elsewhere never does. Run in a
+    subprocess because importing run.py registers generic module names
+    (data, report, …) that path-loaded test modules must not inherit."""
+    rag = os.path.join(REPO_ROOT, "eval", "rag")
+    probe = (
+        "import os, sys\n"
+        "sys.path.insert(0, %r)\n"
+        "import run\n"
+        "default = os.path.join(%r, 'REPORT.md')\n"
+        "print(run.fingerprint_destination('embed', default) or 'none')\n"
+        "print(run.fingerprint_destination('stub', default) or 'none')\n"
+        "print(run.fingerprint_destination('embed', '/tmp/elsewhere.md') or 'none')\n"
+        % (rag, rag)
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    embed_default, stub_default, embed_elsewhere = proc.stdout.strip().split("\n")
+    assert embed_default.endswith("corpus.sha256")
+    assert stub_default == "none"
+    assert embed_elsewhere == "none"
 
 
 def test_generator_dies_when_fixture_csv_is_missing(tmp_path):

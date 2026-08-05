@@ -290,3 +290,24 @@ contract/CI wiring; pass verified 3.8+3.12 green first-hand. Fix commit `fb0e3a1
    the first commit, and it is the *mechanism* that post-dates it.
 5. Churn: sum `git show --numstat` insertions per non-merge commit, split at the last
    commit of the original push.
+
+PR #29 r7 — 1 finding: 0 A / **1 B** / 0 C · **[medium] fixed** — r6's `--write-fingerprint`
+was a standalone sidecar writer: edit an input, refresh the fingerprint, skip the embed report,
+gate green on stale §4 scores — and r6's own roundtrip test pinned that as intended behavior.
+B by definition: machinery an earlier fix round wrote. Closed at a design gate (user call,
+Option 1 of 3, the reviewer's primary suggestion): the flag is deleted and `run.py` is the only
+corpus.sha256 writer, gated to `--retriever embed` writing the default REPORT.md location
+(`fingerprint_destination`), so refreshing the fingerprint IS regenerating the report. Residual,
+named: a hand-written sidecar (`echo <hex>`) can still lie — no text-file check stops deliberate
+forgery; it lands in review as a sidecar hunk with no paired REPORT.md hunk. The five layer
+tests now hand-forge the sidecar in-copy (the surviving adversary), preserving layer isolation.
+Pre-push pass (diff-reviewer): 89k tokens, 19 calls, 0 orientation greps, **1 medium + 1 low**,
+both in this round's own first cut — the class the pass exists for: (medium) TOCTOU — the
+fingerprint was hashed at the END of the embed run, so an input edit during the minutes-long
+model-download window blessed bytes the report never read; fixed by hashing before the loads and
+refusing the write (exit 2) if the recompute differs. (low) The legitimate write path never
+executed in any test (embed needs the model), so deleting the write block stayed green — fixed
+with a PYTHONPATH shim faking sentence_transformers/numpy, making the real embed write path and
+its mid-run guard run e2e in tests. Five new tests total: refresh-flag-removed and
+destination-gating stash-proven red vs r6; stub-run-no-write mutation-proven (unconditional
+writer → red); embed-writes layer-A red vs r6; TOCTOU layer-B red vs the guard-less first cut.
