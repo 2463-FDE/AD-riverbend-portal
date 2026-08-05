@@ -438,3 +438,21 @@ LIVE on first post-fix use (a heredoc whose text mentions redirection forms) —
 the doctrine-standard escape `ALLOW_CROSS_TREE_GIT=1` (skips only the cross-tree check;
 scan/suite still run; 2 harness cases each). Git-native gate (`.githooks/` + `core.hooksPath`)
 split to its own design PR (TODO-50 tail).
+
+PR #36 r3 — 2 findings: 2 B (first B on this PR; both defects in r2's GIT_INV_RE). [high]×2:
+space-separated `--git-dir <path>`/`--work-tree <path>` never matched the r2 matcher (only
+single-token and `-C`/`-c` two-token forms), so the hook exited before the cross-tree check —
+full bypass, commit AND push. Fix-now, no design gate (single shape, no new state): arg-taking
+global options enumerated in the alternation (`--git-dir|--work-tree|--namespace|--config-env|
+--attr-source`); a generic `--opt <arg>` branch rejected in-comment — it would re-match
+`git --paginate stash push` and resurrect the r2 stash regression. Delta-pack diff-reviewer
+(75k/13 calls) found the SAME CLASS one shape over, both reproduced: [high] backslash-newline
+continuations never match line-wise grep (wrapped invocation skips every check — fixed by
+normalizing `\`+NL to space before matching); [high] quoted spaced option args
+(`-c user.name="A B"`) break the option chain (reproduced with a staged key allowed through —
+fixed by Q_ARG accepting quoted runs); plus the git>=2.40 `--attr-source` enumeration gap
+(added preemptively; local git 2.39 rejects the flag so old-git behavior unchanged). Harnesses
+44+35; layer A vs r2 tip 6+5 red; mutations (normalization / Q_ARG / attr-source / xfail
+normalization) red 1/1/1/2. Class trend to watch: three matcher-shape misses across two rounds
+— if r4 finds a fourth, the matcher strategy (regex over shell text) is the defect, not the
+shapes, and the git-native gate (TODO-50 tail) becomes the fix rather than the follow-up.

@@ -26,12 +26,27 @@ set -u
 input=$(cat)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
 
+# Backslash-newline continuations re-join into one line before any matching:
+# grep applies the ERE per line, so a wrapped invocation (`git --git-dir /x \`
+# NL `commit`) otherwise never matches and skips every check below (r3
+# reviewer, reproduced). All downstream extraction reads this normalized form.
+cmd=${cmd//\\$'\n'/ }
+
 # `git commit` can carry global options between the words (`git -C <dir> commit`,
 # `git -c a=b commit`) — match a git invocation whose SUBCOMMAND is commit, not
 # the literal substring (PR #36 r2: that never fired on redirected forms) and not
 # any command merely containing the word (r2 reviewer: a bare word-match caught
 # `git stash`-style siblings and post-subcommand flags like `git commit -C HEAD`).
-GIT_INV_RE='(^|[^[:alnum:]_])git([[:space:]]+(-C|-c)[[:space:]]+[^[:space:]]+|[[:space:]]+-[^[:space:]]+)*[[:space:]]+commit([^[:alnum:]_-]|$)'
+# Arg-taking global options are enumerated (r3: space-separated `--git-dir
+# <path>` never matched, so the command exited before the cross-tree check —
+# a generic `--opt <arg>` branch is deliberately NOT used, it would re-match
+# `git --paginate stash push` shapes and resurrect the stash regression;
+# --attr-source is git >= 2.40, harmless to match on older git). Option args
+# may carry quoted spaces (`-c user.name="A B"`) — Q_ARG accepts quoted runs,
+# else the chain breaks at the space and the whole matcher misses (r3
+# reviewer, reproduced with a staged key allowed through).
+Q_ARG="([^[:space:]\"']|\"[^\"]*\"|'[^']*')+"
+GIT_INV_RE="(^|[^[:alnum:]_])git([[:space:]]+(-C|-c|--git-dir|--work-tree|--namespace|--config-env|--attr-source)[[:space:]]+$Q_ARG|[[:space:]]+-[^[:space:]]+)*[[:space:]]+commit([^[:alnum:]_-]|\$)"
 printf '%s' "$cmd" | grep -qE "$GIT_INV_RE" || exit 0
 
 repo="${CLAUDE_PROJECT_DIR:-$PWD}"

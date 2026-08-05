@@ -102,6 +102,38 @@ expect deny  "nonexistent -C target"                      "$r" "git -C /no/such/
 expect deny  "pushd <other repo> compound"                "$r" "pushd $other && git commit -m x"
 expect deny  "GIT_DIR env-prefix redirection"             "$r" "GIT_DIR=$other/.git git commit -m x"
 expect deny  "GIT_WORK_TREE env-prefix redirection"       "$r" "GIT_WORK_TREE=$other git commit -m x"
+expect deny  "--git-dir space-separated"                  "$r" "git --git-dir $other/.git commit -m x"
+expect deny  "--work-tree space-separated"                "$r" "git --work-tree $other commit -m x"
+expect deny  "--git-dir + --work-tree space-separated"    "$r" "git --git-dir $other/.git --work-tree $other commit -m x"
+
+jverdict() { # <repo> <command-via-jq> -> prints deny|allow (for commands with quotes/newlines)
+  local out
+  out=$(jq -n --arg c "$2" '{tool_input:{command:$c}}' \
+    | CLAUDE_PROJECT_DIR="$1" bash "$HOOK" 2>/dev/null)
+  case "$out" in
+    *permissionDecision*deny*) echo deny ;;
+    *) echo allow ;;
+  esac
+}
+jexpect() { # <want> <label> <repo> <command>
+  local got; got=$(jverdict "$3" "$4")
+  if [ "$got" = "$1" ]; then
+    printf '  ok    %-42s %s\n' "$2" "$got"; pass=$((pass+1))
+  else
+    printf '  FAIL  %-42s want %s got %s\n' "$2" "$1" "$got"; fail=$((fail+1))
+  fi
+}
+
+echo "Continuations and quoted option args still match (r3 reviewer):"
+r=$(new_repo); other=$(new_repo)
+jexpect deny "backslash-newline cross-tree commit"  "$r" "git -C $other \\
+commit -m x"
+r=$(new_repo); stage "$r" "services/x.py" "key = '$AWS_KEY'"
+jexpect deny "quoted spaced -c value, staged key"   "$r" 'git -c user.name="Armaan D" commit -m x'
+r=$(new_repo); stage "$r" "services/x.py" "key = '$AWS_KEY'"
+jexpect deny "--attr-source form, staged key"       "$r" 'git --attr-source HEAD commit -m x'
+r=$(new_repo); stage "$r" "docs/note.md" "nothing sensitive"
+jexpect allow "quoted spaced -c value, clean stage" "$r" 'git -c user.name="Armaan D" commit -m x'
 
 echo "A nested checkout INSIDE the project dir is still another index:"
 r=$(new_repo); nested="$r/.claude/worktrees/wf_x-1"

@@ -63,6 +63,24 @@ case "$reason" in
   *) bad "auth-change wording present" "the mandated sentence" "${reason:-<empty>}" ;;
 esac
 
+# jdecision <command-via-jq> <fixture> -> allow|deny (for commands with quotes/newlines)
+jdecision() {
+  local out
+  out=$(jq -n --arg c "$1" '{hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:{command:$c}}' \
+        | XFAIL_INVARIANT_OUTPUT="$2" bash "$HOOK" 2>/dev/null)
+  verdict "$out"
+}
+jexpect() { # <want> <label> <command> <fixture>
+  local got; got="$(jdecision "$3" "$4")"
+  [ "$got" = "$1" ] && ok "$2" "$got" || bad "$2" "$1" "$got"
+}
+
+echo "Continuations still match (r3 reviewer):"
+jexpect deny "backslash-newline --git-dir push"  "git --git-dir /tmp/x/.git \\
+push" "$FIX/pytest-ok.txt"
+jexpect deny "backslash-newline plain push, red suite" "git \\
+push" "$FIX/pytest-xpass.txt"
+
 # Discriminating: green fixture WOULD allow, so a deny proves the cross-tree
 # check fired (and that the broadened matcher caught the redirected form at all —
 # the old substring matcher never matched "git -C <dir> push").
@@ -72,6 +90,9 @@ expect deny  "cd <elsewhere> && git push"         "cd /tmp && git push"         
 expect deny  "--work-tree redirection"            "git --work-tree=/tmp push origin" "$FIX/pytest-ok.txt"
 expect deny  "unresolvable cd target (variable)"  "cd \$W && git push"               "$FIX/pytest-ok.txt"
 expect deny  "GIT_DIR env-prefix push"            "GIT_DIR=/tmp/x/.git git push"     "$FIX/pytest-ok.txt"
+expect deny  "--git-dir space-separated push"     "git --git-dir /tmp/x/.git push"   "$FIX/pytest-ok.txt"
+expect deny  "--work-tree space-separated push"   "git --work-tree /tmp push origin HEAD" "$FIX/pytest-ok.txt"
+expect deny  "both space-separated, push"         "git --git-dir /tmp/x/.git --work-tree /tmp/x push" "$FIX/pytest-ok.txt"
 expect deny  "bare git push, cwd elsewhere"       "git push"                         "$FIX/pytest-ok.txt" "/tmp"
 expect allow "cd tests && git push (same repo)"   "cd tests && git push"             "$FIX/pytest-ok.txt"
 expect allow "bare git push, cwd project subdir"  "git push origin HEAD"             "$FIX/pytest-ok.txt" "$PROJECT_DIR/tests"
