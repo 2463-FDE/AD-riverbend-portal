@@ -29,7 +29,10 @@
      internal ids (`slot_id`, `appointment_id`). Scheduling relies on this.
 3. **Exception strings leak.** `str(e)` on an outbound-call failure can embed
    the full request URL, including query params carrying identifiers
-   (e.g. `?insurance_id=...`). On outbound failures log the exception class
+   (e.g. `?insurance_id=...`). The same applies to statement-level DB errors:
+   a SQLAlchemy `DBAPIError` stringifies with `[SQL: ...] [parameters: (...)]`
+   — the full bound row — unless the engine sets `hide_parameters=True` (see
+   the register). In both cases log the exception class
    and status code, not the stringified exception.
 4. **LLM rule (ai-assistant).** Prompts and completions are never logged, to
    any handler, at any level — they may contain arbitrary PHI. Log metadata
@@ -80,6 +83,9 @@
 | `logs/intake-service.log` (git-tracked) | **OPEN — ops** | Historical entries contain plaintext PHI. Needs: purge, gitignore, and a git-history-scrub decision. The code fix stops new leakage only. |
 | `services/eligibility-service/app.py:44` logs `insurance_id` | OPEN | Violates rule 2 (external identifier) |
 | `services/intake-service/app.py` `_verify_eligibility` error path | **FIXED 2026-07-08** | Was `str(e)` (could embed the payer URL + `insurance_id` query param, rule 3); now logs the exception class only and returns a generic error. Test: `tests/test_intake_eligibility_phi.py` (Codex review). |
+| `services/intake-service/app.py:137` `_create_patient` error path | OPEN | Logs `str(e)` on `SQLAlchemyError`; a statement-level `DBAPIError` (e.g. `DataError` on an oversized field) embeds `[parameters: (...)]` — the full patients row: name, DOB, SSN, address, notes (rule 3). Shared cause: `db.py:9` engine has no `hide_parameters=True`. Found by doc-drift follow-up 2026-08-05. |
+| `services/intake-service/app.py:154` `_create_coverage` error path | OPEN | Same class as app.py:137; would embed `member_id` / `group_number` (rules 2 and 3). Shared cause: `db.py:9`. |
+| `services/intake-service/app.py:167` `_record_consents` error path | OPEN | Same `str(e)` pattern; bound values are benign consent kinds, listed for class completeness (rule 3). Shared cause: `db.py:9`. |
 | `.env` committed to git | OPEN | Not a log site, but the same exposure class — tracked in `docs/debt-log.md` |
 | Redis holds `facts.insurance_id` at rest (visit-chat) | **ACCEPTED 2026-07-26** | Approved under rule 6's controls (opaque key, owner binding, sliding TTL, no id in keys/logs). The Redis hardening that was its recommended precondition shipped with it (**D3b**, PR #14): no host publish, `requirepass`, scoped credential, gateway-side fail-closed guard. Residual: no TLS, one shared credential, no read audit trail. |
 

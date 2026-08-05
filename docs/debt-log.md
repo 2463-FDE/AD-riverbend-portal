@@ -24,7 +24,10 @@
 - **Status:** **code fixed 2026-07-05**; **tip-of-tree hygiene fixed
   2026-07-06; history remediation still open** — `*.log` added to `.gitignore`
   and `logs/intake-service.log` untracked (`git rm --cached`), so no new PHI
-  enters the tree. Bodies now redacted via `redaction.safe_log_payload`.
+  enters the tree. Bodies are never logged: intake emits an allowlisted
+  non-PHI projection via `schemas.log_metadata` (schemas.py:69–92); the
+  interim `redaction.safe_log_payload` still exists (redaction.py:68) but was
+  superseded 2026-07-08 (`docs/phi-logging-policy.md` register).
   The repository remains contaminated until history is rewritten: the
   plaintext PHI is still recoverable from **git history** (and from PR
   diffs/CI artifacts that displayed it) — untracking does not remove it.
@@ -193,8 +196,9 @@
 - **Ticket:** — (found via automated review on PR #26, not client-reported)
 - **Status:** **CLOSED at the topology layer (2026-08-02, ADR 0016).** All six
   services are `expose`-only; host publishing is a closed allowlist
-  (`postgres`, `gateway`, `frontend`, `portal`) so a new service cannot publish
-  by default. Guarded by `tests/test_compose_topology.py` (per-service
+  (`postgres`, `gateway`, `frontend` — `portal` was removed from the set at the
+  PR #31 descope) so a new service cannot publish by default. Guarded by
+  `tests/test_compose_topology.py` (per-service
   no-`ports`, allowlist, gateway-URL agreement, compose-wide URL/port
   agreement). Dev access via `docker compose exec` or a gitignored
   `docker-compose.override.yml` (ADR 0016 §4).
