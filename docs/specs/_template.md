@@ -27,7 +27,9 @@ ID and records the change. Prefix is short and spec-scoped (`W4`, `FE`, …).
 
 ## 3. Definitions
 
-> Only terms whose ambiguity would change the work. Domain terms live in `CLAUDE.md` §8.
+> Only terms whose ambiguity would change the work. Domain terms (BFF, ROI, HL7/ADT/ORU/PID/PV1,
+> MPI, PHI, 45 CFR 164.508, X12 270/271) are defined where they are used — `ARCHITECTURE.md` and
+> `docs/landmines.md` carry the load-bearing ones.
 
 ## 4. Deliverables
 
@@ -52,7 +54,8 @@ ID and records the change. Prefix is short and spec-scoped (`W4`, `FE`, …).
 >   round will only half-satisfy it.
 > - **No solution nouns** unless the solution *is* the requirement. Say what must be true.
 > - **Safety requirements use the IF/THEN pattern.** The unwanted-behaviour form is the one that
->   catches fail-open defects, which is where this repo's regressions live (CLAUDE.md §5).
+>   catches fail-open defects, which is where this repo's regressions live
+>   (`docs/landmines.md` §3).
 > - **Every requirement names its verification.** A requirement no test or documented repro can
 >   settle is a wish. "Reviewed by inspection" is allowed, but say so explicitly.
 
@@ -64,14 +67,15 @@ ID and records the change. Prefix is short and spec-scoped (`W4`, `FE`, …).
 
 > A gate is a named stop with an **artifact**, a **verification method**, and a **who signs**.
 > Phases without a gate silently merge into each other. Mark which gates block a merge
-> (CLAUDE.md §6 approval-gated changes always do).
+> (`docs/landmines.md` §1 approval-gated changes always do).
 
 | Gate | Blocks | Artifact | Verified how | Signed by |
 |---|---|---|---|---|
 
 ## 7. Relevant landmines
 
-> Copy the applicable `CLAUDE.md` §6 entries. Do not paraphrase them into something softer.
+> Copy the applicable `docs/landmines.md` §1 entries. Do not paraphrase them into something
+> softer.
 
 ## 8. Open decisions
 

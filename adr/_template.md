@@ -46,7 +46,7 @@
 >
 > No solutioning here. If a sentence contains the answer, it belongs in Decision.
 >
-> **Cite, do not restate, the landmines.** Where `CLAUDE.md` §6 already describes the
+> **Cite, do not restate, the landmines.** Where `docs/landmines.md` §1 already describes the
 > hazard, quote it verbatim and link it. Paraphrasing a landmine into something softer is
 > how the constraint gets lost.
 

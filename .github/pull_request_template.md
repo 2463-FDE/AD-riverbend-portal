@@ -24,7 +24,7 @@ to "eligibility unavailable" instead of blocking Save.
 <!-- Gateway routing, compose/env, frontend proxy, or composition changes. Omit if none. -->
 
 ## Risk & landmines
-<!-- REQUIRED for a HIPAA production repo. State which CLAUDE.md §6 landmines this
+<!-- REQUIRED for a HIPAA production repo. State which docs/landmines.md §1 zones this
      touches — auth/sessions, PHI columns, ROI/disclosures, migrations, secrets/.env,
      inline eligibility, booking race, HL7 mapping — or state "none touched".
      If any: explain the blast radius and request human sign-off here.

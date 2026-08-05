@@ -1,8 +1,9 @@
 # Contributing — Riverbend Patient Portal
 
 How changes land in this repo. This is a **brownfield, production, HIPAA** codebase — the
-process is deliberately conservative. Read `CLAUDE.md` (esp. §6 landmines, §7 safety rules)
-before opening a branch.
+process is deliberately conservative. Read `docs/landmines.md` — the do-not-touch zones, the
+safety rules for changes, and the negative-test rule for PHI/security code — before opening a
+branch.
 
 ---
 
@@ -75,12 +76,13 @@ Refs: RIV-088, RIV-141
    - **Overview** — what & why; endpoint table if the API surface changes. `Refs:` line.
    - **Behavior** — bold-headed notes on each notable behavior / decision.
    - **Wiring** — gateway routing, compose/env, frontend proxy changes (omit if none).
-   - **Risk & landmines** — **required.** Which `CLAUDE.md §6` landmines this touches
+   - **Risk & landmines** — **required.** Which `docs/landmines.md` §1 zones this touches
      (or "none touched"); blast radius + human sign-off request if any; confirm no PHI in
      logs/error bodies, and schema dual-update if the schema changed.
    - **Verification** — bold-prefixed, what you ran and the result; state anything skipped.
    - **Impact** — closing line: what this unblocks or follow-ups left open.
-3. **Keep the diff scoped.** Do not refactor unrelated code in the same PR (`CLAUDE.md §7`).
+3. **Keep the diff scoped.** Do not refactor unrelated code in the same PR
+   (`docs/landmines.md` §2).
 4. CI must be green: frontend build, per-service import smoke, `pytest -m "not integration"`.
 5. At least **one reviewer approval** before merge. Address review comments before adding new scope.
 6. **Squash merge** into `main`. The squash commit subject follows the commit convention above;
@@ -88,7 +90,8 @@ Refs: RIV-088, RIV-141
 
 ### Schema / migration changes
 If a PR changes the DB schema it MUST update **both** `db/schema.sql` and add a new
-`db/migrations/00N_*.sql` (they are hand-synced — `CLAUDE.md §4/§6`). Flag migrations in the PR.
+`db/migrations/00N_*.sql` (they are hand-synced — `docs/landmines.md` §1/§2). Flag migrations in
+the PR.
 
 ---
 
