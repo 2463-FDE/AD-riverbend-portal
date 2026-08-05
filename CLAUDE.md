@@ -7,9 +7,9 @@
 > **Where this file lives, and why.** Repo root, **tracked** — re-tracked 2026-08-05, reversing
 > PR #32 the same day it landed (`docs/plans/pipeline-upgrade.md` PIPE-1): parallel worktrees
 > and fresh clones must inherit the rules, the ~97 in-repo doc references must resolve, and
-> rule changes get PR review. **Edits to this file are approval-gated (§7).** `.claude/`
-> tracking is decided too (OD-1, exclusions listed there) and lands in the immediate follow-up
-> PR. The old shadow-rename guard is disabled per its own instruction
+> rule changes get PR review. **Edits to this file are approval-gated (§7).** `.claude/` is
+> tracked too (OD-1; machine-local state excluded — the `.gitignore` block lists it). The old
+> shadow-rename guard is disabled per its own instruction
 > (`git config riverbend.allowRepoClaudeMd true`); the parent copy at
 > `~/Documents/REVATURE/Riverbend/` is renamed `inactive-claude.md` once PIPE-1 step 8's
 > preconditions are met (riverbend-demo rebased or retired first).
@@ -78,8 +78,8 @@ docs/
                       #   portal.har
 tests/                # pytest; integration tests marked and need live infra
 eval/ · scripts/ · logs/  # eval harness; local tooling (gitignored); local logs
-.claude/              # skills, hooks, commands, settings. Tracking lands in the follow-up
-                      #   PR (pipeline-upgrade OD-1, exclusions apply). See §10.1.
+.claude/              # skills, hooks, commands, agents, workflows, settings. TRACKED
+                      #   (OD-1; machine-local state excluded via .gitignore). See §10.1.
 ```
 
 - **Entry points:** each service is `app.py` (FastAPI app + routers). Frontend boots via Next.js.
@@ -195,8 +195,8 @@ indexes both — several IDs appear nowhere else, so do not thin it to a pointer
   wins** on how-to, and the disagreement is a bug to fix immediately in whichever file is behind.
   (Duplication cost a review round on 2026-07-27: one instruction, two files, only one maintained,
   and the shorter more confident copy won.) The same rule is why §6/§7 above are pointers.
-- **This file is tracked (2026-08-05, reversing PR #32), and `.claude/` tracking lands in the
-  follow-up PR** (pipeline-upgrade OD-1; excluded and still local-only: `settings.local.json`,
+- **This file and `.claude/` are tracked (2026-08-05, reversing PR #32 and the 2026-07-30
+  untracking)** (pipeline-upgrade OD-1; excluded and still local-only: `settings.local.json`,
   `gates/state.json`, `scheduled_tasks.lock`, `__pycache__`). Rule changes therefore get PR
   review; the "push code and docs, tooling stays local" rule is retired. Backup:
   `../.riverbend-tooling-snapshots/` — its own git repo, deliberately outside `Riverbend/`;
@@ -219,9 +219,8 @@ indexes both — several IDs appear nowhere else, so do not thin it to a pointer
   hooks stay installed, not deleted. Mechanics in the snapshots `README.md`. Branches cut
   before the re-track carry their own older `CLAUDE.md` — a checkout showing "modified:
   CLAUDE.md" after switching back is that, not an edit.
-- **`git clean -xfd` deletes ignored files** — until the `.claude/` tracking PR lands that is
-  all of `.claude/`, and after it the OD-1 exclusions — survivable only back to the last
-  snapshot commit.
+- **`git clean -xfd` deletes ignored files** — for `.claude/` that is now only the OD-1
+  exclusions — survivable only back to the last snapshot commit.
 - **CI cannot run any `.claude/` tooling, tracked or not** — hooks execute only inside Claude
   Code sessions. Anything that must gate a merge belongs in `.github/workflows/` or the
   `Makefile`; a hook-only check is advisory. Tracking buys portability and review, not
@@ -269,10 +268,10 @@ any disagreement (§10.1).**
 Since this file is tracked (2026-08-05), **every checkout — worktree or clone, wherever it
 lives — carries it at its own root.** What still varies is `.claude/`:
 
-- **Create worktrees under `~/Documents/REVATURE/Riverbend/`** (e.g. `git worktree add
-  ../riverbend-<name>`) **until the `.claude/` tracking PR lands** — a worktree elsewhere has
-  the rules and `docs/landmines.md` but no skills or hooks. Once `.claude/` is tracked, the
-  location rule relaxes to a preference (the OD-1 exclusions still exist only here).
+- **Worktree location is now a preference, not a requirement** — with `.claude/` tracked, any
+  checkout carries the skills, hooks and commands. `~/Documents/REVATURE/Riverbend/` remains
+  the tidy default. The OD-1 exclusions (`settings.local.json`, gates state, lock) exist only
+  in this main checkout; a fresh worktree simply runs without them.
 - ⚠️ **Branches cut before the re-track** check out their own older `CLAUDE.md` (or none, e.g.
   `riverbend-demo`'s tip `07a0c0b`) — rebase onto current `main` before trusting the rules a
   stale tree shows.
