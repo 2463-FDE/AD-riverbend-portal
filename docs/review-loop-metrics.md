@@ -352,3 +352,20 @@ single-threaded CLI, no contract callers, no cross-layer surface, and the byte-l
 regression proof covers the finding's exact failure mode; §6's replaced-code lens closed
 inline (only deleted behavior is the bug). Residual named: the fixed `.tmp` suffix clashes
 under concurrent runs — accepted for a single-user CLI. 811/5/1 container.
+
+PR #29 r10 — 1 finding: 1 A · **[medium] conceded, parked as TODO-43 — no fix commit; round
+closes the loop and the PR merges with this as the recorded open item.** Masked score cells are
+not invalidated by eval-code changes: `corpus.sha256` pins the three data files' bytes only, so
+a scoring change in `metrics.py` or a ranking change in `retriever.py` leaves the committed
+embed-path §4 scores describing old code with the gate green. A, not B, by §5 step 4: the mask
+and its code-blindness ship in the original push `97297b9` — r6's fingerprint narrowed the
+*data* half of the blind spot, and its reply named this half on record ("the eval code
+computing the scores stays unfingerprinted"), rejecting the naive byte-hash of the `.py` files
+because a comment edit would force a minutes-long embed re-run. Triage: accepted tradeoff —
+blast radius is the committed eval scores only (no runtime/PHI/auth surface), the trigger is an
+eval-code edit that skips embed regen, and every workable fix is new design/CI surface
+(comment-insensitive code fingerprint of the score-producing functions, a version field written
+only by the embed regen path, or a CI leg) — same shape as r4's parked interpreter pin, a
+design call rather than a mid-review edit. Ten rounds total on this PR; every finding since r4
+targeted machinery a fix round added or a residual already named, which is the diminishing-
+returns signal the merge call rests on.
