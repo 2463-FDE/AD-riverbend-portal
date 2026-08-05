@@ -21,7 +21,12 @@ def get_engine() -> Engine:
     but we defer it anyway so module import is fully side-effect free."""
     global _engine
     if _engine is None:
-        _engine = create_engine(settings.db_url, pool_pre_ping=True, future=True)
+        # hide_parameters strips SQLAlchemy's [parameters: (...)] from
+        # DBAPIError text ONLY — driver messages can still embed values, so
+        # rule 3's class-name log idiom stays the primary control.
+        _engine = create_engine(
+            settings.db_url, pool_pre_ping=True, future=True, hide_parameters=True
+        )
     return _engine
 
 

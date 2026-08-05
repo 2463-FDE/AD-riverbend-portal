@@ -214,7 +214,10 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     try:
         user = db.execute(select(User).where(User.username == req.username)).scalar_one_or_none()
     except Exception as e:  # DB down in local dev without compose
-        log.error("login db error: %s", e)
+        # PHI policy rule 3: a statement-level DB error can embed the bound
+        # username via the driver message. Class name only, same idiom as
+        # intake's DB-error paths. Test: tests/test_gateway_login_db_error_phi.py.
+        log.error("login db error (%s)", type(e).__name__)
         raise HTTPException(status_code=503, detail="auth backend unavailable")
 
     if not user or not user.is_active or not verify_password(req.password, user.password_hash):

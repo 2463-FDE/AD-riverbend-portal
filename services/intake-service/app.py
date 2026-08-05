@@ -134,7 +134,11 @@ def _create_patient(db: Session, demo: Demographics) -> int:
         return patient.id
     except SQLAlchemyError as e:
         db.rollback()
-        log.error("intake: failed to create patient: %s", e)
+        # PHI policy rule 3: never stringify a statement-level DB error — a
+        # DBAPIError embeds [SQL: ...] [parameters: (...)], i.e. the full
+        # patients row (name, DOB, SSN, notes). Class name only, same idiom as
+        # _verify_eligibility's 2026-07-08 fix. Test: tests/test_intake_db_error_phi.py.
+        log.error("intake: failed to create patient (%s)", type(e).__name__)
         raise HTTPException(status_code=503, detail="patient store unavailable")
 
 
@@ -151,7 +155,12 @@ def _create_coverage(db: Session, patient_id: int, ins: Insurance) -> None:
         db.commit()
     except SQLAlchemyError as e:
         db.rollback()
-        log.error("intake: failed to record coverage for patient %s: %s", patient_id, e)
+        # Rule 3 (see _create_patient): str(e) would embed member_id/group_number.
+        log.error(
+            "intake: failed to record coverage for patient %s (%s)",
+            patient_id,
+            type(e).__name__,
+        )
         raise HTTPException(status_code=503, detail="coverage store unavailable")
 
 
@@ -164,7 +173,13 @@ def _record_consents(db: Session, patient_id: int, kinds: list[str]) -> None:
             db.commit()
         except SQLAlchemyError as e:
             db.rollback()
-            log.error("intake: failed to record consent %s for patient %s: %s", kind, patient_id, e)
+            # Rule 3 (see _create_patient). kind is ConsentKind-constrained — safe.
+            log.error(
+                "intake: failed to record consent %s for patient %s (%s)",
+                kind,
+                patient_id,
+                type(e).__name__,
+            )
 
 
 def _verify_eligibility(ins: Optional[Insurance]) -> Optional[dict[str, Any]]:
