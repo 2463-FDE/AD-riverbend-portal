@@ -29,15 +29,10 @@ dist/
 # instead.
 .claude/
 
-# CLAUDE.md joins them 2026-08-05. It is the agent's operating instructions, not a
-# project deliverable, and it drifts on its own cadence — carrying it in the tree
-# meant every unrelated branch either fought over it or shipped a stale copy. It now
-# lives one directory up, at the Riverbend/ project level, so it still reaches this
-# repo and any worktree created beside it. Forward-only: earlier versions stay in
-# git history and on GitHub, which is accepted.
-#
-# The standing rule this encodes: push code and docs; Claude tooling stays local.
-CLAUDE.md
+# CLAUDE.md was ignored here 2026-08-05 (PR #32) and re-tracked the same day
+# (docs/plans/pipeline-upgrade.md PIPE-1, reversing #32): parallel worktrees and
+# fresh clones must inherit the rules, the in-repo doc references must resolve,
+# and rule changes get PR review. Edits to it are approval-gated (CLAUDE.md §7).
 
 # Local-only helper scripts (renderers and similar). Same reasoning as .claude/ above:
 # they are personal tooling, not a project deliverable, so they stay out of git. No

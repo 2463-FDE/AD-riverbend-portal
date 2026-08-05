@@ -385,3 +385,20 @@ identifiers). Pre-push pass (diff-reviewer, 72k/19 calls, zero orientation greps
 sentinel test, red/green proven; (2) same-mechanism sites unregistered (gateway Redis-fault
 logs, ai-assistant `str(e)` on the vendor-egress path) → register rows OPEN, no code. Security
 lens skipped, judgment on record: no new route/egress/sink/authz/parser. 821/5/1 container.
+
+## 6. Pre-code gates (append one line per gate stop)
+
+> Added 2026-08-05 at the pipeline-upgrade plan's approval (`docs/plans/pipeline-upgrade.md`
+> §1; OD-3 sited the ledger here — same append-only discipline as §4, extended to the gates
+> that stop work *before* code exists). One line per PG-n stop:
+> `date · gate · subject · outcome — note`. Outcomes: **passed-unchanged** (the stop changed
+> nothing), **amended** (the human changed the artifact), **redirected** (the stage was
+> re-run), **aborted** (the work stopped). Dry-run stops carry a `dry-run` tag and are
+> excluded from effectiveness counts. The test this section exists to run: a gate whose lines
+> are ~all passed-unchanged is a stop on taste and gets removed or merged — the same standard
+> §3 applies to the post-code design gate.
+
+2026-08-05 · PG-0 · plan:pipeline-upgrade · amended — approved with 3 amendments (a1
+riverbend-demo loses all rules after parent rename → rebase-or-retire required; a2 `brief`
+dropped from the /dashboard stage enum; a3 dry-run ledger tag); OD-1 track `.claude/` with
+exclusions, OD-2 fence rewrite + Lens-4 traceability check, OD-3 ledger sited here.
