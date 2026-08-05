@@ -23,7 +23,11 @@ def get_engine() -> Engine:
     here — psycopg2 connects on first query via the pool."""
     global _engine
     if _engine is None:
-        _engine = create_engine(settings.db_url, pool_pre_ping=True, future=True)
+        # hide_parameters: a DBAPIError message must never embed the bound row
+        # (PHI) — engine-level backstop behind phi-logging-policy rule 3.
+        _engine = create_engine(
+            settings.db_url, pool_pre_ping=True, future=True, hide_parameters=True
+        )
     return _engine
 
 
