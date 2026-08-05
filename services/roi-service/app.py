@@ -42,8 +42,8 @@ def list_roi_requests(
         if patient_id is not None:
             stmt = stmt.where(RoiRequest.patient_id == patient_id)
         rows = db.execute(stmt.order_by(RoiRequest.id.desc())).scalars().all()
-    except SQLAlchemyError:
-        log.exception("list_roi_requests: database error")
+    except SQLAlchemyError as e:
+        log.error("list_roi_requests: database error (%s)", type(e).__name__)
         raise HTTPException(status_code=503, detail="database unavailable")
 
     return [RoiRequestOut.model_validate(r) for r in rows]
@@ -72,9 +72,9 @@ def create_roi_request(payload: RoiRequestCreate, db: Session = Depends(get_db))
         db.refresh(req)
     except HTTPException:
         raise
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         db.rollback()
-        log.exception("create_roi_request: database error")
+        log.error("create_roi_request: database error (%s)", type(e).__name__)
         raise HTTPException(status_code=503, detail="database unavailable")
 
     return RoiRequestOut.model_validate(req)
@@ -126,9 +126,13 @@ def fulfill_roi_request(request_id: int, db: Session = Depends(get_db)):
         db.refresh(disclosure)
     except HTTPException:
         raise
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         db.rollback()
-        log.exception("fulfill_roi_request: database error for request_id=%s", request_id)
+        log.error(
+            "fulfill_roi_request: database error for request_id=%s (%s)",
+            request_id,
+            type(e).__name__,
+        )
         raise HTTPException(status_code=503, detail="database unavailable")
 
     return FulfillResult(
@@ -160,8 +164,12 @@ def disclose(patient_id: int, db: Session = Depends(get_db)):
             .scalars()
             .all()
         )
-    except SQLAlchemyError:
-        log.exception("disclose: database error for patient_id=%s", patient_id)
+    except SQLAlchemyError as e:
+        log.error(
+            "disclose: database error for patient_id=%s (%s)",
+            patient_id,
+            type(e).__name__,
+        )
         raise HTTPException(status_code=503, detail="database unavailable")
 
     return DisclosureRecords(

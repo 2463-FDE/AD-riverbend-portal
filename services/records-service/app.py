@@ -57,8 +57,8 @@ def list_patients(
             .scalars()
             .all()
         )
-    except SQLAlchemyError:
-        log.exception("list_patients: database error")
+    except SQLAlchemyError as e:
+        log.error("list_patients: database error (%s)", type(e).__name__)
         raise HTTPException(status_code=503, detail="database unavailable")
 
     return PatientPage(
@@ -74,8 +74,12 @@ def get_patient(patient_id: int, db: Session = Depends(get_db)):
     """Patient demographics, or 404."""
     try:
         patient = db.get(Patient, patient_id)
-    except SQLAlchemyError:
-        log.exception("get_patient: database error for patient_id=%s", patient_id)
+    except SQLAlchemyError as e:
+        log.error(
+            "get_patient: database error for patient_id=%s (%s)",
+            patient_id,
+            type(e).__name__,
+        )
         raise HTTPException(status_code=503, detail="database unavailable")
 
     if patient is None:
@@ -125,9 +129,11 @@ def get_patient_records(patient_id: int, db: Session = Depends(get_db)):
                     records=[RecordOut.model_validate(r) for r in recs],
                 )
             )
-    except SQLAlchemyError:
-        log.exception(
-            "get_patient_records: database error for patient_id=%s", patient_id
+    except SQLAlchemyError as e:
+        log.error(
+            "get_patient_records: database error for patient_id=%s (%s)",
+            patient_id,
+            type(e).__name__,
         )
         raise HTTPException(status_code=503, detail="database unavailable")
 
@@ -154,8 +160,8 @@ def search_records(
             .scalars()
             .all()
         )
-    except SQLAlchemyError:
-        log.exception("search_records: database error")
+    except SQLAlchemyError as e:
+        log.error("search_records: database error (%s)", type(e).__name__)
         raise HTTPException(status_code=503, detail="database unavailable")
 
     return [RecordSearchHit.model_validate(r) for r in rows]

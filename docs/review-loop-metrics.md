@@ -369,3 +369,19 @@ only by the embed regen path, or a CI leg) — same shape as r4's parked interpr
 design call rather than a mid-review edit. Ten rounds total on this PR; every finding since r4
 targeted machinery a fix round added or a residual already named, which is the diminishing-
 returns signal the merge call rests on.
+
+PR #34 r1 — 2 findings: 2 A · both real, one cluster: the original push's class sweep grepped
+`str(e)` and missed `log.exception`, which embeds the same exception text via the traceback
+(rule-3 mechanism, second spelling). Both fixed by sweeping the whole class, not the two flagged
+sites: all 12 DB-error `log.exception` sites in scheduling/roi/records → class-name-only
+`log.error`. Booking fix took the reviewer's option B (catch + class name); option A (move
+`book()` onto SQLAlchemy) rejected — D5b's raw-psycopg2 race is deliberate debt. ROI edits
+log-line-only on explicit §6 approval. Four sentinel tests scan `Formatter().format(record)`
+(exc_info text included — `getMessage()` alone passes vacuously pre-fix); all stash-proven
+red/green. Dynamic check ran live (postgres stopped + one real ForeignKeyViolation): class-only
+lines, no tracebacks; drive-by find → TODO-47 (uvicorn access logs print query-string
+identifiers). Pre-push pass (diff-reviewer, 72k/19 calls, zero orientation greps): 2 low — (1)
+`cancel_appointment` ran `db.get` outside its try → unhandled ASGI 500 traceback vector; fixed +
+sentinel test, red/green proven; (2) same-mechanism sites unregistered (gateway Redis-fault
+logs, ai-assistant `str(e)` on the vendor-egress path) → register rows OPEN, no code. Security
+lens skipped, judgment on record: no new route/egress/sink/authz/parser. 821/5/1 container.

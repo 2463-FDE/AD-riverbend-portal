@@ -54,8 +54,8 @@ def list_slots(
 
     try:
         rows = db.execute(stmt).all()
-    except Exception:
-        log.exception("failed to list slots")
+    except Exception as e:
+        log.error("failed to list slots: database error (%s)", type(e).__name__)
         raise HTTPException(status_code=503, detail="database unavailable")
 
     items = []
@@ -81,8 +81,12 @@ def list_appointments(
     )
     try:
         rows = db.execute(stmt).scalars().all()
-    except Exception:
-        log.exception("failed to list appointments for patient %s", patient_id)
+    except Exception as e:
+        log.error(
+            "failed to list appointments for patient %s: database error (%s)",
+            patient_id,
+            type(e).__name__,
+        )
         raise HTTPException(status_code=503, detail="database unavailable")
 
     items = [AppointmentOut.model_validate(a) for a in rows]
@@ -106,9 +110,15 @@ def create_appointment(req: BookingRequest):
             location=req.location,
             scheduled_for=req.scheduled_for,
         )
-    except Exception:
-        log.exception(
-            "booking failed for patient=%s slot=%s", req.patient_id, req.slot_id
+    except Exception as e:
+        # book.py is raw psycopg2 — the engine-level hide_parameters backstop
+        # never sees this path, and the driver message can embed the bound row
+        # (req.reason is open free text). Class name only, no exc_info.
+        log.error(
+            "booking failed for patient=%s slot=%s: database error (%s)",
+            req.patient_id,
+            req.slot_id,
+            type(e).__name__,
         )
         raise HTTPException(status_code=503, detail="database unavailable")
 
@@ -128,16 +138,22 @@ def create_appointment(req: BookingRequest):
 @app.post("/appointments/{appointment_id}/cancel", response_model=CancelResponse)
 def cancel_appointment(appointment_id: int, db: Session = Depends(get_db)):
     """Cancel an appointment. 404 if it does not exist."""
-    appt = db.get(Appointment, appointment_id)
-    if appt is None:
-        raise HTTPException(status_code=404, detail="appointment not found")
-
-    appt.status = "cancelled"
     try:
+        appt = db.get(Appointment, appointment_id)
+        if appt is None:
+            raise HTTPException(status_code=404, detail="appointment not found")
+
+        appt.status = "cancelled"
         db.commit()
-    except Exception:
+    except HTTPException:
+        raise
+    except Exception as e:
         db.rollback()
-        log.exception("failed to cancel appointment %s", appointment_id)
+        log.error(
+            "failed to cancel appointment %s: database error (%s)",
+            appointment_id,
+            type(e).__name__,
+        )
         raise HTTPException(status_code=503, detail="database unavailable")
 
     log.info("cancelled appointment %s", appointment_id)
