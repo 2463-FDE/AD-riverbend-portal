@@ -250,6 +250,20 @@ which caught nothing the suite missed but converted two inferences into observat
 gate claim that was wrong (the 5th deselected test is PR #28's records-flow addition, not a
 day-queue integration test as first asserted).
 
+PR #26 r6 — 1 finding: 1 A · **[medium] fixed** — day filter on
+`COALESCE(scheduled_for, slots.start_at)` across an outer join: unindexable, so every
+`GET /schedule` seq-scanned appointments (shape shipped in the original push `43dbbc4`).
+Design-gated (fix = migration, §6): reviewer's persisted-`visit_at`-column shape rejected as
+mid-review stateful machinery touching the RIV-175 booking surface; approved shape was the
+stateless UNION ALL rewrite + index-only migration 009 (ADR 0018). Proof: EXPLAIN ANALYZE on 66k
+synthetic rows, 21.4 ms seq-scan → 0.79 ms all-index with identical membership; live gateway check
+identical to old shape on seed data. Pre-push pass (general-purpose + pack): 58k tokens, 9 calls,
+**0 orientation greps**, 4 findings — 2 medium test-gaps both real and instructive: the isouter
+mutation on the membership join and the status-into-slot-branch mutation each survived the round's
+6 advertised mutation-proofs, i.e. the pass found holes in the mutation matrix itself, not the
+code. Both closed with mutation-proven assertions; 1 low migration lock note fixed; 1 partial-index
+suggestion declined (priced in ADR 0018 tradeoff 1). Fix commit `f7864e1`.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
