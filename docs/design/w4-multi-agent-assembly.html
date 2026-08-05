@@ -1,0 +1,253 @@
+<title>W4 — Multi-Agent Patient-View Assembly (sketch)</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --ink: #1a2230;
+    --ink-soft: #55617a;
+    --line: #dfe3ea;
+    --accent: #2563eb;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+    --c-guard: #c0392b;   --c-guard-bg: #fdeaea;
+    --c-llm: #7c3aed;     --c-llm-bg: #efe9fe;
+    --c-hitl: #d97706;    --c-hitl-bg: #fdf1d6;
+    --c-svc: #2563eb;     --c-svc-bg: #e2ecfe;
+    --c-data: #059669;    --c-data-bg: #d9f5e9;
+    --c-term: #475569;    --c-term-bg: #e6e9ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10141c; --panel: #171d28; --ink: #e8ecf3; --ink-soft: #96a1b8;
+      --line: #2a3240; --accent: #6b9bff;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #10141c; --panel: #171d28; --ink: #e8ecf3; --ink-soft: #96a1b8;
+    --line: #2a3240; --accent: #6b9bff;
+  }
+  :root[data-theme="light"] {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1a2230; --ink-soft: #55617a;
+    --line: #dfe3ea; --accent: #2563eb;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 24px 72px; }
+
+  header { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 28px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 8px;
+  }
+  h1 { font-size: 28px; line-height: 1.2; margin: 0 0 10px; text-wrap: balance; font-weight: 650; }
+  .sub { color: var(--ink-soft); max-width: 68ch; margin: 0; font-size: 15px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .tag {
+    font-family: var(--mono); font-size: 11.5px; padding: 3px 9px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--ink-soft); background: var(--panel);
+  }
+  .tag.warn { color: var(--c-hitl); border-color: var(--c-hitl); }
+
+  h2 {
+    font-size: 13px; font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--ink-soft); margin: 36px 0 14px; font-weight: 600;
+  }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px; font-size: 13px;
+    padding: 6px 12px 6px 10px; border-radius: 8px; background: var(--panel);
+    border: 1px solid var(--line);
+  }
+  .swatch { width: 13px; height: 13px; border-radius: 4px; border: 1.5px solid; flex: none; }
+  .chip b { font-weight: 600; } .chip span { color: var(--ink-soft); }
+
+  .diagram {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 20px; overflow-x: auto;
+  }
+  .mermaid { min-width: 720px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-family: var(--mono); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-soft); font-weight: 600; }
+  td code, .debt { font-family: var(--mono); font-size: 12.5px; }
+  .debt { color: var(--c-guard); font-weight: 600; white-space: nowrap; }
+  tr td:first-child { font-weight: 600; }
+
+  .note { color: var(--ink-soft); font-size: 13.5px; max-width: 72ch; }
+  .note code { font-family: var(--mono); font-size: 12.5px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">RIV · Week 4 · sketch</p>
+    <h1>Multi-Agent Patient-View Assembly</h1>
+    <p class="sub">Proposed orchestration for the W4 ask — "assemble patient view." The agents earn the
+    fan-out by <b>routing and reducing</b>, not by fetching in parallel: one probe call decides the shape,
+    and the <b>agent graph differs by volume</b> (a 2-visit chart spawns fewer agents than a 60-visit one).
+    Wrapped by the security gate W4 exists to fix — IDOR on <code>/patients/{id}/records</code>, plus the
+    second cross-patient path through <code>/records/search</code> — and the N+1 chart read. Clinical
+    interpretation of gaps sits behind a <b>deferred W7/W8/W9 boundary</b>, not built here.
+    <b>The fan-out is not the latency fix</b>; bounded, indexed, batched reads are (see notes).</p>
+    <div class="meta">
+      <span class="tag">D11 IDOR · 2 read paths</span>
+      <span class="tag">D8 N+1 / full-scan</span>
+      <span class="tag">D10 session TTL</span>
+      <span class="tag">D7 minimum-necessary</span>
+      <span class="tag warn">sketch — W3 PR #14 still pending</span>
+      <span class="tag warn">rev. 2026-07-27</span>
+    </div>
+  </header>
+
+  <h2>Node types</h2>
+  <div class="legend">
+    <span class="chip"><i class="swatch" style="background:var(--c-guard-bg);border-color:var(--c-guard)"></i><b>Security gate</b> <span>authz / redaction</span></span>
+    <span class="chip"><i class="swatch" style="background:var(--c-llm-bg);border-color:var(--c-llm)"></i><b>LLM agent</b></span>
+    <span class="chip"><i class="swatch" style="background:var(--c-hitl-bg);border-color:var(--c-hitl)"></i><b>HITL</b> <span>human gate</span></span>
+    <span class="chip"><i class="swatch" style="background:var(--c-svc-bg);border-color:var(--c-svc)"></i><b>Service</b> <span>FastAPI / gateway</span></span>
+    <span class="chip"><i class="swatch" style="background:var(--c-data-bg);border-color:var(--c-data)"></i><b>Data / KG</b></span>
+    <span class="chip"><i class="swatch" style="background:#e6e9ef;border-color:#0f766e"></i><b>Deterministic step</b> <span>no LLM — facts only</span></span>
+    <span class="chip"><i class="swatch" style="background:var(--c-term-bg);border-color:var(--c-term)"></i><b>Terminal</b> <span>portal / deny</span></span>
+  </div>
+
+  <h2>Flow</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TB
+  U["Portal — staff request:<br/>assemble view for patient X"]:::term
+  GW["Gateway (BFF, 8070)<br/>require_session"]:::svc
+
+  G1{{"GATE 1 · Session + AuthZ bind<br/>• bind session identity → patient_id (fix D11)<br/>• applies to BOTH read paths: chart AND search<br/>• flag session TTL (D10, analyze only)"}}:::guard
+  DENY["Denied + audit event"]:::term
+
+  PROBE[/"PROBE — one call, deterministic<br/>header demographics + encounter count/span<br/>(no demographics agent: PK read reduces nothing)"/]:::det
+
+  ORCH["Orchestrator agent<br/>routes on volume — agent graph is a<br/>FUNCTION of chart size, not a fixed fan-out"]:::llm
+
+  RLOW["Chart retriever (low volume)<br/>bounded fetch-all"]:::llm
+  RWIN["Windowed chart retriever (50+)<br/>recency window + cap"]:::llm
+  RREL["Relevance retriever (50+ only)<br/>patient-scoped search → rank"]:::llm
+
+  RED[/"Deterministic reducer<br/>dedup on structured fields (lab/dx code)<br/>keeps provenance (source-visit refs)<br/>NO LLM merge of free-text notes"/]:::det
+
+  GAP[/"Coverage-gap detector (deterministic)<br/>reads the REDUCED set — not the datastore<br/>last-observed per category vs cadence<br/>→ emits FACTS: 'no CBC since 2023-01'"/]:::det
+
+  ASM["Assembler agent<br/>composes view from reduced<br/>records + gap facts"]:::llm
+  OUT["Assembled patient view (grounded facts) → Portal"]:::term
+
+  U --> GW --> G1
+  G1 -- deny --> DENY
+  G1 -- authorized --> PROBE --> ORCH
+
+  ORCH -- "few visits" --> RLOW
+  ORCH -- "50+ visits" --> RWIN
+  ORCH -- "50+ visits" --> RREL
+
+  RLOW --> RED
+  RWIN --> RED
+  RREL --> RED
+
+  RED --> GAP
+  RED --> ASM
+  GAP --> ASM
+  ASM --> OUT
+
+  subgraph DP ["DATA PLANE · every retriever call traverses the gateway — no agent holds a records-service URL (CLAUDE.md §1)"]
+    direction TB
+    GWD["Gateway · _get fan-out<br/>(session already bound at Gate 1)"]:::svc
+    SA["records-service<br/>GET /patients/{id} + count/span<br/>additive probe contract (open-Q6)"]:::svc
+    SB["records-service<br/>GET /patients/{id}/records<br/>batched / selectinload (fix D8 N+1)"]:::svc
+    SC["records-service<br/>GET /patients/{id}/records/search<br/>patient-scoped + indexed + LIMIT<br/>(fix D8 AND closes 2nd D11 path)"]:::svc
+    KG[("Patient KG / Postgres<br/>encounters · records")]:::data
+    GWD --> SA --> KG
+    GWD --> SB --> KG
+    GWD --> SC --> KG
+  end
+
+  PROBE <-. "query / rows" .-> GWD
+  RLOW <-. "query / rows" .-> GWD
+  RWIN <-. "query / rows" .-> GWD
+  RREL <-. "query / rows" .-> GWD
+
+  subgraph FUT ["DEFERRED · W7 grounding · W8 PHI/vendor · W9 min-necessary · HITL — needs human approval before build"]
+    direction TB
+    BG["HITL · break-glass<br/>out-of-scope access"]:::hitl
+    G2{{"GATE 2 · Grounding + PHI guard<br/>• interpretation grounded in facts only (D1 · W7)<br/>• redact before vendor boundary (D13 · W8)<br/>• patient-facing vs clinician view (D7 · W9)"}}:::guard
+    INTERP["Advisory interpretation (LLM)<br/>'no bloodwork 3 yrs → status on X<br/>may have changed'"]:::llm
+    REV["HITL · clinician review<br/>confirm before patient sees advice"]:::hitl
+    AUD[("Audit log — who viewed patient Y<br/>W10 append-only trail")]:::data
+    G2 --> INTERP --> REV --> AUD
+  end
+
+  G1 -. out-of-scope access .-> BG
+  OUT -. deferred .-> G2
+
+  classDef guard fill:#fdeaea,stroke:#c0392b,stroke-width:1.5px,color:#7b1e1e;
+  classDef llm fill:#efe9fe,stroke:#7c3aed,stroke-width:1.5px,color:#4c1d95;
+  classDef hitl fill:#fdf1d6,stroke:#d97706,stroke-width:1.5px,color:#92400e;
+  classDef svc fill:#e2ecfe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef data fill:#d9f5e9,stroke:#059669,stroke-width:1.5px,color:#065f46;
+  classDef det fill:#e6e9ef,stroke:#0f766e,stroke-width:1.5px,color:#134e4a;
+  classDef term fill:#e6e9ef,stroke:#475569,stroke-width:1.5px,color:#1e293b;
+    </pre>
+  </div>
+
+  <h2>Gate → debt mapping</h2>
+  <table>
+    <thead>
+      <tr><th>Node</th><th>Debt closed</th><th>What it enforces</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Gate 1 · session bind</td><td class="debt">D11 · (D10)</td><td>Session identity bound to <code>patient_id</code> so walking sequential IDs (1042→1043) fails. Must cover <b>both</b> read paths — binding only the chart endpoint leaves the unscoped search path open. Session TTL (D10) analyzed/flagged only — not shipped this week. (D7 min-necessary moved to the deferred boundary → W9.)</td></tr>
+      <tr><td>Probe · one call</td><td class="debt">D8</td><td>Header demographics + encounter count/span in a single call, so routing can happen before any chart read. Replaces the old standalone demographics-retriever agent: <code>GET /patients/{id}</code> is a primary-key read that reduces nothing, so wrapping it in an agent was exactly the parallel-GET fan-out open-Q2 rejected. Needs an additive contract change (open-Q6).</td></tr>
+      <tr><td>Orchestrator · volume-aware routing</td><td class="debt">D8</td><td>Routes on the probe result: few visits → one bounded chart retriever, <b>no search agent at all</b>; 50+ → windowed retriever + scoped relevance retriever for rank/cap. The <b>agent count varies with chart size</b> — an identical graph for a 2-visit and a 60-visit patient would mean no routing was demonstrated. This is the agentic work the reviewer flagged as missing.</td></tr>
+      <tr><td>Scoped search path</td><td class="debt">D11 · D8</td><td>Today <code>GET /records/search</code> runs an unbounded, unindexed <code>ILIKE</code> across <b>every patient's</b> records — a second D11 read path Gate 1's <code>patient_id</code> bind does not cover, not just a perf issue. <code>records.patient_id</code> already exists, so the scope predicate is available; index + <code>LIMIT</code> are the D8 half. Needs an adversarial test proving a scoped search cannot return another patient's record.</td></tr>
+      <tr><td>Reducer · dedup w/ provenance</td><td class="debt">D8</td><td>Dedups records repeated across visits, keeping source-visit refs. Deterministic on structured fields (lab code, dx code) — not an LLM merge of free-text notes. Everything downstream (assembler <b>and</b> gap detector) consumes the reduced set; nothing reaches Postgres without passing Gate 1 and the volume bound, or the bound and the dedup are decorative.</td></tr>
+      <tr><td>Data plane · gateway-only</td><td class="debt">§1 invariant</td><td>No retriever holds a records-service URL — every call goes portal → gateway → service. Where the agents themselves run (ai-assistant 8077 vs. gateway-side) is still open and is auth-boundary-adjacent: 8077 is the only vendor-egress path, and the gateway is a load-bearing wall (open-Q5).</td></tr>
+      <tr><td>Coverage-gap detector <span class="note">(in scope)</span></td><td class="debt">facts</td><td>Deterministic: last-observed per category vs. expected cadence → emits <b>facts</b> (<code>no CBC since 2023-01</code>). No clinical interpretation — that's the line into the deferred boundary.</td></tr>
+      <tr><td>Gate 2 · grounding + PHI <span class="note">(deferred)</span></td><td class="debt">D1 · D13 · D7</td><td>Interpreting a gap fact into patient advice must be grounded in facts (D1/W7), redacted before any vendor boundary (D13/W8), and scoped patient-vs-clinician (D7/W9). Out of W4.</td></tr>
+      <tr><td>HITL nodes <span class="note">(deferred)</span></td><td class="debt">approval</td><td>Break-glass on out-of-scope access; clinician confirmation before a patient sees interpreted advice. Not in any current spec — future question, human approval before build.</td></tr>
+      <tr><td>Audit log <span class="note">(deferred)</span></td><td class="debt">D2 · D12</td><td>Every finalized view writes an access event → answers "who viewed patient Y?" (feeds W10 append-only trail).</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Where the speed actually comes from</h2>
+  <p class="note">The client ask says "make it feel fast." <b>The fan-out does not do that — it adds hops.</b>
+  The latency win is entirely in <i>bounded</i> reads, and the writeup must attribute it that way with
+  before/after query counts: batched encounter→record loading instead of 1+N
+  (<code>records-service/app.py:112</code> runs one query per encounter, deliberately);
+  a <code>patient_id</code>-scoped, indexed search with a <code>LIMIT</code> instead of a full-table
+  <code>ILIKE</code> (<code>app.py:152</code>); and a recency window + cap on high-volume charts. The agents
+  earn their keep by deciding <b>what not to fetch</b>. Presenting parallelism as the performance story
+  invites the obvious rebuttal — three agents on one service and one database is more work, not less.</p>
+
+  <h2>Notes</h2>
+  <p class="note"><b>Rev. 2026-07-27</b> — three corrections against the previous sketch, all found by
+  reading <code>records-service/app.py</code>: (a) the demographics retriever was a bare PK read doing no
+  reduction, so it collapsed into the orchestrator's probe — one call, not three; (b) the search agent
+  called <code>/records/search</code>, which has no <code>patient_id</code> predicate, so a "patient view"
+  was reading across all patients <i>behind</i> the authz gate — now scoped and bounded; (c) the raw service
+  responses flowed straight to the assembler and the gap detector read the datastore directly, both
+  bypassing the dedup and the volume bound — everything downstream now consumes the reduced set. Reviewer
+  pass (2026-07-24) had already reshaped this from three parallel GETs into agents that route and reduce.</p>
+  <p class="note">Open questions before it becomes an ADR (tracks <code>docs/specs/w4.md §7</code>):
+  (1) does "session bind" mean patient-ownership or a care-relationship check — Riverbend has no such
+  table yet; (2) <s>is the fan-out worth it vs. one retriever</s> — <b>resolved:</b> justified only by
+  routing + reduction, else collapse to a single retriever; (3) semantic dedup of free-text notes can
+  collapse clinically-distinct findings — prototype dedups structured fields only, with provenance,
+  needs an adversarial test before any LLM merge; (4) HITL gates add latency — confirm which are
+  mandatory vs. break-glass only; (5) <b>where do the agents run</b> — ai-assistant (8077, but that is the
+  only vendor-egress path) vs. gateway-side (shorter hops, but the gateway is a load-bearing wall that owns
+  auth); (6) <b>does the probe need a new endpoint</b> — no endpoint returns count/span today, and getting
+  the count by fetching the whole chart defeats the probe. Additive only either way.
+  IDOR/N+1 fixes touch the auth boundary → <b>human approval required</b> per CLAUDE.md §6 before any
+  code lands. "Full picture in one view" is scoped to the viewer: full-for-a-clinician ≠ full-for-a-patient
+  (D7 → W9).</p>
+</div>
