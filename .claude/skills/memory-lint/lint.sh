@@ -117,9 +117,9 @@ echo "### roster (agents/workflows vs skill/command/CLAUDE.md references)"
 # references. Deterministic grep only — judgment about *content* drift is doc-drift's job.
 R="${CLAUDE_PROJECT_DIR:-$PWD}"
 if [ -d "$R/.claude/agents" ] || [ -d "$R/.claude/workflows" ]; then
-  # Corpus: the Riverbend-level CLAUDE.md (§10.2 holds the roster table) + every local
+  # Corpus: the tracked repo-root CLAUDE.md (§10.2 holds the roster table) + every local
   # skill and command. Paths contain no spaces; unquoted expansion matches CURATED above.
-  CORPUS=$(ls "$R/../CLAUDE.md" "$R"/.claude/skills/*/SKILL.md "$R"/.claude/commands/*.md 2>/dev/null)
+  CORPUS=$(ls "$R/CLAUDE.md" "$R"/.claude/skills/*/SKILL.md "$R"/.claude/commands/*.md 2>/dev/null)
   # Built-in agent types that are not repo files. Keep short; grow only on a real hit.
   BUILTINS='Explore general-purpose Plan'
   # Skill dirs + command basenames: legitimately backticked on roster lines, not agents.

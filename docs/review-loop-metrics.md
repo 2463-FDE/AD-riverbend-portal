@@ -402,3 +402,19 @@ lens skipped, judgment on record: no new route/egress/sink/authz/parser. 821/5/1
 riverbend-demo loses all rules after parent rename → rebase-or-retire required; a2 `brief`
 dropped from the /dashboard stage enum; a3 dry-run ledger tag); OD-1 track `.claude/` with
 exclusions, OD-2 fence rewrite + Lens-4 traceability check, OD-3 ledger sited here.
+
+PR #36 r1 — 1 finding: 1 A · [high] phi-secret-guard blanket-excluded `tests/` + `db/seed/`
+for every pattern, so a real credential there passed silently. Design-gated (four shapes
+presented, B chosen): per-pattern scoping — credential patterns (sk-ant/AKIA/private-key) now
+scan every path (measured: zero legitimate matches in the fake trees), SSN + secret-assignment
+keep the exclusion (measured: 12+ test files carry §5-required fake SSNs, 3 assignment lines).
+Reviewer's opening ask (remove exclusion entirely) measured dead on arrival; allowlist rejected
+as ritual that still can't tell a real SSN from a required fake — that residual is documented
+in the hook header, CI gitleaks stays the tree-wide credential net. New
+test-phi-secret-guard.sh (17 cases) stash-proven discriminating: 3 red against the pre-fix
+hook. Pre-push diff-reviewer pass (129k tokens/25 calls) front-loaded 5 fix-now hardenings —
+runtime-state .gitignore mirror (a clone otherwise `git add -A`s stale regression-proof
+worktree copies), xfail-invariant timeout 120→600 (cold-clone fail-open), retired gates
+tooling untracked (dead G0–G6 vocabulary), untracked-era claims corrected in
+regression-proof/verify-stack/doc-drift, memory-lint roster corpus → tracked CLAUDE.md — and 2
+parked with reasoning (TODO-50 guard cwd-scope design fork, TODO-51 reviewer pack cost).

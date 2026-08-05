@@ -1,9 +1,4 @@
 {
-  "statusLine": {
-    "type": "command",
-    "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/gate-statusline.sh\"",
-    "padding": 0
-  },
   "hooks": {
     "PreToolUse": [
       {
@@ -18,7 +13,7 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/xfail-invariant.sh\"",
-            "timeout": 120,
+            "timeout": 600,
             "statusMessage": "Checking the xfail/deselected invariant..."
           }
         ]

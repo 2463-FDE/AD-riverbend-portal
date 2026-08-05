@@ -77,10 +77,10 @@ the code files entries cite. Check each entry's status line
 (open / partly closed / closed-by-PR-N) against the code markers it cites — does the
 cited fix exist, does the claimed-open gap still reproduce in the code as described.
 
-**Family 4 — CLAUDE.md §9.** Scope: the §9 "Known debt" section of
-`~/Documents/REVATURE/Riverbend/CLAUDE.md`. That file is untracked (PR #32), so
-"since its last update" cannot come from `git log -- CLAUDE.md`. **Baseline = the
-newest date §9 itself mentions.** The main thread pastes the §9 text verbatim into
+**Family 4 — CLAUDE.md §9.** Scope: the §9 "Known debt" section of the repo-root
+`CLAUDE.md` (tracked since PR #35, 2026-08-05, reversing PR #32). **Baseline =
+`git log -1 --format=%as -- CLAUDE.md`**, falling back to the newest date §9
+itself mentions if that file has no history yet on the current branch. The main thread pastes the §9 text verbatim into
 the reader prompt (the reader never opens CLAUDE.md itself) and instructs: run
 `git log --oneline --since=<baseline date>` in the repo and report any merged change
 that contradicts a §9 status row.

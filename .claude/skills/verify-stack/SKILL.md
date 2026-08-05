@@ -130,10 +130,11 @@ refs/files/tests/expected-reds is the judgment work and never delegates.
    `worktree-wf_…`. `git worktree remove --force` each, `git branch -D` its
    branch, confirm with `git worktree list`.
 
-Worktrees hold tracked files only — no CLAUDE.md, no `.claude/` (by design,
-post-descope). The layer agents are mechanical and their prompts are
-self-contained, so nothing gets copied in. A proof that needs local tooling
-the worktree lacks is a case for the manual fallback below, not a setup step.
+Worktrees hold tracked files — which since 2026-08-05 (PRs #35/#36) include
+CLAUDE.md and `.claude/`. The layer agents are mechanical and their prompts
+stay their complete instruction set (the workflow tells them to ignore repo
+tooling). A proof that needs local state a worktree lacks (`.venv`, `.env`)
+is a case for the manual fallback below, not a setup step.
 
 **Manual fallback** — when the repo state is too dirty to commit cleanly, or
 the proof needs tooling worktrees lack:

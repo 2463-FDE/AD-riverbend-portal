@@ -29,8 +29,25 @@ dist/
 # execute only inside Claude Code sessions; anything that must gate a merge
 # belongs in .github/workflows/ or the Makefile. Machine-local state stays out:
 .claude/settings.local.json
-.claude/gates/state.json
 .claude/scheduled_tasks.lock
+# Claude Code runtime state (was hidden by this machine's .git/info/exclude,
+# which clones don't inherit — the worktrees/ entry matters most: regression-proof
+# leaves worktree dirs there whose stale repo copies `git add -A` would otherwise
+# stage into a HIPAA repo).
+.claude/worktrees/
+.claude/checkpoints/
+.claude/mailbox/
+.claude/scheduled_tasks.json
+.claude/routines/.state/
+.claude/agent-registry.json
+.claude/agent-memory-local
+.claude/first-run
+.claude/assistant-daemon-state.json
+# The frontend-rebuild gate tracker is retired (TODO-23; G0-G6 is dead
+# vocabulary) — its scripts stay local-only, never tracked.
+.claude/gates/
+.claude/commands/gates.md
+.claude/hooks/gate-statusline.sh
 
 # CLAUDE.md was ignored here 2026-08-05 (PR #32) and re-tracked the same day
 # (docs/plans/pipeline-upgrade.md PIPE-1, reversing #32): parallel worktrees and
