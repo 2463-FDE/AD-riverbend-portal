@@ -248,6 +248,34 @@ message constant, two doc/docstring lines and one test — no logic, contract, c
 cross-layer or budget change, and the test's discrimination is step-4-proven. Security lens: no
 new surface. Fix commit `5bb54d7`.
 
+PR #29 r6 — 1 finding: **1 A** / 0 B / 0 C · **[medium] fixed** — goldset.json's
+`expected_patient_id` / `expected_answer` never render into REPORT.md, so an edit to either
+drifted green. This is TODO-41's blind spot, parked at r1 and named in the script header and the
+green message since r2 — labelled A, not C, per the #26 r2 precedent: never attempted, scoped out
+at a design gate, and the last parked item on this PR (r2/r3/r4 conceded the others; the bot has
+now re-raised and won every parked item — price that in before parking on this reviewer again).
+Closed at a design gate (user call, Option 2 of 3): **corpus fingerprint** —
+`eval/rag/corpus.sha256` pins the sha256 of the raw bytes of patients.csv / encounters.csv /
+goldset.json, checked after the seed check and before the report diff; red states the operator
+obligation (regenerate the embed report, then `check_drift.py --write-fingerprint`, commit both
+together); missing sidecar exits 2. Raw bytes over TODO-41's sketched rendered-document hash,
+deliberately: rendering covers only what some renderer shows — the class this finding instances —
+while byte-pinning exempts no column (a test edits a column NO report section renders and goes
+red). Six new tests, five stash-proven red against pre-r6 code; the roundtrip test discriminates
+via a stdout assert (pre-r6 argv handling ignored the flag and ran the full check, so an
+exit-code-only assert would have passed green — decoration caught at authoring time). The five
+older layer tests now refresh the fingerprint in-copy, preserving each layer's e2e discrimination
+and proving renderable-field drift survives a refreshed fingerprint into the deeper layers.
+Pre-push pass (diff-reviewer): 92k tokens, 18 calls, 0 orientation greps, **3 low** — all real:
+"pins every input byte" overclaimed (the eval CODE is an unfingerprinted input: a `metrics.py`
+scoring-definition change reaches the report only through masked cells and drifts green; claim
+narrowed to "every DATA input byte", residual named in header + CI comment, fingerprinting the
+.py files rejected — comment edits would force embed re-runs); `corpus.sha256` untracked at
+review time, so a `commit -am` close would have dropped it and broken the eval job repo-wide
+exit-2 (process fix: explicit `git add`, verified `A` in the round's stage); this ledger entry
+did not exist yet at review time (this is it). Sound-list covered mask/seed/derivation/exit
+contract/CI wiring; pass verified 3.8+3.12 green first-hand. Fix commit `fb0e3a1`.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
