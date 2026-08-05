@@ -1,0 +1,854 @@
+<meta charset="utf-8">
+<title>P2 mockups — login, session, minimum intake path</title>
+
+<style>
+/* ─────────────────────────────────────────────────────────────
+   SHELL — the drafting board these plates sit on.
+   Theme-aware. Deliberately NOT Direction F: the board must not
+   be confused with the product. Product tokens are scoped to
+   .plate below and never leak out here.
+   ───────────────────────────────────────────────────────────── */
+:root {
+  --board: #e7e3da;
+  --board-2: #f2efe8;
+  --board-ink: #262320;
+  --board-mute: #5d574e;
+  --board-line: #c9c2b6;
+  --board-accent: #0f6d80;
+  --board-stop: #a02a24;
+  --board-shadow: 0 1px 1px rgba(50, 42, 30, .10), 0 10px 28px -14px rgba(50, 42, 30, .40);
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --serif: ui-serif, "Iowan Old Style", Palatino, Georgia, serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --board: #16191a;
+    --board-2: #1e2223;
+    --board-ink: #ded8ce;
+    --board-mute: #9b958a;
+    --board-line: #333a3b;
+    --board-accent: #63b7c6;
+    --board-stop: #e08b84;
+    --board-shadow: 0 1px 1px rgba(0, 0, 0, .5), 0 14px 34px -16px rgba(0, 0, 0, .8);
+  }
+}
+:root[data-theme="dark"] {
+  --board: #16191a;
+  --board-2: #1e2223;
+  --board-ink: #ded8ce;
+  --board-mute: #9b958a;
+  --board-line: #333a3b;
+  --board-accent: #63b7c6;
+  --board-stop: #e08b84;
+  --board-shadow: 0 1px 1px rgba(0, 0, 0, .5), 0 14px 34px -16px rgba(0, 0, 0, .8);
+}
+:root[data-theme="light"] {
+  --board: #e7e3da;
+  --board-2: #f2efe8;
+  --board-ink: #262320;
+  --board-mute: #5d574e;
+  --board-line: #c9c2b6;
+  --board-accent: #0f6d80;
+  --board-stop: #a02a24;
+  --board-shadow: 0 1px 1px rgba(50, 42, 30, .10), 0 10px 28px -14px rgba(50, 42, 30, .40);
+}
+
+.board {
+  background: var(--board);
+  color: var(--board-ink);
+  font: 400 15px/1.6 var(--sans);
+  padding: 40px 20px 80px;
+  min-height: 100%;
+}
+.wrap { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+
+.masthead { display: flex; flex-direction: column; gap: 14px; border-bottom: 1px solid var(--board-line); padding-bottom: 26px; }
+.eyebrow { font: 700 11px/1.45 var(--sans); letter-spacing: .10em; text-transform: uppercase; color: var(--board-mute); }
+.masthead h1 { font: 700 32px/1.14 var(--serif); text-wrap: balance; margin: 0; }
+.lede { max-width: 66ch; color: var(--board-mute); margin: 0; }
+.lede strong { color: var(--board-ink); font-weight: 600; }
+.masthead a { color: var(--board-accent); }
+
+.keyline { display: flex; flex-wrap: wrap; gap: 8px 22px; font: 400 13.5px/1.5 var(--sans); color: var(--board-mute); }
+.keyline b { color: var(--board-ink); font-weight: 600; }
+
+/* plate sheet */
+.sheet { display: flex; flex-direction: column; gap: 0; }
+.sheet > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 14px; padding-bottom: 12px; }
+.sheet > header .num { font: 700 11px/1 var(--mono); letter-spacing: .06em; color: var(--board-mute); border: 1px solid var(--board-line); border-radius: 3px; padding: 4px 6px; }
+.sheet > header h2 { font: 700 23px/1.2 var(--serif); margin: 0; text-wrap: balance; }
+.sheet > header .route { font: 400 12.5px/1 var(--mono); color: var(--board-mute); }
+.reqs { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.req { font: 700 10.5px/1 var(--mono); letter-spacing: .04em; padding: 5px 7px; border-radius: 3px; background: var(--board-2); border: 1px solid var(--board-line); color: var(--board-ink); }
+.req.gate { background: transparent; border-style: dashed; color: var(--board-mute); }
+
+.frame { background: var(--board-2); border: 1px solid var(--board-line); border-radius: 4px; padding: 14px; box-shadow: var(--board-shadow); overflow-x: auto; }
+.frame > .plate { min-width: 620px; }
+
+.notes { padding-top: 18px; display: flex; flex-direction: column; gap: 9px; max-width: 78ch; }
+.notes ol { margin: 0; padding-left: 1.35em; display: flex; flex-direction: column; gap: 9px; }
+.notes li { padding-left: .15em; }
+.notes code, .keyline code, .lede code, .closing code { font: 400 .88em/1.4 var(--mono); background: var(--board-2); border: 1px solid var(--board-line); border-radius: 3px; padding: .08em .32em; }
+.stop { color: var(--board-stop); font-weight: 600; }
+.notes b { font-weight: 600; }
+
+.closing { border-top: 1px solid var(--board-line); padding-top: 26px; display: flex; flex-direction: column; gap: 14px; max-width: 78ch; }
+.closing h2 { font: 700 23px/1.2 var(--serif); margin: 0; }
+.closing ul { margin: 0; padding-left: 1.25em; display: flex; flex-direction: column; gap: 8px; }
+
+/* ─────────────────────────────────────────────────────────────
+   PLATE — the product itself. Direction F, docs/design/05-design-tokens.md,
+   with the four §6 corrections applied (accent-fill, separator,
+   border-strong, disabled-as-is). Light only by P0.5 §7.
+   ───────────────────────────────────────────────────────────── */
+.plate {
+  color-scheme: light;
+  --bg: #f9f7f3;
+  --surface: #ffffff;
+  --zebra: #fdfbf8;
+  --ptx-bg: #fdfcfa;
+  --text: #1a1c1c;
+  --muted: #635c52;
+  --accent: #0f6d80;
+  --accent-fill: #0d6071;
+  --accent-ink: #ffffff;
+  --chrome-bg: #123b44;
+  --chrome-text: #f2ece2;
+  --chrome-border: #0c2b32;
+  --separator: #938e88;
+  --border-strong: #948c82;
+  --ok: #1f6142;
+  --alert: #a02a24;
+  --alert-bg: #fdeeec;
+  --alert-border: #eec7c2;
+  --dis-bg: #f4f1ec;
+  --dis-ink: #a09788;
+  --dis-border: #e5ded4;
+  --ctrl-h: 36px;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --pill: 999px;
+  --shadow: 0 1px 2px rgba(60, 50, 35, .07);
+  --topbar-h: 48px;
+  /* set E, per 05-design-tokens.md §3 (chosen 2026-08-01). This is the base value,
+     so a plate renders the chosen stack with JS off; the switcher only overrides it. */
+  --display: Charter, "Bitstream Charter", "Charis SIL", Cambria, Georgia, serif;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --display-track: normal;
+
+  background: var(--bg);
+  color: var(--text);
+  font: 400 15px/1.5 var(--font);
+  border: 1px solid var(--separator);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.plate *, .plate *::before, .plate *::after { box-sizing: border-box; }
+
+/* top frame */
+.plate .topbar { height: var(--topbar-h); background: var(--chrome-bg); border-bottom: 1px solid var(--chrome-border); color: var(--chrome-text); display: flex; align-items: center; gap: 14px; padding: 0 16px; }
+.plate .mark { font: 700 16px/1 var(--display); }
+.plate .org { font: 400 12.5px/1 var(--font); opacity: .88; }
+.plate .topbar .who { margin-left: auto; display: flex; align-items: center; gap: 10px; font: 400 13.5px/1 var(--font); }
+.plate .topbar .who .sep { opacity: .45; }
+.plate .linkish { color: var(--chrome-text); text-decoration: underline; text-underline-offset: 3px; }
+
+.plate .body { padding: 26px 22px 28px; display: flex; flex-direction: column; gap: 20px; }
+.plate .body.narrow { align-items: center; }
+.plate .card { background: var(--surface); border: 1px solid var(--separator); border-radius: var(--radius); box-shadow: var(--shadow); padding: 22px; display: flex; flex-direction: column; gap: 18px; }
+.plate .card.signin { width: 392px; }
+.plate h1.title { font: 700 29px/1.15 var(--display); margin: 0; text-wrap: balance; }
+.plate h2.section { font: 700 23px/1.2 var(--display); margin: 0; }
+.plate h3.cardhead { font: 700 19px/1.3 var(--display); margin: 0; }
+.plate .sub { font: 400 13.5px/1.5 var(--font); color: var(--muted); margin: 0; max-width: 60ch; }
+.plate .label { font: 700 11px/1.45 var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.plate .num { font-variant-numeric: tabular-nums; }
+
+/* fields */
+.plate .field { display: flex; flex-direction: column; gap: 5px; }
+.plate .field .hint { font: 400 13.5px/1.45 var(--font); color: var(--muted); }
+.plate input[type="text"], .plate input[type="password"], .plate select {
+  height: var(--ctrl-h);
+  font: 400 15px/1 var(--font);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0 10px;
+  width: 100%;
+}
+.plate input.num, .plate select.num { font-variant-numeric: tabular-nums; }
+.plate input:focus-visible, .plate select:focus-visible, .plate button:focus-visible, .plate a:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(15, 109, 128, .30);
+}
+.plate .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.plate .row3 { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 14px; }
+.plate fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+
+/* buttons */
+.plate .btn { height: var(--ctrl-h); display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 16px; border-radius: var(--radius-sm); font: 400 15px/1 var(--font); border: 1px solid transparent; cursor: default; }
+.plate .btn.primary { background: var(--accent-fill); color: var(--accent-ink); }
+.plate .btn.secondary { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+.plate .btn.block { width: 100%; }
+.plate .btn[disabled] { background: var(--dis-bg); color: var(--dis-ink); border-color: var(--dis-border); }
+.plate .actions { display: flex; align-items: center; gap: 12px; }
+.plate .actions .spacer { margin-left: auto; }
+
+/* chips — derived by 05-design-tokens.md §2, one rule, four tiers */
+.plate .chip { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: var(--pill); font: 400 13.5px/1 var(--font); border: 1px solid transparent; white-space: nowrap; }
+.plate .chip .g { font-size: 11px; line-height: 1; }
+.plate .chip.pending { background: #754c07; color: #ffffff; border-color: #754c07; }
+.plate .chip.affirm { background: #dde7e3; color: #1a5238; border-color: #9ab8aa; }
+.plate .chip.declined { background: #f1dfde; color: #88241f; border-color: #d49f9c; }
+.plate .chip.unanswered { background: transparent; color: #3e3c37; border-color: #3e3c37; border-style: dashed; }
+
+/* banners */
+.plate .banner { border-radius: var(--radius); padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.plate .banner .head { font: 700 19px/1.3 var(--display); }
+.plate .banner .say { font: 400 15px/1.5 var(--font); max-width: 62ch; }
+.plate .banner.fail { background: var(--alert-bg); border: 1px solid var(--alert-border); color: var(--alert); }
+.plate .banner.fail .say { color: var(--text); }
+.plate .banner.done { background: var(--ptx-bg); border: 1px solid var(--separator); }
+.plate .banner.note { background: var(--zebra); border: 1px solid var(--separator); }
+
+/* invalid field state — ground + border + words, never colour alone */
+.plate .field.invalid input { border-color: var(--alert); background: var(--alert-bg); }
+.plate .field.invalid .hint { color: var(--alert); }
+
+/* data list — identity readout on the confirmation */
+.plate .readout { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 22px; }
+.plate .readout > div { display: flex; flex-direction: column; gap: 3px; }
+.plate .readout .v { font: 400 15px/1.4 var(--font); font-variant-numeric: tabular-nums; }
+.plate .readout .v.name { font: 700 18px/1.3 var(--display); }
+.plate .readout .v.unavail { font-style: italic; color: var(--muted); }
+
+/* consent rows */
+.plate .consents { display: flex; flex-direction: column; border: 1px solid var(--separator); border-radius: var(--radius-sm); overflow: hidden; }
+.plate .consent { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 14px; padding: 11px 14px; background: var(--surface); border-top: 1px solid var(--separator); }
+.plate .consent:first-child { border-top: 0; }
+.plate .consent:nth-child(even) { background: var(--zebra); }
+.plate .consent .what { display: flex; flex-direction: column; gap: 2px; }
+.plate .consent .what .n { font: 400 15px/1.4 var(--font); }
+.plate .consent .what .k { font: 400 12.5px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+.plate .tri { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
+.plate .tri span { font: 400 13.5px/1 var(--font); padding: 8px 11px; border-left: 1px solid var(--border-strong); color: var(--text); background: var(--surface); }
+.plate .tri span:first-child { border-left: 0; }
+.plate .tri span.on { background: var(--accent-fill); color: var(--accent-ink); }
+.plate .tri span.on.off-affirm { background: #f1dfde; color: #88241f; }
+
+/* checkbox row */
+.plate .check { display: flex; align-items: flex-start; gap: 10px; }
+.plate .check .box { width: 18px; height: 18px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--surface); flex: none; margin-top: 2px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--accent-ink); }
+.plate .check .box.on { background: var(--accent-fill); border-color: var(--accent-fill); }
+.plate .check .txt { display: flex; flex-direction: column; gap: 2px; }
+.plate .check .txt .n { font: 400 15px/1.4 var(--font); }
+.plate .check .txt .k { font: 400 13.5px/1.4 var(--font); color: var(--muted); }
+
+.plate .divider { height: 1px; background: var(--separator); border: 0; margin: 0; }
+.plate .stack { display: flex; flex-direction: column; gap: 14px; }
+.plate .inline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.plate .foot { font: 400 13.5px/1.5 var(--font); color: var(--muted); }
+
+/* ─────────────────────────────────────────────────────────────
+   TYPE SETS — evaluation only. Direction F (set A) is what
+   05-design-tokens.md §3 pins; the rest exist so the serif can be
+   judged against its absence before P2 hardcodes anything.
+   Every stack is a system stack — the "no web font" rule in §3
+   holds for all of them, so none of these costs a network round
+   trip or risks FOUT on the identity strip.
+   Only --display / --font / --display-track change. Sizes,
+   weights, spacing and colour are identical across sets, so what
+   differs on screen is the typeface and nothing else.
+   ───────────────────────────────────────────────────────────── */
+.plate h1.title, .plate h2.section, .plate h3.cardhead,
+.plate .banner .head, .plate .readout .v.name, .plate .mark {
+  letter-spacing: var(--display-track);
+}
+
+/* A — Direction F as originally drawn. Superseded by E on 2026-08-01, so it now
+   needs an explicit block: the .plate base above carries E, not A. Kept switchable
+   because this page is the record of what was compared, not just of what won. */
+[data-fontset="A"] .plate {
+  --display: ui-serif, "Iowan Old Style", Palatino, Georgia, serif;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --display-track: normal;
+}
+/* B — no serif. Same system UI stack for headings and body; the
+   heading is carried by size and weight alone, tightened slightly
+   because system sans at 29px tracks loose against Palatino. */
+[data-fontset="B"] .plate {
+  --display: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --display-track: -.014em;
+}
+/* C — no serif, grotesk. Colder and narrower than the system UI
+   face; reads as instrument rather than document. Widest install
+   base of any set here (Helvetica/Arial ship everywhere). */
+[data-fontset="C"] .plate {
+  --display: "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif;
+  --font: "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif;
+  --display-track: -.011em;
+}
+/* D — no serif, humanist. Keeps Direction F's warmth without the
+   serif; open apertures hold up better at 11px uppercase labels
+   than the grotesk does. Falls back per-platform, so the render
+   differs more between a Mac and a Windows workstation. */
+[data-fontset="D"] .plate {
+  --display: "Avenir Next", Avenir, "Segoe UI Variable Display", "Segoe UI", Corbel, "Gill Sans MT", sans-serif;
+  --font: "Avenir Next", Avenir, "Segoe UI Variable Text", "Segoe UI", Corbel, sans-serif;
+  --display-track: -.006em;
+}
+/* E — serif kept, but sturdier. Charter/Cambria were drawn for
+   screen text at small sizes; Palatino/Iowan were not. Same
+   argument as F, less bookish, more load-bearing. */
+[data-fontset="E"] .plate {
+  --display: Charter, "Bitstream Charter", "Charis SIL", Cambria, Georgia, serif;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --display-track: normal;
+}
+
+/* switcher + specimen (board chrome, not product) */
+.fontbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 12px 0 0; }
+.fontbar .cap { font: 700 11px/1.45 var(--sans); letter-spacing: .10em; text-transform: uppercase; color: var(--board-mute); }
+.fontbar button {
+  font: 400 13.5px/1 var(--sans); color: var(--board-ink); background: var(--board-2);
+  border: 1px solid var(--board-line); border-radius: 3px; padding: 7px 10px; cursor: pointer;
+}
+.fontbar button[aria-pressed="true"] { background: var(--board-accent); border-color: var(--board-accent); color: var(--board); font-weight: 600; }
+.fontbar .now { font: 400 13px/1.5 var(--sans); color: var(--board-mute); flex-basis: 100%; margin: 0; }
+
+.specimens { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.spec { background: var(--board-2); border: 1px solid var(--board-line); border-radius: 4px; padding: 14px; box-shadow: var(--board-shadow); }
+.spec .plate { border-radius: 3px; padding: 14px; }
+.spec .plate .title { font-size: 23px; }
+.spec .tag { font: 700 10.5px/1 var(--mono); letter-spacing: .04em; color: var(--board-mute); display: block; padding-bottom: 9px; }
+.spec .plate .rowdemo { display: flex; justify-content: space-between; gap: 12px; font: 400 13.5px/1.5 var(--font); border-top: 1px solid var(--separator); padding-top: 8px; margin-top: 4px; }
+
+/* specimens are pinned to their own set and ignore the switcher —
+   higher specificity than [data-fontset="X"] .plate on purpose */
+.spec .plate[data-set="A"] { --display: ui-serif, "Iowan Old Style", Palatino, Georgia, serif; --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; --display-track: normal; }
+.spec .plate[data-set="B"] { --display: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; --display-track: -.014em; }
+.spec .plate[data-set="C"] { --display: "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif; --font: "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif; --display-track: -.011em; }
+.spec .plate[data-set="D"] { --display: "Avenir Next", Avenir, "Segoe UI Variable Display", "Segoe UI", Corbel, "Gill Sans MT", sans-serif; --font: "Avenir Next", Avenir, "Segoe UI Variable Text", "Segoe UI", Corbel, sans-serif; --display-track: -.006em; }
+.spec .plate[data-set="E"] { --display: Charter, "Bitstream Charter", "Charis SIL", Cambria, Georgia, serif; --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; --display-track: normal; }
+
+@media (max-width: 700px) {
+  .board { padding: 28px 14px 60px; }
+  .masthead h1 { font-size: 27px; }
+  .reqs { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="board">
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">Riverbend staff portal · frontend rebuild · P2</div>
+    <h1>Login, session, and the minimum intake path</h1>
+    <p class="lede">Six plates for what <strong>P2 actually builds</strong> — gate <strong>G2</strong>, spec decision #14: login plus the minimum intake path, <strong>not</strong> the four-step registration wizard. Wizard UI decided before the P3 design system exists is UI built twice.</p>
+    <p class="lede">Rendered in Direction F (<code>docs/design/05-design-tokens.md</code>) with all four §6 corrections applied — <code>--accent-fill</code> 7.17:1, <code>--separator</code> 3.04:1, <code>--border-strong</code> 3.10:1, disabled accepted at 2.56:1 and compensated. Dense density, the provisional default. Structure traces to <code>03-key-flows.md</code> flow 1 and <code>04-wireframes.md</code> plate 4; where these plates depart from those, the note says so.</p>
+    <div class="keyline">
+      <span><b>Ships in:</b> PR 2 (session + login) · PR 3 (contract truth + intake)</span>
+      <span><b>Light only</b> by P0.5 §7</span>
+      <span><b>No web fonts</b> — system stacks, every set below</span>
+    </div>
+    <div class="fontbar" role="group" aria-label="Type set">
+      <span class="cap">Type set</span>
+      <button type="button" data-pick="A" aria-pressed="false">A · F as drawn</button>
+      <button type="button" data-pick="B" aria-pressed="false">B · no serif</button>
+      <button type="button" data-pick="C" aria-pressed="false">C · grotesk</button>
+      <button type="button" data-pick="D" aria-pressed="false">D · humanist</button>
+      <button type="button" data-pick="E" aria-pressed="true">E · Charter serif — chosen</button>
+      <p class="now" id="fontnow">Every plate below re-renders in the chosen set. Only the two family tokens and heading tracking change — sizes, weights, spacing and colour are held fixed, so the difference on screen is the typeface alone. The drafting board itself does not change.</p>
+    </div>
+  </header>
+
+  <!-- ── type sets ─────────────────────────────────────────────── -->
+  <section class="sheet">
+    <header>
+      <span class="num">0</span>
+      <h2>The five type sets, side by side</h2>
+      <span class="route">evaluation only — 05-design-tokens.md §3 still pins A</span>
+    </header>
+    <div class="specimens">
+      <div class="spec"><span class="tag">A · SERIF DISPLAY (DIRECTION F)</span>
+        <div class="plate" data-set="A">
+          <h1 class="title">Register a patient</h1>
+          <p class="sub">Maria Gonzalez · verified at the desk</p>
+          <span class="label">Medical record number</span>
+          <div class="rowdemo"><span>RB-0041782</span><span class="num">1974-03-02</span></div>
+        </div>
+      </div>
+      <div class="spec"><span class="tag">B · NO SERIF — SYSTEM UI</span>
+        <div class="plate" data-set="B">
+          <h1 class="title">Register a patient</h1>
+          <p class="sub">Maria Gonzalez · verified at the desk</p>
+          <span class="label">Medical record number</span>
+          <div class="rowdemo"><span>RB-0041782</span><span class="num">1974-03-02</span></div>
+        </div>
+      </div>
+      <div class="spec"><span class="tag">C · NO SERIF — GROTESK</span>
+        <div class="plate" data-set="C">
+          <h1 class="title">Register a patient</h1>
+          <p class="sub">Maria Gonzalez · verified at the desk</p>
+          <span class="label">Medical record number</span>
+          <div class="rowdemo"><span>RB-0041782</span><span class="num">1974-03-02</span></div>
+        </div>
+      </div>
+      <div class="spec"><span class="tag">D · NO SERIF — HUMANIST</span>
+        <div class="plate" data-set="D">
+          <h1 class="title">Register a patient</h1>
+          <p class="sub">Maria Gonzalez · verified at the desk</p>
+          <span class="label">Medical record number</span>
+          <div class="rowdemo"><span>RB-0041782</span><span class="num">1974-03-02</span></div>
+        </div>
+      </div>
+      <div class="spec"><span class="tag">E · SERIF KEPT — CHARTER/CAMBRIA</span>
+        <div class="plate" data-set="E">
+          <h1 class="title">Register a patient</h1>
+          <p class="sub">Maria Gonzalez · verified at the desk</p>
+          <span class="label">Medical record number</span>
+          <div class="rowdemo"><span>RB-0041782</span><span class="num">1974-03-02</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="notes"><ol>
+      <li><b>A — Direction F as drawn.</b> <code>ui-serif, "Iowan Old Style", Palatino, Georgia</code> on headings and the patient name, system sans everywhere else. The serif <em>is</em> F's argument: it marks the identity strip and page titles as document rather than instrument, which is why §3 rations it and keeps it out of queue rows.</li>
+      <li><b>B — the serif removed, nothing else changed.</b> One system UI stack throughout; headings survive on size and weight, tightened <code>-.014em</code> because SF/Segoe at 29px tracks looser than Palatino does. Cheapest possible answer to "how does it look without" — and the only set that removes a whole failure mode, since a heading and its body can no longer fall back to different families on an unusual workstation.</li>
+      <li><b>C — grotesk.</b> Colder and narrower; reads as instrument, not document — closest to what clinical software normally looks like, which is either the point or the objection. Widest install base here: Helvetica or Arial is present on every platform, so what a Windows desk sees is what a Mac sees.</li>
+      <li><b>D — humanist.</b> Keeps F's warmth without a serif. Open apertures hold up better than the grotesk at the 11px uppercase label step, which is the smallest type in the system. <span class="stop">⛔</span> Cost: this set resolves to a genuinely different face per platform (Avenir Next on macOS, Segoe UI Variable on Windows, Corbel behind it), so the render is <em>not</em> stable across workstations the way B and C are. <b>Correction, 2026-08-01:</b> this line originally said "the way A, B and C are", which was wrong about A. A leads with the <code>ui-serif</code> <em>generic</em>, whose mapping is per-browser and not inspectable, and names <code>Palatino</code>, which does <b>not</b> match Windows' <code>Palatino Linotype</code> — so a Windows workstation fell through to Georgia by accident, not by choice. A was never platform-stable; it only looked it. E is per-platform too (Charter on macOS, Cambria on Windows), but both outcomes are named, screen-drawn faces rather than one named face and one accident.</li>
+      <li><b>E — serif kept, changed. <em>Chosen 2026-08-01.</em></b> The original argument on this line was that Charter and Cambria were drawn for screen text at <em>small sizes</em> — true, but largely spent, because §3 rations the serif to 18px and up and keeps it out of queue rows. The argument that survives is <b>DPI, not size</b>: Charter (Carter, 1987) was cut for 300dpi laser output, low stroke contrast and sturdy stems; Cambria was commissioned for ClearType and is among the most aggressively screen-hinted serifs shipped. Palatino and Iowan Old Style carry high thick/thin contrast whose thins fall below one pixel at 1x/96dpi and drop out or smear — so the gap widens on exactly the older clinic hardware this has to run on, and it does not close at 18px. Second reason, and the decider: <b>this stack is more predictable than A</b> (see below).</li>
+      <li><b>Nothing here is decided — superseded.</b> <code>05-design-tokens.md</code> §3 now pins set <b>E</b>, amended 2026-08-01 with the reasoning and the measured font-availability evidence, and a new §6.5 recording the low-DPI margins that decided it. This page followed §3, as this line always said it would: the default set above is E. It still does not own the decision — if the set changes again, §3 changes first.</li>
+    </ol></div>
+  </section>
+
+  <!-- ── 1 ─────────────────────────────────────────────────── -->
+  <section class="sheet">
+    <header>
+      <span class="num">1</span>
+      <h2>Sign in</h2>
+      <span class="route">GET /login</span>
+      <span class="reqs"><span class="req">FE-R27</span><span class="req">FE-R30</span><span class="req">FE-R31</span></span>
+    </header>
+    <div class="frame">
+      <div class="plate">
+        <div class="topbar">
+          <span class="mark">Riverbend</span>
+          <span class="org">Community Health · staff portal</span>
+        </div>
+        <div class="body narrow">
+          <div class="card signin">
+            <div class="stack" style="gap:6px">
+              <h1 class="title">Sign in</h1>
+              <p class="sub">For Riverbend staff. Patients do not have accounts here.</p>
+            </div>
+            <div class="field">
+              <label class="label" for="m1u">Username</label>
+              <input id="m1u" type="text" value="frontdesk" autocomplete="username" />
+            </div>
+            <div class="field">
+              <label class="label" for="m1p">Password</label>
+              <input id="m1p" type="password" value="••••••••••" autocomplete="current-password" />
+            </div>
+            <button class="btn primary block" type="button">Sign in</button>
+            <p class="foot">Riverbend signs you out after 10 minutes without activity.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes"><ol>
+      <li><b>The form posts to the portal's own server, never to the gateway.</b> That server holds the gateway bearer token and returns a sealed session cookie — <code>httpOnly</code>, <code>SameSite=Lax</code>, no <code>Max-Age</code>, no <code>Domain</code> attribute (<code>FE-R30</code>). <code>Secure</code> is <b>derived from the deployment's <code>ORIGIN</code> scheme</b>, not hardcoded: hardcoded <code>true</code> on a non-localhost HTTP origin makes the browser discard the cookie silently and every later request arrives unauthenticated with no error to read.</li>
+      <li><b>Nothing about the session is readable from JavaScript</b> (<code>FE-R27</code>). Today's portal writes the token to <code>localStorage</code> — the pattern OWASP and SMART on FHIR both name specifically as the thing not to do.</li>
+      <li><b>The logoff interval is stated on the login surface</b>, before it can surprise anyone mid-form. 10 minutes, per ADR 0014 §4.</li>
+      <li><b>No "forgot password", no "remember me", no self-registration.</b> No such endpoint exists, and dead affordances teach operators the interface lies (wireframe plate 1 note 5).</li>
+      <li><span class="stop">⛔</span> No copy addresses the operator as a patient (<code>FE-R13</code>, <code>FE-R24</code>). Today's dashboard opens "Good day, Front" and offers "a summary of <em>your</em> care".</li>
+    </ol></div>
+  </section>
+
+  <!-- ── 2 ─────────────────────────────────────────────────── -->
+  <section class="sheet">
+    <header>
+      <span class="num">2</span>
+      <h2>Sign-in refused, and sign-in unavailable</h2>
+      <span class="route">POST /login → failure</span>
+      <span class="reqs"><span class="req">FE-R2</span><span class="req">FE-R16</span></span>
+    </header>
+    <div class="frame">
+      <div class="plate">
+        <div class="topbar">
+          <span class="mark">Riverbend</span>
+          <span class="org">Community Health · staff portal</span>
+        </div>
+        <div class="body" style="align-items:center">
+          <div class="card signin">
+            <div class="stack" style="gap:6px">
+              <h1 class="title">Sign in</h1>
+              <p class="sub">For Riverbend staff. Patients do not have accounts here.</p>
+            </div>
+            <div class="banner fail">
+              <span class="head">That sign-in did not work</span>
+              <span class="say">The username or password is not recognised. Check both and try again.</span>
+            </div>
+            <div class="field invalid">
+              <label class="label" for="m2u">Username</label>
+              <input id="m2u" type="text" value="frontdesk" />
+              <span class="hint">Re-enter the username and password.</span>
+            </div>
+            <div class="field invalid">
+              <label class="label" for="m2p">Password</label>
+              <input id="m2p" type="password" value="" />
+            </div>
+            <button class="btn primary block" type="button">Sign in</button>
+          </div>
+          <hr class="divider" style="width:392px" />
+          <div class="card signin">
+            <div class="banner fail">
+              <span class="head">Sign-in is unavailable</span>
+              <span class="say">The portal could not reach the sign-in service. Nothing was changed. Try again in a moment; if it keeps failing, tell the help desk.</span>
+            </div>
+            <div class="inline">
+              <button class="btn secondary" type="button">Try again</button>
+              <span class="foot">Reference <span class="num">c7f4-1e</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes"><ol>
+      <li><b>Two different failures, two different messages.</b> A refused credential is the operator's to fix; an unreachable gateway is not, and telling them to "check the password" wastes the shift.</li>
+      <li><b>Both branches arrive as HTTP 200.</b> The gateway's <code>_post</code>/<code>_get</code> return <code>r.json()</code> regardless of downstream status, so a rejected login is <code>200 + {"detail": …}</code> and a transport failure is <code>200 + {"error": str(e)}</code>. <code>FE-R2</code> names all three branches — non-2xx, <code>detail</code> body, <code>error</code> body — because the second was in the original wording and the third was not.</li>
+      <li><span class="stop">⛔</span> <b>The upstream string is never rendered.</b> <code>str(e)</code> can carry hostnames, connection strings and payload fragments; <code>FE-R16</code> forbids PHI in an operator-facing error, and this is the cheapest place to leak it. The correlation reference is for the log, and the log line is what carries the detail.</li>
+      <li><span class="stop">⛔</span> <b>No username enumeration.</b> One message for a bad username and a bad password.</li>
+      <li>The password field clears; the username survives. Cross-flow rule 6 — preserve operator input across failure — with the one exception every browser already expects.</li>
+    </ol></div>
+  </section>
+
+  <!-- ── 3 ─────────────────────────────────────────────────── -->
+  <section class="sheet">
+    <header>
+      <span class="num">3</span>
+      <h2>Signed out after 10 minutes idle</h2>
+      <span class="route">any route → /login</span>
+      <span class="reqs"><span class="req">FE-R28</span><span class="req gate">driven at G2</span></span>
+    </header>
+    <div class="frame">
+      <div class="plate">
+        <div class="topbar">
+          <span class="mark">Riverbend</span>
+          <span class="org">Community Health · staff portal</span>
+        </div>
+        <div class="body" style="align-items:center">
+          <div class="card signin">
+            <div class="banner note">
+              <span class="head">Signed out</span>
+              <span class="say">There was no activity for 10 minutes, so Riverbend ended the session on the server. Sign in again to carry on.</span>
+            </div>
+            <div class="field">
+              <label class="label" for="m3u">Username</label>
+              <input id="m3u" type="text" value="frontdesk" />
+            </div>
+            <div class="field">
+              <label class="label" for="m3p">Password</label>
+              <input id="m3p" type="password" value="" />
+            </div>
+            <button class="btn primary block" type="button">Sign in</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes"><ol>
+      <li><b>The timeout is enforced server-side from <code>last_seen</code> inside the sealed cookie</b>, a value the browser cannot forge. A client timer alone is a suggestion. ADR 0014 §4.</li>
+      <li><b>The portal calls the existing <code>POST /logout</code></b>, which destroys the gateway's Redis session. A timer that only clears client state leaves a live, unexpiring credential behind — <code>create_session</code> sets no TTL.</li>
+      <li><b>The redirect is not the proof.</b> <code>FE-R28</code>'s gate evidence is a request made after the timeout coming back <b>401</b>; the CI half is unit tests on the timer and the staleness check, both pure functions. Same split as <code>FE-R27</code> and half of <code>FE-R29</code> — the harness has no server, no database and no network, so anything verified "after login" is <b>driven at the gate and written down</b>. G2's signature rests on that record.</li>
+      <li><b>The reason is stated.</b> A silent bounce to login reads as a bug and gets reported as one.</li>
+      <li><b>Open, not decided:</b> whether a warning precedes the logoff. ADR 0014 specifies none. A front-desk operator mid-registration losing ten minutes of typing is the argument for one; it is also new state and a new failure mode, so it is a decision, not an edit.</li>
+      <li><span class="stop">⛔</span> <b>This does not close D10.</b> The Redis session still has no TTL. A token captured before the timer fires stays valid forever, and only the gateway can fix that.</li>
+    </ol></div>
+  </section>
+
+  <!-- ── 4 ─────────────────────────────────────────────────── -->
+  <section class="sheet">
+    <header>
+      <span class="num">4</span>
+      <h2>Register a patient</h2>
+      <span class="route">GET /intake</span>
+      <span class="reqs"><span class="req">FE-R12</span><span class="req">FE-R21</span><span class="req">FE-R11</span><span class="req">FE-R29</span></span>
+    </header>
+    <div class="frame">
+      <div class="plate">
+        <div class="topbar">
+          <span class="mark">Riverbend</span>
+          <span class="org">Community Health · staff portal</span>
+          <span class="who"><span>Signed in as frontdesk</span><span class="sep">·</span><a class="linkish" href="#m4">Sign out</a></span>
+        </div>
+        <div class="body">
+          <div class="stack" style="gap:6px">
+            <h1 class="title" id="m4">Register a patient</h1>
+            <p class="sub">One page for now. The search-first entry and the four-step review land with the P3 design system, not here.</p>
+          </div>
+
+          <div class="card">
+            <h3 class="cardhead">The person</h3>
+            <div class="row2">
+              <div class="field">
+                <label class="label" for="m4f">First name</label>
+                <input id="m4f" type="text" value="Maria" />
+              </div>
+              <div class="field">
+                <label class="label" for="m4l">Last name</label>
+                <input id="m4l" type="text" value="Gonzalez" />
+              </div>
+            </div>
+            <div class="row3">
+              <div class="field">
+                <label class="label" for="m4d">Date of birth</label>
+                <input id="m4d" class="num" type="text" inputmode="numeric" value="1974-03-02" />
+                <span class="hint">Type it — <span class="num">YYYY-MM-DD</span>.</span>
+              </div>
+              <div class="field">
+                <label class="label" for="m4s">Sex</label>
+                <select id="m4s"><option>Female</option></select>
+              </div>
+              <div class="field">
+                <label class="label" for="m4n">SSN</label>
+                <input id="m4n" class="num" type="text" inputmode="numeric" autocomplete="off" value="•••-••-4412" />
+                <span class="hint">Stored unencrypted today (D3).</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 class="cardhead">Insurance</h3>
+            <div class="row3">
+              <div class="field">
+                <label class="label" for="m4p">Payer</label>
+                <input id="m4p" type="text" value="Meridian Health Plan" />
+              </div>
+              <div class="field">
+                <label class="label" for="m4m">Member ID</label>
+                <input id="m4m" class="num" type="text" value="MRD4417820" />
+              </div>
+              <div class="field">
+                <label class="label" for="m4g">Group</label>
+                <input id="m4g" class="num" type="text" value="RB-2201" />
+              </div>
+            </div>
+            <div class="check">
+              <span class="box on">✓</span>
+              <span class="txt">
+                <span class="n">The policy holder is the patient</span>
+                <span class="k">Clear this only to record that someone else holds the policy. Riverbend cannot store that person's name today.</span>
+              </span>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 class="cardhead">Consents</h3>
+            <p class="sub">Riverbend records what was accepted. Declined and not answered are kept apart on screen; neither writes a row.</p>
+            <div class="consents">
+              <div class="consent">
+                <span class="what"><span class="n">Notice of privacy practices acknowledged</span><span class="k">npp_ack</span></span>
+                <span class="tri"><span class="on">Accepted</span><span>Declined</span><span>Not answered</span></span>
+                <span class="chip affirm"><span class="g">✓</span>Accepted</span>
+              </div>
+              <div class="consent">
+                <span class="what"><span class="n">Consent to treat</span><span class="k">treatment_consent</span></span>
+                <span class="tri"><span class="on">Accepted</span><span>Declined</span><span>Not answered</span></span>
+                <span class="chip affirm"><span class="g">✓</span>Accepted</span>
+              </div>
+              <div class="consent">
+                <span class="what"><span class="n">Financial responsibility</span><span class="k">financial_responsibility_ack</span></span>
+                <span class="tri"><span>Accepted</span><span class="on off-affirm">Declined</span><span>Not answered</span></span>
+                <span class="chip declined"><span class="g">✕</span>Declined</span>
+              </div>
+              <div class="consent">
+                <span class="what"><span class="n">Contact by email and text</span><span class="k">communications_opt_in</span></span>
+                <span class="tri"><span>Accepted</span><span>Declined</span><span class="on">Not answered</span></span>
+                <span class="chip unanswered"><span class="g">○</span>Not answered</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button class="btn primary" type="button">Register this patient</button>
+            <button class="btn secondary" type="button">Discard</button>
+            <span class="foot spacer">Eligibility is checked during registration, so this can take a few seconds.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes"><ol>
+      <li><b>Four consents, and every one of them is storable</b> (<code>FE-R21</code>). That is what the P2 backend half buys: <code>ConsentKind</code> widens from three to five with <code>financial_responsibility_ack</code> and <code>communications_opt_in</code>. Today the form takes a financial attestation and the service discards it. The fifth member, <code>roi_consent</code>, is collected by no UI at all — which is why <code>FE-R21</code>'s test is a <b>subset</b> assertion plus a pinned-literal enum, not set equality.</li>
+      <li><b>Three consent states on screen, one in the data</b> (<code>FE-R11</code>). The <code>consents</code> table has no status column — <code>_record_consents</code> inserts one row per accepted kind and nothing else — so "Declined" and "Not answered" are indistinguishable in storage <em>by construction</em>. Keeping them apart is a UI obligation the data cannot help with, and the copy above says exactly what is written rather than implying more. The chips derive from the §2 rule, unchanged: tint for a settled answer, dashed outline for one that never came, glyph on every chip so the column survives greyscale.</li>
+      <li><b>SSN is <code>type="text"</code></b> (<code>FE-R12</code>). Today it is <code>type="password"</code>, so the browser's password manager offers to save a patient's SSN into a workstation profile. <code>autocomplete="off"</code>, and the field states its own posture — plaintext <code>TEXT</code> in Postgres, D3, unchanged by this rebuild.</li>
+      <li><b>The policy-holder name is gone, replaced by the bit that is actually consumed.</b> Measured, not assumed: the only consumer is <code>policy_holder_is_self: !ins.policy_holder</code> — a boolean derived from emptiness — and the name string reaches nothing but a review display. Collecting PHI-shaped free text that no column stores is worse than not collecting it. The checkbox's helper line is the honest half: unchecking it records the fact and loses the name.</li>
+      <li><b>Typed date of birth</b>, no picker. The native picker opens on the current year and reaching 1974 means dropdown hunting; <code>FE-R7</code> owns the real fix at G3, and a text field with a stated format is the P2 floor, not the answer.</li>
+      <li><b>Nothing here is written to <code>localStorage</code>, <code>sessionStorage</code> or IndexedDB</b> (<code>FE-R29</code>). Draft-preservation across a refresh would be a patient record at rest on a shared clinic workstation.</li>
+      <li><b>Not in P2, deliberately:</b> search-first entry (<code>FE-R6</code>, G3), the duplicate-match step, per-section review with edit. Registration opening on a blank form is the RIV-160 duplicate generator, and it stays open until P4.</li>
+    </ol></div>
+  </section>
+
+  <!-- ── 5 ─────────────────────────────────────────────────── -->
+  <section class="sheet">
+    <header>
+      <span class="num">5</span>
+      <h2>Registration failed</h2>
+      <span class="route">POST /intake → 200 + detail</span>
+      <span class="reqs"><span class="req">FE-R2</span><span class="req">FE-R16</span></span>
+    </header>
+    <div class="frame">
+      <div class="plate">
+        <div class="topbar">
+          <span class="mark">Riverbend</span>
+          <span class="org">Community Health · staff portal</span>
+          <span class="who"><span>Signed in as frontdesk</span><span class="sep">·</span><a class="linkish" href="#m5">Sign out</a></span>
+        </div>
+        <div class="body">
+          <div class="stack" style="gap:6px">
+            <h1 class="title" id="m5">Register a patient</h1>
+          </div>
+          <div class="banner fail">
+            <span class="head">Maria Gonzalez was not registered</span>
+            <span class="say">Riverbend rejected the registration and created no record. Everything entered is still here. Try again — if it fails a second time, send the reference below to the help desk.</span>
+          </div>
+          <div class="card">
+            <div class="inline">
+              <button class="btn primary" type="button">Try again</button>
+              <button class="btn secondary" type="button">Review the entry</button>
+              <span class="foot spacer">Reference <span class="num">a91b-7d</span> · 14:22</span>
+            </div>
+            <hr class="divider" />
+            <div class="readout">
+              <div><span class="label">Name</span><span class="v name">Maria Gonzalez</span></div>
+              <div><span class="label">Date of birth</span><span class="v num">1974-03-02</span></div>
+              <div><span class="label">Payer</span><span class="v">Meridian Health Plan</span></div>
+            </div>
+            <p class="foot">Nothing was written. No patient record, no consent, no eligibility check.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes"><ol>
+      <li><b>This is the defect the whole rebuild is named after.</b> On <code>main</code> today, <code>intake-service</code> returns 422, the gateway relays it as HTTP 200, and the portal prints "Intake submitted successfully" over a patient that does not exist. It shipped past <code>npm run build</code> and 730 passing tests because nothing asserted the two sides of the payload.</li>
+      <li><span class="stop">⛔</span> <b>A 200 is not proof</b> (cross-flow rule 2). The portal treats a <code>detail</code> body, an <code>error</code> body, or a missing <code>patient_id</code> as failure regardless of status.</li>
+      <li><b>The failure names the patient and states what was not written.</b> "Every write shows what it wrote" runs in both directions — an operator who cannot tell whether a record exists will either create a duplicate or skip a real registration.</li>
+      <li><b>Every entered field survives</b>, and "Review the entry" returns to the form populated (<code>FE-R2</code>, cross-flow rule 6). <span class="stop">⛔</span> Never a cleared form.</li>
+      <li><b>The validation detail is not rendered.</b> A 422 body echoes the submitted payload — names, dates of birth, member IDs — so printing it puts PHI on a waiting-room screen and into any screenshot of it (<code>FE-R16</code>).</li>
+      <li><b>The three branches are not equally reachable, which the test fixture has to respect.</b> The <code>error</code> branch is <em>not</em> produced by a slow payer — <code>ELIGIBILITY_TIMEOUT_SECONDS</code> is 8s inside <code>_post</code>'s 30s httpx timeout, so ADR 0010 returns <code>pending</code>. It is reachable when intake-service is down or restarting. The fixture is "intake unreachable", not "payer slow".</li>
+    </ol></div>
+  </section>
+
+  <!-- ── 6 ─────────────────────────────────────────────────── -->
+  <section class="sheet">
+    <header>
+      <span class="num">6</span>
+      <h2>Registered — what was written</h2>
+      <span class="route">POST /intake → 200 + patient_id</span>
+      <span class="reqs"><span class="req">FE-R1</span><span class="req">FE-R20</span><span class="req">FE-R3</span></span>
+    </header>
+    <div class="frame">
+      <div class="plate">
+        <div class="topbar">
+          <span class="mark">Riverbend</span>
+          <span class="org">Community Health · staff portal</span>
+          <span class="who"><span>Signed in as frontdesk</span><span class="sep">·</span><a class="linkish" href="#m6">Sign out</a></span>
+        </div>
+        <div class="body">
+          <div class="banner done">
+            <span class="head" id="m6">Maria Gonzalez is registered</span>
+            <span class="say">The record exists and can be found by name from now on.</span>
+          </div>
+          <div class="card">
+            <div class="readout">
+              <div><span class="label">Name</span><span class="v name">Maria Gonzalez</span></div>
+              <div><span class="label">Date of birth</span><span class="v num">1974-03-02</span></div>
+              <div><span class="label">MRN</span><span class="v unavail">Not assigned at registration</span></div>
+              <div><span class="label">Patient ID</span><span class="v num">1074</span></div>
+              <div><span class="label">Consents recorded</span><span class="v">2 of 4 accepted</span></div>
+              <div><span class="label">Allergies</span><span class="v unavail">Not captured by the interface feed</span></div>
+            </div>
+            <hr class="divider" />
+            <div class="stack" style="gap:10px">
+              <span class="label">Insurance eligibility</span>
+              <div class="inline">
+                <span class="chip pending"><span class="g">●</span>Unknown</span>
+                <span>Meridian Health Plan · member <span class="num">MRD4417820</span></span>
+              </div>
+              <p class="sub">The payer did not answer in time, so coverage is unconfirmed — not refused. Check again now, or carry on and check later.</p>
+              <div class="inline">
+                <button class="btn secondary" type="button">Check eligibility again</button>
+                <button class="btn primary" type="button">Open this patient</button>
+              </div>
+            </div>
+          </div>
+          <p class="foot">A registration cannot be edited after this point — Riverbend has no update path today.</p>
+        </div>
+      </div>
+    </div>
+    <div class="notes"><ol>
+      <li><b>The confirmation states what was created</b>, not "success" (<code>FE-R1</code>, cross-flow rule 1): identity, <code>patient_id</code>, the MRN's absence, how many consents were recorded, and the eligibility result.</li>
+      <li><b>No MRN is assigned at registration, so none is shown.</b> Checked against the code, not assumed: <code>_create_patient</code> (<code>services/intake-service/app.py:118</code>) never sets <code>mrn</code>, the column is nullable, and the only MRN generator in the repo is <code>db/seed/generate_seed.py:118</code> — seeded rows only, format <code>M####</code>. A patient registered through this screen has <code>mrn = NULL</code>, and <code>IntakeResponse</code> carries no MRN field to render even if one existed. Earlier drafts of this plate showed <code>RB-0041782</code>, which is both unbuildable and in a format nothing here produces. The row states the absence rather than dropping it, because a front-desk worker who expects an MRN needs to know it is not coming yet — and the banner is already the honest answer for how the chart is retrieved: <em>found by name</em>. <b>Whether intake should mint an MRN is an open decision no <code>FE-R</code> covers</b>; it is entangled with RIV-160, since an MRN issued per registration numbers the duplicates rather than preventing them. Canonical statement: flow 1 <code>✗f</code>.</li>
+      <li><b>The eligibility result is already in the response and currently thrown away</b> (<code>FE-R20</code>). Surfacing it is a rendering change; moving the check off the request thread is D4's remaining half and is approval-gated — out of scope here.</li>
+      <li><b>"Check eligibility again" re-reads; it does not record.</b> The button is wired today — <code>GET /eligibility?insurance_id=</code> exists at <code>services/gateway/app.py:214</code> — but the answer lands nowhere. <code>_create_coverage</code> (<code>services/intake-service/app.py:143</code>) constructs the <code>insurance_coverages</code> row without <code>status</code> or <code>verified_at</code>, and no code path anywhere updates either afterwards, so the row keeps its <code>'unknown'</code> column default permanently — even when the payer answered <code>active</code> during this very registration. The re-check is therefore true only on the screen showing it: nothing downstream, and no later shift, can see that coverage was ever confirmed. Recorded as <b>D4b</b> in <code>docs/debt-log.md</code>; persisting the result is not in P2's scope and is not drawn here.</li>
+      <li><span class="stop">⛔</span> <b>Unknown is never rendered as "not covered."</b> ADR 0010 returns <code>pending</code>/<code>unknown</code> on payer trouble rather than a false <code>inactive</code>, precisely so a covered patient is not turned away at the desk. "Unknown" takes the solid attention chip because it is the state that needs a person; the copy says <em>unconfirmed, not refused</em> in words.</li>
+      <li><b>Allergies read "not captured by the interface feed", not blank</b> (<code>FE-R5</code>). HL7 AL1 segments are dropped upstream (D6), so silence and "none known" are different clinical facts and must never render alike.</li>
+      <li><b>"2 of 4 accepted" must come from the response, not from the form.</b> <code>FE-R21</code> makes every collected consent <em>storable</em>; it does not make the count on this screen <em>true</em>. <code>_record_consents</code> (<code>services/intake-service/app.py:158-167</code>) commits one row per consent in its own transaction and swallows each failure — it logs and continues — and <code>create_intake</code> returns its 201 regardless. So a partial write is indistinguishable from a complete one, and a count rendered from submitted form state can claim a consent that never landed. That is the legacy portal's defect class exactly: reporting a success the client never confirmed. This plate therefore owes an additive <code>IntakeResponse</code> field echoing the consents actually committed, and the number here reads from it — <code>FE-R33</code>, added 2026-08-01, with flow 1 <code>✗g</code> as the canonical statement. Seam-sized, no gateway edit, no <code>ConsentKind</code> change.</li>
+      <li><b>Post-submit correction is honestly unavailable.</b> No update endpoint exists, so no edit affordance is faked (flow 1 <code>✗d</code>). This is the reviewed screen's sharpest operational objection — no edit path means the workaround for a transposed DOB is re-registration, which is the RIV-160 duplicate generator wearing a different hat. Naming it here does not fix it: a write path touches PHI columns under a mutable, non-tamper-evident audit log (D2) and is approval-gated (CLAUDE.md §6).</li>
+      <li><b>The payload behind this screen is the shared fixture</b> (<code>FE-R3</code>): <code>tests/contracts/intake_payload.json</code>, asserted by a pytest test and a JS test, sitting outside both frontends. It is what stops the two sides drifting again — and it is the enforcement for the dropped <code>policy_holder</code> key, which no <code>FE-R</code> covers by decision.</li>
+    </ol></div>
+  </section>
+
+  <section class="closing">
+    <h2>What these plates do not show</h2>
+    <ul>
+      <li><b>Everything behind G3 and later.</b> Name-and-DOB search (<code>FE-R6</code>), the persistent identity banner (<code>FE-R4</code>), the four-step wizard with per-section review, role-aware navigation (<code>FE-R14</code>, behind G4 and an explicit auth approval), appointment and ROI queues with clinic-timezone rendering (<code>FE-R8</code>–<code>R10</code>).</li>
+      <li><b>Any change to the gateway.</b> <code>require_session</code> is never asked to accept a cookie and no gateway file is edited — that invariant is the whole reason a server-held token is available at P2 instead of at G4.</li>
+      <li><b>The IDOR fix.</b> Removing the numeric ID box is a read-path affordance, not an authorization change. Sequential patient IDs stay walkable until W4 binds a session to a patient.</li>
+      <li><b>A patient-facing surface.</b> Blocked on that same session binding, not on frontend work.</li>
+      <li><b>Small-viewport behaviour.</b> Unverified since P0.4 — Chrome would not resize below ~1500px during the walkthrough, so the narrow state has unknown status and nothing here is a mobile decision.</li>
+    </ul>
+    <p class="lede">Canonical decisions live in <code>docs/design/03-key-flows.md</code>, <code>04-wireframes.md</code> and <code>05-design-tokens.md</code>; requirements in <code>docs/specs/frontend-rebuild.md</code> §5. This page renders them — it does not own them. If it disagrees with those files, this page is behind.</p>
+  </section>
+
+</div>
+</div>
+
+<script>
+/* Type-set switcher. Sets data-fontset on the root element; the CSS above rebinds
+   --display / --font / --display-track for every .plate except the pinned
+   specimens. Choice is remembered so a reload does not snap back to the default. */
+(function () {
+  var root = document.documentElement;
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('.fontbar button[data-pick]'));
+
+  function apply(set) {
+    root.setAttribute('data-fontset', set);
+    buttons.forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.pick === set));
+    });
+    try { localStorage.setItem('p2-fontset', set); } catch (e) { /* private mode — choice just does not persist */ }
+  }
+
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () { apply(b.dataset.pick); });
+  });
+
+  function known(set) {
+    return buttons.some(function (b) { return b.dataset.pick === set; });
+  }
+
+  /* ?set=B pins a set without a click — that is how a headless render
+     or a per-set PDF gets a set other than the chosen one. URL beats the
+     stored choice. Default is E as of 2026-08-01, following 05-design-tokens.md §3. */
+  var wanted = null;
+  try { wanted = new URLSearchParams(location.search).get('set'); } catch (e) { /* no-op */ }
+  if (!known(wanted)) {
+    try { wanted = localStorage.getItem('p2-fontset'); } catch (e) { wanted = null; }
+  }
+  apply(known(wanted) ? wanted : 'E');
+})();
+</script>

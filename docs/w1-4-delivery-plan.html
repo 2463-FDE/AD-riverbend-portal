@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Riverbend W1–4 Delivery Plan</title>
+<style>
+  :root {
+    --ground: #fcfcfb;
+    --surface: #ffffff;
+    --ink: #1a1a1e;
+    --muted: #6b6b74;
+    --faint: #9a9aa3;
+    --accent: #1a56c5;
+    --rule: #e4e4e8;
+    --rule-heavy: #1a1a1e;
+    --code-bg: #f1f1f4;
+    --ok: #14683c;    --ok-bg: #e8f3ec;
+    --warn: #8a5a00;  --warn-bg: #f8f0dd;
+    --bad: #b2312a;   --bad-bg: #fbeae9;
+    --cut: #55555e;   --cut-bg: #ededf0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #101114; --surface: #17181c; --ink: #e8e8ec; --muted: #9c9ca6;
+      --faint: #6e6e78; --accent: #7aa5f0; --rule: #2a2b31; --rule-heavy: #e8e8ec;
+      --code-bg: #23242a;
+      --ok: #7fc79c; --ok-bg: #1a2b21; --warn: #d9ae5f; --warn-bg: #2d2515;
+      --bad: #e59790; --bad-bg: #331d1b; --cut: #a2a2ac; --cut-bg: #24252a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #101114; --surface: #17181c; --ink: #e8e8ec; --muted: #9c9ca6;
+    --faint: #6e6e78; --accent: #7aa5f0; --rule: #2a2b31; --rule-heavy: #e8e8ec;
+    --code-bg: #23242a;
+    --ok: #7fc79c; --ok-bg: #1a2b21; --warn: #d9ae5f; --warn-bg: #2d2515;
+    --bad: #e59790; --bad-bg: #331d1b; --cut: #a2a2ac; --cut-bg: #24252a;
+  }
+  :root[data-theme="light"] {
+    --ground: #fcfcfb; --surface: #ffffff; --ink: #1a1a1e; --muted: #6b6b74;
+    --faint: #9a9aa3; --accent: #1a56c5; --rule: #e4e4e8; --rule-heavy: #1a1a1e;
+    --code-bg: #f1f1f4;
+    --ok: #14683c; --ok-bg: #e8f3ec; --warn: #8a5a00; --warn-bg: #f8f0dd;
+    --bad: #b2312a; --bad-bg: #fbeae9; --cut: #55555e; --cut-bg: #ededf0;
+  }
+
+  html { background: var(--ground); }
+  body {
+    background: var(--ground); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    font-size: 14.5px; line-height: 1.55; margin: 0; padding: 0 20px 90px;
+  }
+  main { max-width: 880px; margin: 0 auto; }
+  .mono, code, .eyebrow, th {
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  code { font-size: 0.84em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
+
+  header { padding: 60px 0 24px; border-bottom: 3px solid var(--rule-heavy); }
+  .eyebrow {
+    font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600;
+  }
+  h1 { font-size: 2rem; font-weight: 750; letter-spacing: -0.01em; margin: 10px 0 4px; text-wrap: balance; }
+  .sub { color: var(--muted); font-size: 0.95rem; margin: 4px 0 16px; max-width: 66ch; }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 0.78rem; color: var(--muted); }
+  .facts b { color: var(--ink); font-weight: 600; }
+
+  section { margin-top: 52px; }
+  section > .eyebrow { display: block; border-bottom: 1px solid var(--rule-heavy); padding-bottom: 6px; }
+  h2 { font-size: 1.3rem; font-weight: 700; margin: 14px 0 4px; text-wrap: balance; }
+  h3 { font-size: 0.95rem; font-weight: 700; margin: 22px 0 6px; }
+  .lede { color: var(--muted); margin: 2px 0 14px; max-width: 68ch; font-size: 0.92rem; }
+  p { max-width: 70ch; }
+  ul { max-width: 72ch; padding-left: 1.2em; margin: 8px 0; }
+  li { margin: 4px 0; }
+  li::marker { color: var(--faint); }
+
+  .verdict {
+    display: inline-block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em;
+    padding: 2px 10px; border-radius: 3px; margin-left: 10px; vertical-align: 3px;
+    font-family: ui-monospace, Menlo, monospace; text-transform: uppercase;
+  }
+  .verdict.done { background: var(--ok-bg); color: var(--ok); }
+  .verdict.partial { background: var(--warn-bg); color: var(--warn); }
+  .verdict.missing { background: var(--bad-bg); color: var(--bad); }
+
+  .tablewrap { overflow-x: auto; margin: 12px 0 4px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+  th {
+    text-align: left; font-size: 0.64rem; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; padding: 9px 12px 7px;
+    border-bottom: 2px solid var(--rule-heavy);
+  }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .note { font-size: 0.76rem; color: var(--muted); margin: 6px 2px 0; max-width: 72ch; }
+
+  .chip {
+    display: inline-block; font-size: 0.68rem; font-weight: 650; letter-spacing: 0.03em;
+    padding: 1px 8px; border-radius: 3px; white-space: nowrap;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .chip.done { background: var(--ok-bg); color: var(--ok); }
+  .chip.prog { background: var(--warn-bg); color: var(--warn); }
+  .chip.not  { background: var(--bad-bg); color: var(--bad); }
+  .chip.cut  { background: var(--cut-bg); color: var(--cut); }
+
+  .flag {
+    background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--bad);
+    padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; max-width: 74ch;
+  }
+  .flag .label { font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; color: var(--bad); font-family: ui-monospace, Menlo, monospace; }
+  .flag p { margin: 6px 0 0; font-size: 0.9rem; }
+  .flag.info { border-left-color: var(--accent); }
+  .flag.info .label { color: var(--accent); }
+
+  .plan {
+    background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0; padding: 12px 16px; margin: 14px 0 0; max-width: 74ch; font-size: 0.88rem;
+  }
+  .plan .label { font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; color: var(--accent); font-family: ui-monospace, Menlo, monospace; display: block; margin-bottom: 6px; }
+  .plan ul { margin: 4px 0 0; }
+
+  .dod {
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 6px;
+    padding: 12px 16px; margin: 14px 0; max-width: 74ch; font-size: 0.88rem;
+  }
+
+  a { color: var(--accent); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+</head>
+<body>
+<main>
+<header>
+  <span class="eyebrow">Delivery Plan · Riverbend Community Health · Synthetic data only</span>
+  <h1>W1–4 Delivery Plan</h1>
+  <p class="sub">Replanned against the Week 1–4 client review (2026-08-03). What each week owes, what exists, what's missing, and how the gap closes — under a stricter bar: a feature is complete only when backend <b>and</b> UI ship on the Next.js portal.</p>
+  <div class="facts">
+    <span>Planned <b>Tue 2026-08-04</b></span>
+    <span>Trainer checkpoint <b>Fri 08-07</b></span>
+    <span>Demo <b>Mon 08-10</b></span>
+    <span>Open PRs <b>#26 · #29</b> (one round each)</span>
+    <span><code>main</code> <b><code>a77ad08</code></b></span>
+  </div>
+</header>
+
+<!-- ========== REORIENTATION ========== -->
+<section>
+  <span class="eyebrow">Reorientation</span>
+  <h2>SvelteKit portal hibernates. Client curriculum resumes.</h2>
+  <p class="lede">The trainer's verdict: a new framework is outside client scope; tests and page fixes on the incumbent are worthwhile. We accept it in full.</p>
+  <ul>
+    <li><b>Hibernate, not delete.</b> The <code>portal/</code> scaffold, its harness, ADRs 0012–0015, and the FE-R spec stay merged and dormant. A pause ADR records: paused, what resumes it (a client ask for a rebuilt frontend, or curriculum completion with capacity to spare), and what we do instead.</li>
+    <li><b>Instead:</b> all UI work lands on the Next.js portal (<code>frontend/</code>). The prior decision to park the registration fix behind the rebuild's G2 gate is withdrawn in the same ADR.</li>
+    <li><b>Reorientation:</b> the client curriculum is the backlog. W1–W4 asks close first, under the completeness bar below; W5+ proceeds only when W1–W4 owes nothing.</li>
+    <li><b>Suspended with the rebuild:</b> rebuild-chained process items (TODO-21/23/24/25/28/29/30, axe-in-portal, E2E) — revisit only on resume.</li>
+  </ul>
+  <div class="dod">
+    <b>Completeness bar (definition of done, every feature):</b> ① backend endpoint merged and exercised by tests (<code>make test-docker</code> green) ② a working screen on the <b>Next.js portal</b> ③ demoable from a fresh <code>make up</code> seed, verified by driving the app ④ spec acceptance IDs checked ⑤ claims carry numbers.
+  </div>
+</section>
+
+<!-- ========== WEEK 1 ========== -->
+<section>
+  <span class="eyebrow">Week 1</span>
+  <h2>Registration polish + AI intake assistant <span class="verdict partial">Partial</span></h2>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>Piece</th><th>Status</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr><td>PHI-safe LLM wrapper + redaction + D1 log fix</td><td><span class="chip done">DONE</span></td><td>PR #2 <code>8dfc55e</code> · ADR 0004</td></tr>
+      <tr><td>Intake-instructions: backend + gateway + portal UI</td><td><span class="chip done">DONE</span></td><td>PR #7 <code>a67d737</code> · ADR 0007 · UI at <code>frontend/app/intake</code></td></tr>
+      <tr><td><b>Registration itself</b> — the page the client asked us to polish</td><td><span class="chip not">BROKEN</span></td><td>Portal 422s at intake-service, gateway relays 200, UI prints success, <b>no patient row created</b> (TODO-1, verified live)</td></tr>
+      <tr><td>DOB field typeable / no current-year trap · Enter-confirm</td><td><span class="chip not">MISSING</span></td><td>Both hit live by the trainer</td></tr>
+      <tr><td>Assistant failure on <code>edi.example.com</code></td><td><span class="chip not">MISSING</span></td><td>Surfaced during demo; no operator-usable degradation</td></tr>
+      <tr><td>Measured LLM value (model pick vs <code>templates.default_selection</code>)</td><td><span class="chip not">MISSING</span></td><td>Owed answer — no number exists</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="plan"><span class="label">How it closes</span>
+    <ul>
+      <li><b>This week, first:</b> registration fix on the incumbent — field renames (<code>name</code>, <code>payer_name</code>), consents as list, <code>detail</code> body treated as failure, <code>ConsentKind</code> +2 values with the adversarial rejection test re-proven, shared contract fixture asserted on both sides. <code>/security-review</code> before the PR opens (PHI boundary).</li>
+      <li><b>This week:</b> DOB + Enter-confirm + assistant degradation with traced root cause, one PR.</li>
+      <li><b>By 08-14:</b> divergence script over the seed corpus; number lands in the repo; if ≈0, a design-change note says so.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ========== WEEK 2 ========== -->
+<section>
+  <span class="eyebrow">Week 2</span>
+  <h2>RAG record retrieval <span class="verdict done">Done</span></h2>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>Piece</th><th>Status</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr><td>Eval harness (recall/precision, dup-rate) + fragmentation report</td><td><span class="chip done">DONE</span></td><td>PR #4 <code>4d72fe5</code> · <code>eval/rag/REPORT.md</code></td></tr>
+      <tr><td>MPI match-key ADR</td><td><span class="chip done">DONE</span></td><td>ADR 0005</td></tr>
+      <tr><td>Drift gate hardening</td><td><span class="chip prog">IN FLIGHT</span></td><td>PR #29, one round from merge</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">No UI owed: the W2 deliverable is the eval harness and ADR, not a portal feature — the completeness bar applies to features, and this week's ask was analysis. The MPI <em>build</em> (RIV-160 fix) is deliberately deferred to its owning week.</p>
+
+  <div class="plan"><span class="label">How it closes</span>
+    <ul><li>Answer PR #29 r5, merge. Nothing else owed.</li></ul>
+  </div>
+</section>
+
+<!-- ========== WEEK 3 ========== -->
+<section>
+  <span class="eyebrow">Week 3</span>
+  <h2>Eligibility chat agent + intake freeze fix <span class="verdict partial">Partial</span></h2>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>Piece</th><th>Status</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr><td>Intake freeze fix (RIV-088/141): timeouts + breakers both hops, tri-state result</td><td><span class="chip done">DONE</span></td><td>PR #11 <code>5eb88c9</code> · ADR 0010</td></tr>
+      <tr><td>Visit-chat backend: deterministic intent, catalog templates, Redis visit memory, abuse controls</td><td><span class="chip done">DONE</span></td><td>PR #14 <code>074c346</code> · ADR 0011</td></tr>
+      <tr><td><b>Chat UI on the Next.js portal</b></td><td><span class="chip not">MISSING</span></td><td>The client asked for "a little chat assistant for the front desk"; <code>POST /ai/visit-chat</code> has never had a screen (TODO-31)</td></tr>
+      <tr><td>ADR 0011 live PHI drill (redis-cli inspection of stored transcript)</td><td><span class="chip not">MISSING</span></td><td>TODO-2 — owed against merged code since 07-28</td></tr>
+      <tr><td>Eligibility result persisted (D4b)</td><td><span class="chip not">MISSING</span></td><td><code>insurance_coverages.status</code> stays <code>'unknown'</code> after the payer answers</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="plan"><span class="label">How it closes</span>
+    <ul>
+      <li><b>By 08-14:</b> minimal front-desk chat panel on the Next.js portal calling <code>POST /ai/visit-chat</code> through the existing BFF — the endpoint, auth, and abuse controls already exist; this is a screen, not a system. Was deferred to the rebuild's P7; re-homed to the incumbent by the hibernation.</li>
+      <li><b>This week (30 min):</b> run the PHI drill — two-turn visit chat, then <code>redis-cli</code> confirms the transcript is metadata-only.</li>
+      <li><b>By 08-14:</b> persist the eligibility answer (D4b) — one status write on the existing verified path; no contract change.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ========== WEEK 4 ========== -->
+<section>
+  <span class="eyebrow">Week 4</span>
+  <h2>Patient full-picture view <span class="verdict missing">Not started</span></h2>
+  <p class="lede">The feature the client asked for by name. Zero lines of feature code. Adjacent groundwork exists and is real — but none of it is the view.</p>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>Piece</th><th>Status</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr><td>IDOR writeup + HAR repro actually run</td><td><span class="chip not">MISSING</span></td><td>Owed answer; not approval-gated</td></tr>
+      <tr><td>Measured N+1 (query count + timing, before/after)</td><td><span class="chip not">MISSING</span></td><td>Owed answer; assertion exists, number does not</td></tr>
+      <tr><td>Patient→encounter→provider→record schema sketch</td><td><span class="chip not">MISSING</span></td><td>—</td></tr>
+      <tr><td>Assembly prototype with authz check at the boundary</td><td><span class="chip not">MISSING</span></td><td>—</td></tr>
+      <tr><td><b>Patient-view screen on the Next.js portal</b></td><td><span class="chip not">MISSING</span></td><td>"Full picture in one view" is a view — prototype-grade screen owed</td></tr>
+      <tr><td>Groundwork: RBAC roles + per-route capabilities</td><td><span class="chip done">DONE</span></td><td>PR #28 <code>a77ad08</code> · ADR 0017 · RBAC-R1–R11</td></tr>
+      <tr><td>Groundwork: domain services network-internal</td><td><span class="chip done">DONE</span></td><td>PR #27 <code>b40ffed</code> · ADR 0016 — incl. the unauthenticated 8075 PHI write, closed with a topology test</td></tr>
+      <tr><td>Groundwork: front-desk day queue endpoint (index-backed, capability-gated)</td><td><span class="chip prog">IN FLIGHT</span></td><td>PR #26, one round from merge · ADR 0018. No UI yet — screen rides the same 08-14 window</td></tr>
+      <tr><td>Spec <code>w4.md</code> (§5 = acceptance register)</td><td><span class="chip prog">UNCOMMITTED</span></td><td>+91 lines on disk; rides PR #26 (TODO-4)</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="flag">
+    <span class="label">Blocker on production, not on delivery</span>
+    <p><b>D11 IDOR:</b> the records endpoint binds a session to no patient; IDs are walkable. The bind is auth-boundary work — human approval, likely a care-relationship table + migration, adversarial tests. <b>Estimate M · 3–5 days, after the demo.</b> The W4 deliverable (analysis + prototype on synthetic data) does not wait for it; the prototype's boundary authz check demonstrates the fix shape.</p>
+  </div>
+
+  <div class="plan"><span class="label">How it closes</span>
+    <ul>
+      <li><b>By demo (Mon 08-10):</b> analysis half — HAR repro run, IDOR writeup with the bind proposal and capability table, N+1 measured with numbers. Merge PR #26; commit the spec.</li>
+      <li><b>By 08-14:</b> build half — schema sketch, assembly prototype (gateway-only hops, volume-aware routing, dedup with provenance, patient-scoped bounded search + adversarial cross-patient test), prototype-grade patient-view screen and a day-queue screen on the Next.js portal.</li>
+      <li><b>After, pending approval:</b> the D11 bind itself.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ========== COMPLIANCE ========== -->
+<section>
+  <span class="eyebrow">Compliance at zero cost</span>
+  <h2>Checks run 2026-08-04</h2>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>Check</th><th>Result</th><th>Disposition</th></tr></thead>
+    <tbody>
+      <tr><td><code>npm audit</code> (portal/)</td><td>0 production vulns; 3 low, dev-only</td><td>No action; dormant service, dev chain never ships</td></tr>
+      <tr><td>gitleaks (CI, since PR #2)</td><td>Green on tracked tree; old <code>.env</code> secrets remain in git history (D9)</td><td>Known; scrub = M (2–3 d) ops, synthetic creds, non-blocking</td></tr>
+      <tr><td>Python dep audit</td><td>Gap — none exists</td><td>Add <code>pip-audit</code> CI job post-demo · S (~0.5 d)</td></tr>
+      <tr><td>A11y</td><td>No gate on the incumbent</td><td>One-shot axe pass folded into the W1 UX PR — same pages being touched · S</td></tr>
+      <tr><td><code>/security-review</code></td><td>Standing zero-cost gate</td><td>Mandatory before the registration PR opens (PHI boundary)</td></tr>
+      <tr><td>README truth</td><td>Line 1 claims encryption + full HIPAA compliance; quick-start cites a deleted <code>.env</code>; service table two short</td><td>Corrected in the pause-ADR PR this week — the review supplies the mandate TODO-12 was waiting on</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<p class="note" style="margin-top:48px; border-top:1px solid var(--rule); padding-top:12px;">Prepared 2026-08-04 · Sources: W1–4 client review (2026-08-03), <code>plan.md</code>, <code>docs/specs/</code>, <code>docs/todo.md</code>, <code>docs/review-loop-metrics.md</code>, <code>fde-progress.md</code>, Jira export, merged-PR index, live <code>gh pr list</code> · Training engagement — all patient data synthetic.</p>
+</main>
+</body>
+</html>
