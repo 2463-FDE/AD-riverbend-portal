@@ -23,8 +23,9 @@ def get_engine() -> Engine:
     here — psycopg2 connects on first query via the pool."""
     global _engine
     if _engine is None:
-        # hide_parameters: a DBAPIError message must never embed the bound row
-        # (PHI) — engine-level backstop behind phi-logging-policy rule 3.
+        # hide_parameters strips SQLAlchemy's [parameters: (...)] from
+        # DBAPIError text ONLY — driver messages can still embed values, so
+        # rule 3's class-name log idiom stays the primary control.
         _engine = create_engine(
             settings.db_url, pool_pre_ping=True, future=True, hide_parameters=True
         )

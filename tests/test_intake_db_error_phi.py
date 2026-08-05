@@ -4,9 +4,9 @@ Adversarial PHI test for the intake DB-write failure paths (app.py).
 phi-logging-policy register (PR #33): _create_patient / _create_coverage log
 str(e) on SQLAlchemyError, and a statement-level DBAPIError stringifies with
 ``[SQL: ...] [parameters: (...)]`` — the full bound row — unless the engine
-sets hide_parameters=True (db.py does not). So a DataError on the patients
-INSERT (e.g. an oversized field) would write name/DOB/SSN into the intake log
-at ERROR. This test plants PHI literals in a simulated statement-level failure
+set hide_parameters=True (before this fix, none did). So a DataError on the
+patients INSERT (e.g. an oversized field) wrote name/DOB/SSN into the intake
+log at ERROR. This test plants PHI literals in a simulated statement-level failure
 exactly as SQLAlchemy embeds them and asserts none survive into any log record
 or the raised HTTP error. It FAILS against the pre-fix code, which logged
 str(e). Same shape as tests/test_intake_eligibility_phi.py (the 2026-07-08
@@ -56,11 +56,11 @@ class _FailingSession:
     un-hidden engine produces: DBAPIError.__str__ appends
     ``[SQL: ...] [parameters: (...)]`` with every bound value."""
 
-    def __init__(self, statement: str, params: tuple):
+    def __init__(self, statement: str, params: tuple, orig_message: str | None = None):
         self._exc = DataError(
             statement,
             params,
-            Exception("value too long for type character varying(11)"),
+            Exception(orig_message or "value too long for type character varying(11)"),
         )
 
     def add(self, obj):
@@ -74,6 +74,11 @@ class _FailingSession:
 
 
 def _assert_no_phi(caplog, exc_info):
+    # Guard against a vacuous pass: the PHI scan below iterates caplog.records,
+    # so if intake's logger ever stops propagating to root (e.g. a future
+    # `propagate = False` in logging_config), zero records would make every
+    # assertion skip silently. The error path must have logged something.
+    assert any(r.levelno >= logging.ERROR for r in caplog.records)
     detail = str(exc_info.value.detail)
     for value in PHI:
         assert value not in detail
@@ -106,3 +111,25 @@ def test_coverage_insert_failure_does_not_leak_member_id(caplog):
             app_mod._create_coverage(db, 1, ins)
     assert exc_info.value.status_code == 503
     _assert_no_phi(caplog, exc_info)
+
+
+def test_consent_insert_failure_logs_class_only(caplog):
+    """_record_consents swallows the error (no HTTPException — pre-existing
+    behavior), so the only observable is the log line. The consent kind and
+    patient_id are allowlisted there by design; what must not appear is any
+    part of str(e) — proven with a sentinel planted in the driver's own
+    message, which is where a real DBAPIError carries free text."""
+    sentinel = "DRIVER-MSG-SENTINEL-9988"
+    db = _FailingSession(
+        "INSERT INTO consents (patient_id, kind) VALUES (%s, %s)",
+        (1, "npp_ack"),
+        orig_message=f"insert failed: {sentinel}",
+    )
+    with caplog.at_level(logging.ERROR):
+        app_mod._record_consents(db, 1, ["npp_ack"])
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert errors, "consent failure must log an ERROR record"
+    for msg in errors:
+        assert sentinel not in msg
+        assert "[SQL" not in msg and "[parameters" not in msg
+        assert "DataError" in msg  # the class name is the diagnostic that remains
