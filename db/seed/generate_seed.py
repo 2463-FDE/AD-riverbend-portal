@@ -16,7 +16,10 @@ The fixture patient/encounter columns shared with the RAG eval corpus are read
 from db/seed/patients.csv and encounters.csv (see load_fixture_csv) — there is
 no second hardcoded copy here to drift from what eval/rag/REPORT.md describes.
 
-Run:  python3 db/seed/generate_seed.py  > db/seed/seed.sql
+Run:  make seed-gen
+(never a direct `> db/seed/seed.sql` redirection — the shell truncates the live
+seed before this script runs, so a failure here leaves a 0-byte file for a
+fresh volume's initdb; the Makefile recipe writes a temp file and renames)
 """
 import base64
 import csv

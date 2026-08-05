@@ -14,6 +14,7 @@ db/seed/ is never written to.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -271,6 +272,26 @@ def test_red_when_seed_sql_is_hand_edited(tmp_path):
     assert proc.returncode == 1
     assert "seed.sql does not match db/seed/generate_seed.py" in proc.stderr
     assert "make seed-gen" in proc.stderr
+
+
+def test_seed_drift_message_never_instructs_truncating_redirect(tmp_path):
+    """The remediation must say `make seed-gen` and nothing else: the direct
+    `python3 db/seed/generate_seed.py > db/seed/seed.sql` form truncates the
+    live seed file before the generator starts, so a mid-run failure leaves an
+    empty or partial seed.sql — the exact failure the Makefile's temp-file +
+    rename recipe prevents (codex r5). Regex, not exact substring: the fourth
+    swept site hid from a plain-text grep behind a double space before `>`,
+    and the message legitimately says `commit db/seed/seed.sql`, so the pin
+    is redirection-onto-the-path, not the path itself."""
+    def mutate(work):
+        sql = work / "db" / "seed" / "seed.sql"
+        mutated = sql.read_text().replace("'penicillin'", "'sulfa'", 1)
+        assert mutated != sql.read_text(), "needle missing — update this test"
+        sql.write_text(mutated)
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 1
+    assert not re.search(r">\s*db/seed/seed\.sql", proc.stderr)
 
 
 def test_red_when_seed_sql_line_endings_change(tmp_path):

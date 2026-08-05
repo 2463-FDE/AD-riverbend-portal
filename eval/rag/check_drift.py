@@ -133,8 +133,11 @@ SEED_DIFF_MAX_LINES = 120
 # behind it — for minutes, not for GitHub's 6-hour job kill.
 SUBPROCESS_TIMEOUT = 300
 
+# make seed-gen only — never the direct `... > db/seed/seed.sql` redirection,
+# which truncates the live seed file before the generator runs; the Makefile
+# recipe writes a temp file and renames on success for exactly that reason.
 SEED_REGENERATE = (
-    "rerun: make seed-gen   (python3 db/seed/generate_seed.py > db/seed/seed.sql)\n"
+    "rerun: make seed-gen\n"
     "then commit db/seed/seed.sql. If the regenerated file is the wrong one, the\n"
     "edit belongs in db/seed/generate_seed.py, not in seed.sql by hand.\n"
 )
