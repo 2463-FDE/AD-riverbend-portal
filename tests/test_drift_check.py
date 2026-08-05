@@ -150,7 +150,7 @@ def test_section_4_prose_survives_the_mask(report_text):
 # --- end to end, against a mutated copy of the seed ---
 
 
-def _run_in_copy(tmp_path, mutate):
+def _run_in_copy(tmp_path, mutate, argv=()):
     """Copy the eval + seed into tmp_path, mutate, run the check, return the
     completed process."""
     work = tmp_path / "repo"
@@ -161,7 +161,7 @@ def _run_in_copy(tmp_path, mutate):
     shutil.copytree(os.path.join(REPO_ROOT, "db", "seed"), str(work / "db" / "seed"))
     mutate(work)
     return subprocess.run(
-        [sys.executable, str(work / "eval" / "rag" / "check_drift.py")],
+        [sys.executable, str(work / "eval" / "rag" / "check_drift.py")] + list(argv),
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
     )
 
@@ -178,6 +178,20 @@ def _regen_seed(work):
         )
 
 
+def _refresh_fingerprint(work):
+    """Rerun --write-fingerprint in the copy. The report-diff tests below call
+    this so their input edit gets past the fingerprint layer (which fires
+    first) and the layer each test pins is the one that goes red — which also
+    proves renderable-field drift is caught even when an operator refreshes
+    the fingerprint without regenerating the report."""
+    proc = subprocess.run(
+        [sys.executable, str(work / "eval" / "rag" / "check_drift.py"),
+         "--write-fingerprint"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
 def test_green_against_the_committed_seed(tmp_path):
     """The control. Without this, every red test above could be red by accident."""
     proc = _run_in_copy(tmp_path, lambda work: None)
@@ -190,6 +204,7 @@ def test_red_when_a_seed_patient_changes(tmp_path):
         csv = work / "db" / "seed" / "patients.csv"
         csv.write_text(csv.read_text().replace("Maria Gonzales,", "Maria Gonzalez,", 1))
         _regen_seed(work)
+        _refresh_fingerprint(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -203,6 +218,7 @@ def test_red_when_a_seed_allergy_changes(tmp_path):
         csv = work / "db" / "seed" / "encounters.csv"
         csv.write_text(csv.read_text().replace("penicillin", "sulfa"))
         _regen_seed(work)
+        _refresh_fingerprint(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -224,6 +240,7 @@ def test_red_when_a_goldset_query_is_reworded(tmp_path):
         def transform(goldset):
             goldset["cases"][0]["query"] = "list Maria Gonzalez's allergies"
         _mutate_goldset(work, transform)
+        _refresh_fingerprint(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -235,6 +252,7 @@ def test_red_when_goldset_cited_records_change(tmp_path):
         def transform(goldset):
             goldset["cases"][0]["cites_records"] = [2]
         _mutate_goldset(work, transform)
+        _refresh_fingerprint(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -247,6 +265,7 @@ def test_red_when_a_goldset_case_is_removed(tmp_path):
         def transform(goldset):
             goldset["cases"].pop()
         _mutate_goldset(work, transform)
+        _refresh_fingerprint(work)
 
     proc = _run_in_copy(tmp_path, mutate)
     assert proc.returncode == 1
@@ -366,6 +385,101 @@ def test_red_on_csv_fixture_edit_before_seed_regen(tmp_path):
     assert proc.returncode == 1
     assert "seed.sql does not match db/seed/generate_seed.py" in proc.stderr
     assert "make seed-gen" in proc.stderr
+
+
+# --- the corpus fingerprint: inputs the report never renders (codex r6) ---
+
+
+def test_red_when_goldset_expected_patient_flips(tmp_path):
+    """The reviewer's exact case: change which patient an answer is expected
+    to come from, leave cites_records untouched. The report renders neither
+    expected_patient_id nor expected_answer, so before the fingerprint this
+    drifted green — the committed clinical expectation silently diverged."""
+    def mutate(work):
+        gs = work / "db" / "seed" / "goldset.json"
+        mutated = gs.read_text().replace(
+            '"expected_patient_id": 1042', '"expected_patient_id": 9999'
+        )
+        assert mutated != gs.read_text(), "needle missing — update this test"
+        gs.write_text(mutated)
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 1
+    assert "corpus changed" in proc.stderr
+    assert "--write-fingerprint" in proc.stderr
+
+
+def test_red_when_encounter_summary_rewritten(tmp_path):
+    """summary reaches the report only through masked score cells, so this
+    rewrite invalidates the committed §4 scores while the report diff stays
+    green. Seed regenerated so the seed.sql check passes and the fingerprint
+    layer is the one that goes red."""
+    def mutate(work):
+        csv_path = work / "db" / "seed" / "encounters.csv"
+        mutated = csv_path.read_text().replace(
+            "Annual physical. Unremarkable.", "Urgent cardiac workup."
+        )
+        assert mutated != csv_path.read_text(), "needle missing — update this test"
+        csv_path.write_text(mutated)
+        _regen_seed(work)
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 1
+    assert "corpus changed" in proc.stderr
+
+
+def test_red_when_unrendered_patient_column_edited(tmp_path):
+    """address feeds no match key and renders into no report section at all —
+    the deepest input blind spot. Raw-byte hashing catches it anyway; a
+    fingerprint over rendered encounter documents would not (name is the only
+    patient column a document embeds)."""
+    def mutate(work):
+        csv_path = work / "db" / "seed" / "patients.csv"
+        mutated = csv_path.read_text().replace("118 Maple Ave", "999 Elm St")
+        assert mutated != csv_path.read_text(), "needle missing — update this test"
+        csv_path.write_text(mutated)
+        _regen_seed(work)
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 1
+    assert "corpus changed" in proc.stderr
+
+
+def test_missing_fingerprint_dies_2(tmp_path):
+    """No committed fingerprint is a broken checkout, not a drift verdict —
+    exit 2, never 1, and the message says how to create it."""
+    def mutate(work):
+        os.remove(str(work / "eval" / "rag" / "corpus.sha256"))
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 2
+    assert "corpus.sha256 is missing" in proc.stderr
+
+
+def test_write_fingerprint_then_green(tmp_path):
+    """The operator path end-to-end: edit an input, refresh the fingerprint,
+    and the check is green again — proving --write-fingerprint writes the
+    value the checker computes. This is also the documented limit, on
+    purpose: the gate cannot know the embed report was actually re-run; the
+    paired REPORT.md + corpus.sha256 hunks in review are that guard."""
+    def mutate(work):
+        csv_path = work / "db" / "seed" / "encounters.csv"
+        csv_path.write_text(
+            csv_path.read_text().replace(
+                "Annual physical. Unremarkable.", "Urgent cardiac workup."
+            )
+        )
+        _regen_seed(work)
+        refresh = subprocess.run(
+            [sys.executable, str(work / "eval" / "rag" / "check_drift.py"),
+             "--write-fingerprint"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+        )
+        assert refresh.returncode == 0
+        assert "wrote eval/rag/corpus.sha256" in refresh.stdout
+
+    proc = _run_in_copy(tmp_path, mutate)
+    assert proc.returncode == 0
 
 
 def test_generator_dies_when_fixture_csv_is_missing(tmp_path):

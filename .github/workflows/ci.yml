@@ -98,8 +98,9 @@ jobs:
   # invisible. No install step on purpose — the stub retriever path is standard
   # library only (eval/rag/retriever.py defers numpy and sentence-transformers into
   # EmbeddingRetriever._load), so this job must never pull eval/rag/requirements.txt
-  # and the torch download behind it. §4's retrieval scores are excluded from the
-  # comparison; the header of eval/rag/check_drift.py says why and what that misses.
+  # and the torch download behind it. §4's retrieval scores — and the eval code
+  # that computes them — are excluded from the comparison; eval/rag/corpus.sha256
+  # pins every DATA input byte, and check_drift.py's header owns the tradeoff.
   eval:
     runs-on: ubuntu-latest
     steps:

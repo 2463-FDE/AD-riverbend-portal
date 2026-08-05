@@ -32,24 +32,31 @@ seed.sql, the file Postgres loads, IS compared as raw bytes).
 
 Masking whole cells, rather than only the values that currently differ between
 the stub and embed paths, keeps this check decoupled from score stability: a
-model or hardware change must never turn the drift gate red. The cost,
-accepted deliberately, is a blind spot:
+model or hardware change must never turn the drift gate red. The report diff
+therefore only sees what run.py renders — goldset fields the report never
+shows (expected_patient_id, expected_answer, description), CSV columns that
+feed only masked score cells (summary/provider/type/date), and every
+patients/encounters row outside an SSN candidate cluster would all drift
+green through it.
 
-  * Of goldset.json, only each case's query and cites_records reach the
-    report. expected_patient_id, expected_answer and the file's description
-    field appear nowhere in it, so edits to those pass unnoticed — that is
-    run.py's scope, not a mask decision.
-  * Of db/seed/patients.csv and encounters.csv, only rows in an SSN candidate
-    cluster render into compared text at all: §1's cluster tables list only
-    fragmented/conflict/ambiguous identities, and §2's gaps are built solely
-    from status == "candidate" SSN identities (run.py). A non-clustered
-    patient's name — or an allergy planted on their encounter — reaches the
-    report only through retriever.encounter_document, i.e. only into masked
-    cells, and passes unnoticed. Also run.py's rendering scope, not the
-    mask's.
-  * Even for cluster rows, encounters.csv's encounter_type, provider, summary
-    and occurred_at columns feed only masked cells — so rewriting every
-    encounter summary invalidates the committed scores and still passes.
+THAT INPUT BLIND SPOT IS CLOSED BY THE CORPUS FINGERPRINT (added codex r6):
+eval/rag/corpus.sha256 pins the raw bytes of patients.csv, encounters.csv and
+goldset.json — every DATA file run.py reads — and this check fails when they
+no longer match. Raw bytes, not rendered documents, so no column is exempt.
+The eval CODE stays unfingerprinted, deliberately: a change to the scoring
+definition (metrics.py) or the retriever's ranking reaches the report only
+through masked cells, so the committed scores can describe a dead scoring
+definition with the gate green. Fingerprinting the .py files would close that
+at the cost of every comment edit demanding an embed re-run; rejected. What IS
+pinned on the code side: the model (label check) and top-k (compared). The
+fingerprint deliberately cannot verify the §4 SCORES against the new inputs
+(nothing can without the model); its job is to make input drift loud, and the
+red message states the obligation that follows: regenerate the embed-path
+report, then refresh the fingerprint (`check_drift.py --write-fingerprint`),
+and commit both together. An operator who refreshes the fingerprint without
+regenerating the report is lying to the gate the same way hand-editing
+REPORT.md would be — visible in review (the .sha256 hunk arrives without a
+REPORT.md hunk), not preventable here.
 
 SEPARATE FROM THE REPORT DIFF (added codex r3): db/seed/seed.sql — the file a
 fresh Postgres volume and `make seed` actually load — is byte-checked against
@@ -87,6 +94,7 @@ on either side, the check exits 2 rather than silently widening what it
 ignores.
 """
 import difflib
+import hashlib
 import os
 import re
 import shutil
@@ -123,6 +131,16 @@ SCORE_HEADER = "| query | expected records | retrieved | recall | precision |"
 GENERATE_SEED = os.path.join(REPO_ROOT, "db", "seed", "generate_seed.py")
 SEED_SQL = os.path.join(REPO_ROOT, "db", "seed", "seed.sql")
 
+# The three files run.py reads (codex r6). Raw bytes, not parsed content: the
+# fingerprint's question is "are these the inputs the committed §4 scores were
+# computed from", and any byte difference means they are not. Hashing rendered
+# encounter_document strings instead was considered and rejected — it leaves
+# columns the renderer skips (a non-clustered patient's ssn/dob/address)
+# invisible, which is this blind-spot class all over again.
+CORPUS_INPUTS = ("patients.csv", "encounters.csv", "goldset.json")
+CORPUS_SHA = os.path.join(HERE, "corpus.sha256")
+CORPUS_SHA_SIDE = "eval/rag/corpus.sha256"
+
 COMMITTED_SIDE = "eval/rag/REPORT.md"
 REGENERATED_SIDE = "the regenerated report"
 
@@ -148,6 +166,15 @@ REGENERATE = (
     "then commit eval/rag/REPORT.md. Use --retriever embed, NOT --retriever stub: "
     "the committed report\nis the embed-path one, and a stub-generated report is "
     "rejected by this check.\n"
+)
+
+FINGERPRINT_REGENERATE = (
+    "rerun: pip install -r eval/rag/requirements.txt && "
+    "python3 eval/rag/run.py --retriever embed\n"
+    "then:  python3 eval/rag/check_drift.py --write-fingerprint\n"
+    "and commit eval/rag/REPORT.md and eval/rag/corpus.sha256 together. "
+    "Refreshing the\nfingerprint without regenerating the report pins the "
+    "committed scores to a corpus\nthat no longer exists.\n"
 )
 
 
@@ -241,6 +268,55 @@ def _check_seed_sql():
         shown += 1
     sys.stderr.write("\n" + SEED_REGENERATE)
     sys.exit(1)
+
+
+def _corpus_fingerprint():
+    """sha256 over the raw bytes of every file run.py reads, each prefixed by
+    its name so content cannot migrate between files without a change."""
+    h = hashlib.sha256()
+    for name in CORPUS_INPUTS:
+        with open(os.path.join(REPO_ROOT, "db", "seed", name), "rb") as f:
+            h.update(b"\x00" + name.encode("utf-8") + b"\x00")
+            h.update(f.read())
+    return h.hexdigest()
+
+
+def _check_corpus_fingerprint():
+    """The report diff below only sees what run.py renders; goldset fields the
+    report never shows (expected_patient_id, expected_answer) and CSV columns
+    that feed only masked score cells would otherwise drift green (codex r6).
+    The fingerprint makes any input-file change visible; regenerating the
+    embed-path report is then the operator's obligation, stated in the
+    remediation — no check can re-score §4 without the model."""
+    if not os.path.exists(CORPUS_SHA):
+        _die(
+            "eval drift: %s is missing\n%s" % (CORPUS_SHA_SIDE, FINGERPRINT_REGENERATE)
+        )
+    with open(CORPUS_SHA, encoding="utf-8") as f:
+        committed = f.read().strip()
+    actual = _corpus_fingerprint()
+    if committed == actual:
+        return
+    sys.stderr.write(
+        "eval drift: the eval corpus changed — db/seed/patients.csv, "
+        "encounters.csv or\ngoldset.json no longer match %s\n"
+        "  committed: %s\n  actual:    %s\n"
+        "The committed REPORT.md's §4 scores describe inputs that no longer "
+        "exist.\n%s" % (CORPUS_SHA_SIDE, committed, actual, FINGERPRINT_REGENERATE)
+    )
+    sys.exit(1)
+
+
+def _write_fingerprint():
+    value = _corpus_fingerprint()
+    with open(CORPUS_SHA, "w") as f:
+        f.write(value + "\n")
+    print("wrote %s (%s)" % (CORPUS_SHA_SIDE, value))
+    print(
+        "commit it only alongside a REPORT.md regenerated on the embed path — "
+        "see the header\nof eval/rag/check_drift.py"
+    )
+    return 0
 
 
 def _check_committed_label(label):
@@ -346,6 +422,7 @@ def main():
         committed = f.read()
 
     _check_seed_sql()
+    _check_corpus_fingerprint()
 
     regenerated = _regenerate()
 
@@ -354,15 +431,15 @@ def main():
 
     if left == right:
         print(
-            "eval: db/seed/seed.sql matches its generator, and REPORT.md "
-            "matches what db/seed/*\n      renders into it — the SSN-cluster "
-            "rows of patients.csv, their allergy/medication\n      columns in "
-            "encounters.csv, and goldset.json's queries and cited records"
+            "eval: db/seed/seed.sql matches its generator, the corpus "
+            "fingerprint pins every byte\n      of patients.csv / "
+            "encounters.csv / goldset.json, and REPORT.md matches what\n"
+            "      db/seed/* renders into it"
         )
         print(
-            "      (unchecked: non-clustered rows, the summary/provider/"
-            "type/date columns, and §4's\n      retrieved/recall/precision "
-            "cells — scope owned by this script's header)"
+            "      (unchecked: §4's retrieved/recall/precision cells — the "
+            "embed-path scores\n      themselves; scope owned by this script's "
+            "header)"
         )
         return 0
 
@@ -382,6 +459,13 @@ if __name__ == "__main__":
     # must not exit 1 and send an operator regenerating a report to fix an
     # environment problem.
     try:
+        if sys.argv[1:] == ["--write-fingerprint"]:
+            sys.exit(_write_fingerprint())
+        if sys.argv[1:]:
+            sys.stderr.write(
+                "usage: python3 eval/rag/check_drift.py [--write-fingerprint]\n"
+            )
+            sys.exit(2)
         sys.exit(main())
     except SystemExit:
         raise
