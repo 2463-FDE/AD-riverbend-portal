@@ -1,4 +1,4 @@
-.PHONY: up down logs ps build seed seed-gen psql test test-docker test-frontend frontend-dev portal-dev config status
+.PHONY: up down logs ps build seed seed-gen psql test test-docker test-frontend frontend-dev portal-dev config status eval
 
 # Scoped gateway->ai-assistant secret file. Compose refuses to parse when a
 # listed env_file is missing, so every compose target depends on this. The
@@ -38,8 +38,31 @@ seed: .env.ai-proxy .env.redis ## load schema + demo data (re-runs against a run
 	docker compose exec -T postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend} < db/schema.sql
 	docker compose exec -T postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend} < db/seed/seed.sql
 
+# Written through a temp file, not redirected onto the target: since the
+# generator started reading the fixture CSVs it has failure paths (missing
+# file, changed row order), and a plain `> db/seed/seed.sql` truncates the
+# target BEFORE the generator runs — leaving an empty seed.sql, which
+# docker-compose.yml mounts into a fresh volume's initdb without complaint.
 seed-gen:      ## regenerate db/seed/seed.sql from the generator (deterministic)
-	python3 db/seed/generate_seed.py > db/seed/seed.sql
+	python3 db/seed/generate_seed.py > db/seed/seed.sql.tmp \
+	  && mv db/seed/seed.sql.tmp db/seed/seed.sql \
+	  || (rm -f db/seed/seed.sql.tmp; false)
+
+# eval/rag/REPORT.md is a committed deliverable derived from db/seed/patients.csv,
+# encounters.csv and goldset.json, and nothing noticed when the seed moved and the
+# report went stale (tests/test_rag_eval.py asserts substrings, not bytes). This
+# regenerates with the STUB retriever — torch-free and stdlib-only, so it runs under
+# the system Python (3.8) like seed-gen and status, needs no container, no database
+# and no network — and diffs against the committed file.
+#
+# §4's model-dependent cells are masked out of the diff: the committed report is
+# embed-path output and its scores are not reproducible without the model. What is
+# masked, what is deliberately NOT (the retriever label, each row's goldset-derived
+# cells), and the blind spots that remain are owned by the header of
+# eval/rag/check_drift.py — do not restate them here (§10.1). The mask and its red
+# paths are pinned by tests/test_drift_check.py.
+eval:          ## check eval/rag/REPORT.md + db/seed/seed.sql are current against their sources
+	python3 eval/rag/check_drift.py
 
 psql: .env.ai-proxy .env.redis ## open a psql shell
 	docker compose exec postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend}

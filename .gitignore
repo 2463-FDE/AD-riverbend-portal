@@ -38,3 +38,8 @@ scripts/
 # `make status`. The inputs are tracked; the render is not, so it cannot drift from them.
 docs/status/dashboard.html
 docs/status/snapshot.json
+
+# `make seed-gen` writes here and renames onto db/seed/seed.sql on success, so a
+# failed generation cannot truncate the file a fresh Postgres volume loads. Only
+# ever present if the recipe was interrupted between the two steps.
+db/seed/seed.sql.tmp

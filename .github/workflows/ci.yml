@@ -92,6 +92,25 @@ jobs:
         # paths is thin — tracked in RIV-201.
         run: pytest -m "not integration" -q
 
+  # Drift guard for the committed eval/rag/REPORT.md (RIV-160 deliverable) and for
+  # db/seed/seed.sql (the file Postgres actually loads, byte-checked against its
+  # deterministic generator): a seed change that left either stale was previously
+  # invisible. No install step on purpose — the stub retriever path is standard
+  # library only (eval/rag/retriever.py defers numpy and sentence-transformers into
+  # EmbeddingRetriever._load), so this job must never pull eval/rag/requirements.txt
+  # and the torch download behind it. §4's retrieval scores — and the eval code
+  # that computes them — are excluded from the comparison; eval/rag/corpus.sha256
+  # pins every DATA input byte, and check_drift.py's header owns the tradeoff.
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check eval/rag/REPORT.md and db/seed/seed.sql against their sources
+        run: python eval/rag/check_drift.py
+
   # Secret scanning — recurrence guard for D9 (committed-secret exposure).
   # Scans the checked-out tree (--no-git) so any secret in a TRACKED file fails
   # the build: if a future change force-commits a gitignored secret file (e.g.
@@ -112,7 +131,7 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
-    needs: [frontend, portal, services, tests, secret-scan]
+    needs: [frontend, portal, services, tests, secret-scan, eval]
     steps:
       - uses: actions/checkout@v4
       # .env and .env.ai-proxy are gitignored (untracked secret files). Compose

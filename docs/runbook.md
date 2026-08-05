@@ -29,10 +29,11 @@ into an already-running DB:
 make seed
 ```
 
-To regenerate the seed file (deterministic):
+To regenerate the seed file (deterministic; writes a temp file and renames on
+success, so a failed generator run never truncates the live seed):
 
 ```bash
-python3 db/seed/generate_seed.py > db/seed/seed.sql
+make seed-gen
 ```
 
 ## Demo accounts
