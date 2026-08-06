@@ -456,3 +456,28 @@ fixed by Q_ARG accepting quoted runs); plus the git>=2.40 `--attr-source` enumer
 normalization) red 1/1/1/2. Class trend to watch: three matcher-shape misses across two rounds
 — if r4 finds a fourth, the matcher strategy (regex over shell text) is the defect, not the
 shapes, and the git-native gate (TODO-50 tail) becomes the fix rather than the follow-up.
+
+PR #36 r4 — 2 findings: 2 A (both present since the hooks' original push, neither a fix-round
+regression). **Class is state-timing, not matcher-shape: the r3 trend flag stands at 3, it did
+not tick.** Both findings are "the guard validates the wrong state": [high] phi-secret-guard
+read `git diff --cached` *before* the command ran, so every shape that stages while it commits
+(`commit -a/-am/--all`, a pathspec, `-i/-o/-p`, `git add … && git commit`) was scanned against
+an index about to change — PHI/secrets straight through; xfail-invariant ran `make test-docker`
+against the working tree rather than the ref being pushed, so a dirty tree gave the wrong
+verdict in both directions. Design-gated with the user (option A both, git-native `.githooks/`
+stays TODO-50's own PR). **The design constraint was attack surface, not correctness**: a
+blocklist of the known bypass shapes would have grown exactly the regex-over-shell-text surface
+the r3 flag watches, so both fixes are allowlist / fail-closed by construction — phi classifies
+the invocation's tail and denies on ANY token that is not a provably index-safe commit flag
+(plus a `git add|rm|mv|restore` check on the text *preceding* the invocation, for the compound
+form); xfail denies on a non-empty `git status --porcelain`. An unanticipated shape can now
+only produce a false *deny*, escapable with `ALLOW_ONE_SHOT_COMMIT=1` /
+`ALLOW_UNVERIFIED_PUSH=1` — it can no longer be a [high]. Accepted residuals, both in the hook
+headers: an escaped one-shot commit is still scanned against the pre-stage index, and pushing a
+ref that is not HEAD still validates HEAD's tree (CI stays authoritative, §10.1). Harness
+prerequisite refactor: test-xfail-invariant.sh pointed `CLAUDE_PROJECT_DIR` at the real
+checkout, which is dirty for most of a session — verdict runs now use a fresh clean scratch
+repo, or all 35 existing cases would have gone flaky. Harnesses 58+40 (was 44+35); layer A vs
+r3 tip `3a4b829` 7+3 red; mutations (allowlist fallback inverted / compound stage-detection
+deleted / cleanliness gate deleted) red 6/1/3. Container suite unchanged (821 passed, 5
+deselected, 1 xfailed).

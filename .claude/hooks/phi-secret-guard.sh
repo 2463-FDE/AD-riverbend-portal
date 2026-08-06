@@ -17,6 +17,11 @@
 # from the fake ones §5 requires — no allowlist fixes that. CI gitleaks stays
 # the tree-wide credential net.
 #
+# The scan reads the index as it stands BEFORE the command runs, so a commit
+# that stages while it commits would be validated against the wrong index
+# (PR #36 r4, [high]). An index-stability gate denies those shapes up front —
+# see the block above the scan for the allowlist rationale.
+#
 # On match: emits a PreToolUse "deny" decision. Never prints the matched
 # content itself (that would copy the secret into the session transcript);
 # points at `git diff --cached` instead.
@@ -140,6 +145,106 @@ would be validated against the wrong index. Run the commit from a session rooted
 in that tree, where its own guards fire. Same-repo subdirectory cd is fine. If the \
 command only MENTIONS a redirection form (heredoc or message text), re-run with \
 ALLOW_CROSS_TREE_GIT=1 after the user confirms."
+fi
+
+# ---------------------------------------------------------------------------
+# Index-stability gate (PR #36 r4, [high]). The scan below reads `git diff
+# --cached` BEFORE the command executes, so every invocation that stages as
+# part of committing is checked against an index that is about to change:
+# `git commit -a/-am/--all`, `git commit <pathspec>`, `-i/--include`,
+# `-o/--only`, `-p/--patch`, and `git add … && git commit`. All of those got
+# PHI/secrets past this guard.
+#
+# Fixed by ALLOWLIST, not by enumerating the bypass shapes. Everything after
+# the `commit` word must be a flag that provably cannot touch the index;
+# anything else denies. An option nobody anticipated therefore produces a false
+# DENY — annoying, and escapable with ALLOW_ONE_SHOT_COMMIT=1 — never a silent
+# bypass. That is the point: docs/review-loop-metrics.md tracks matcher-shape
+# misses as a recurring class, and a blocklist would put every future miss back
+# in the [high] column.
+#
+# Only the invocation's own tail is classified; text after a shell separator
+# (; && || | < > newline) runs AFTER the commit and cannot affect it. Staging
+# BEFORE the commit is caught separately, on the text preceding the invocation.
+#
+# Accepted residual: with ALLOW_ONE_SHOT_COMMIT=1 the scan still runs against
+# the pre-stage index, so an approved one-shot commit is only partly covered.
+# Knowingly accepted; CI gitleaks stays the tree-wide net and TODO-50's
+# git-native .githooks/ gate is the real endpoint.
+NL=$'\n'
+# Commit options that take an argument and never stage. (-C/-c/-t here are
+# commit's own --reuse-message/--reedit-message/--template, not git's global
+# flags — those sit before the subcommand and are handled by GIT_INV_RE.)
+RE_COMMIT_ARG='^(--message|--file|--reuse-message|--reedit-message|--author|--date|--template|--trailer|-m|-F|-C|-c|-t)'
+RE_COMMIT_ARG_EQ='^(--message|--file|--reuse-message|--reedit-message|--author|--date|--template|--trailer)='
+# Commit options that take no argument and never stage.
+RE_COMMIT_BARE='^(--amend|--no-edit|--edit|--no-verify|--signoff|--allow-empty|--allow-empty-message|--dry-run|--no-gpg-sign|--verbose|--quiet|-e|-v|-q|-n|-s|-S)([[:blank:]]|$)'
+# A git invocation whose SUBCOMMAND stages — same shape as GIT_INV_RE.
+GIT_STAGE_RE="(^|[^[:alnum:]_])git([[:space:]]+(-C|-c|--git-dir|--work-tree|--namespace|--config-env|--attr-source)[[:space:]]+$Q_ARG|[[:space:]]+-[^[:space:]]+)*[[:space:]]+(add|rm|mv|restore)([^[:alnum:]_-]|\$)"
+
+# Consumes one argument off $t (dynamic scope: $t belongs to commit_residue).
+# Quoted runs may span newlines — `-m "$(cat <<'EOF' … EOF )"` is this repo's
+# normal commit shape and must not read as a residue.
+consume_value() {
+  local v
+  t=${t#"${t%%[![:blank:]]*}"}
+  while [ -n "$t" ]; do
+    case "$t" in
+      '"'*) v=${t#\"}; case "$v" in *'"'*) t=${v#*\"} ;; *) t='unterminated-quote'; return ;; esac ;;
+      "'"*) v=${t#\'}; case "$v" in *"'"*) t=${v#*\'} ;; *) t='unterminated-quote'; return ;; esac ;;
+      [[:space:]]*) break ;;
+      *) v=${t%%[[:space:]\"\']*}; t=${t#"$v"} ;;
+    esac
+  done
+}
+
+commit_residue() { # <text after the commit word> -> prints leftover; empty = index-stable
+  local t="$1"
+  while :; do
+    t=${t#"${t%%[![:blank:]]*}"}
+    [ -z "$t" ] && break
+    case "$t" in
+      ';'*|'&'*|'|'*|'<'*|'>'*|')'*) t=""; break ;;
+    esac
+    [ "${t:0:1}" = "$NL" ] && { t=""; break; }
+    if [[ $t =~ $RE_COMMIT_ARG_EQ ]]; then
+      t=${t#*=}
+      consume_value
+    elif [[ $t =~ $RE_COMMIT_ARG ]]; then
+      t=${t#"${BASH_REMATCH[1]}"}
+      consume_value
+    elif [[ $t =~ $RE_COMMIT_BARE ]]; then
+      t=${t#"${BASH_REMATCH[1]}"}
+    else
+      break
+    fi
+  done
+  printf '%s' "$t"
+}
+
+# ALLOW_ONE_SHOT_COMMIT=1 skips ONLY this gate (cross-tree check above and the
+# pattern scan below still run) — same user-confirmed doctrine as
+# ALLOW_CROSS_TREE_GIT, never a routine prefix.
+if [ "${ALLOW_ONE_SHOT_COMMIT:-}" != "1" ]; then
+  seg=$(printf '%s' "$cmd" | grep -oE "$GIT_INV_RE" | head -1)
+  after=${cmd#*"$seg"}
+  before=${cmd%%"$seg"*}
+  residue=$(commit_residue "$after")
+  if [ -n "$residue" ]; then
+    deny "One-shot commit blocked fail-closed: unrecognised commit argument \
+'${residue%%[[:space:]]*}'. This guard scans 'git diff --cached' BEFORE the command \
+runs, so anything that stages while it commits (-a/-am/--all, a pathspec, -i/-o/-p) \
+is validated against the wrong index. Stage with a separate 'git add', let this guard \
+see the result, then commit with flags only. If the argument is index-safe and the \
+allowlist simply does not know it, re-run with ALLOW_ONE_SHOT_COMMIT=1 after the user \
+confirms."
+  fi
+  if printf '%s' "$before" | grep -qE "$GIT_STAGE_RE"; then
+    deny "Compound stage-then-commit blocked fail-closed: this command stages (git \
+add/rm/mv/restore) before it commits, but the scan below already read the index as it \
+was BEFORE the command ran. Run the staging command on its own so the scan sees the \
+result, then commit. ALLOW_ONE_SHOT_COMMIT=1 overrides after the user confirms."
+  fi
 fi
 
 # Added lines only, staged. Two corpora, one per scan tier (header).

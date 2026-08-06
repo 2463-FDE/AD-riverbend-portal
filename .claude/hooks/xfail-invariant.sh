@@ -11,7 +11,8 @@
 # Why it RUNS the suite rather than parsing the last run: measured 13.7s wall
 # warm (10.3s pytest + docker overhead). A cached transcript cannot tell you
 # whether it reflects the tree being pushed, and a stale green is exactly the
-# failure this guard exists to prevent.
+# failure this guard exists to prevent. For the same reason the push is denied
+# on a dirty worktree (PR #36 r4) — the suite reads the tree, not the ref.
 #
 # Escape hatch: ALLOW_UNVERIFIED_PUSH=1 (same doctrine as the pre-commit guard's
 # ALLOW_IGNORE_DELETE=1). Test seam: XFAIL_INVARIANT_OUTPUT=<file> reads pytest
@@ -147,6 +148,31 @@ would be green-lit by the wrong tree's tests. Push from a session rooted in that
 tree. If the command only MENTIONS a redirection form, re-run with \
 ALLOW_CROSS_TREE_GIT=1 after the user confirms; ALLOW_UNVERIFIED_PUSH=1 skips \
 the suite too."
+fi
+
+# ---------------------------------------------------------------------------
+# Worktree-cleanliness gate (PR #36 r4). The suite runs against the WORKING
+# TREE, not against the ref being pushed, so a dirty tree gives the wrong
+# verdict in BOTH directions: uncommitted local fixes can green-light a broken
+# commit, and unrelated local breakage can block a good one. Requiring a clean
+# tree is what makes "the suite passed" mean "the tree being pushed passed".
+#
+# Untracked non-ignored files count: pytest collects new test files, so they
+# move the counters this hook asserts on. Gitignored noise is already outside
+# --porcelain, so the OD-1 local-only files (settings.local.json, gates state)
+# do not trip it.
+#
+# Residual, documented: pushing a ref that is not HEAD still validates HEAD's
+# tree, and a clean tree at hook time can be dirtied before git runs. CI stays
+# the authoritative gate (CLAUDE.md §10.1 — hook-only checks are advisory).
+# Placed BEFORE the XFAIL_INVARIANT_OUTPUT seam so fixture-mode tests exercise it.
+dirty=$(git -C "$repo" status --porcelain 2>/dev/null) || dirty=""
+if [ -n "$dirty" ]; then
+  deny "Worktree is not clean ($(printf '%s\n' "$dirty" | grep -c . | tr -d ' ') changed or \
+untracked path(s)), so the suite below would validate a tree that differs from the commit \
+being pushed. Commit, stash or clean first, then push. Untracked test files count — pytest \
+collects them and they move the counters this hook asserts on. ALLOW_UNVERIFIED_PUSH=1 skips \
+the suite entirely if you know why."
 fi
 
 if [ -n "${XFAIL_INVARIANT_OUTPUT:-}" ]; then

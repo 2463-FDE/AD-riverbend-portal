@@ -179,6 +179,59 @@ case "$got" in
   *) printf '  FAIL  %-42s want deny got allow\n' "escape: pattern scan still denies"; fail=$((fail+1)) ;;
 esac
 
+# One-shot commit shapes stage AFTER this hook has read the index, so the
+# secret lives in a TRACKED, MODIFIED, UNSTAGED file: the staged diff is clean,
+# which is exactly why the r3 hook allowed these through. The verdict must now
+# come from the shape, before any scan.
+echo "One-shot commit shapes must deny fail-closed (PR #36 r4):"
+unstaged_secret_repo() { # -> repo whose working tree (not index) holds a key
+  local r; r=$(new_repo)
+  mkdir -p "$r/services"
+  printf 'x = 1\n' > "$r/services/app.py"
+  git -C "$r" add services/app.py >/dev/null 2>&1
+  git -C "$r" -c user.email=t@example.com -c user.name=t \
+    commit -qm init >/dev/null 2>&1
+  printf "key = '%s'\n" "$AWS_KEY" > "$r/services/app.py"
+  printf '%s' "$r"
+}
+
+r=$(unstaged_secret_repo); expect deny  "git commit -am x"            "$r" "git commit -am x"
+r=$(unstaged_secret_repo); expect deny  "git commit -a -m x"          "$r" "git commit -a -m x"
+r=$(unstaged_secret_repo); expect deny  "git commit --all -m x"       "$r" "git commit --all -m x"
+r=$(unstaged_secret_repo); expect deny  "git commit <pathspec>"       "$r" "git commit services/app.py -m x"
+r=$(unstaged_secret_repo); expect deny  "git commit -i <pathspec>"    "$r" "git commit -i services/app.py -m x"
+r=$(unstaged_secret_repo); expect deny  "git add . && git commit"     "$r" "git add . && git commit -m x"
+r=$(unstaged_secret_repo); expect deny  "unknown option (--squash=)"  "$r" "git commit --squash=HEAD -m x"
+
+echo "...but the normal two-step shape and index-safe flags still allow:"
+r=$(unstaged_secret_repo); expect allow "git commit -m x, clean index"    "$r" "git commit -m x"
+r=$(unstaged_secret_repo); expect allow "git commit --amend --no-edit"    "$r" "git commit --amend --no-edit"
+r=$(unstaged_secret_repo); expect allow "git commit -m x && git log"      "$r" "git commit -m x && git log --oneline"
+r=$(new_repo); stage "$r" "docs/note.md" "nothing sensitive"
+expect allow "git commit --author + -q"       "$r" "git commit --author 'A B <a@b.c>' -q -m x"
+jexpect allow "multi-line quoted -m body"     "$r" 'git commit -m "$(cat <<EOF
+feat: something
+
+body line
+EOF
+)"'
+
+echo "ALLOW_ONE_SHOT_COMMIT=1 skips the shape gate but NOT the scan:"
+r=$(unstaged_secret_repo)
+got=$(printf '{"tool_input":{"command":"git commit -am x"}}' \
+  | ALLOW_ONE_SHOT_COMMIT=1 CLAUDE_PROJECT_DIR="$r" bash "$HOOK" 2>/dev/null)
+case "$got" in
+  *permissionDecision*deny*) printf '  FAIL  %-42s want allow got deny\n' "escape: one-shot allowed"; fail=$((fail+1)) ;;
+  *) printf '  ok    %-42s allow\n' "escape: one-shot allowed"; pass=$((pass+1)) ;;
+esac
+r=$(new_repo); stage "$r" "services/gw/settings.py" "$SECRET_ASSIGN"
+got=$(printf '{"tool_input":{"command":"git commit -am x"}}' \
+  | ALLOW_ONE_SHOT_COMMIT=1 CLAUDE_PROJECT_DIR="$r" bash "$HOOK" 2>/dev/null)
+case "$got" in
+  *permissionDecision*deny*) printf '  ok    %-42s deny\n' "escape: pattern scan still denies"; pass=$((pass+1)) ;;
+  *) printf '  FAIL  %-42s want deny got allow\n' "escape: pattern scan still denies"; fail=$((fail+1)) ;;
+esac
+
 echo "Degenerate payloads must allow (never block on bad input):"
 for payload in '' 'not json' '{}' '{"tool_input":null}' '{"tool_input":{"command":123}}'; do
   out=$(printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$SCRATCH" bash "$HOOK" 2>/dev/null)

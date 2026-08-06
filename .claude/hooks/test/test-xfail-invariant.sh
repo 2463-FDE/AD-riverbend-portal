@@ -8,9 +8,30 @@
 # fixtures rather than by breaking a test. Usage: bash test-xfail-invariant.sh
 set -uo pipefail
 
-PROJECT_DIR="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
-HOOK="$PROJECT_DIR/.claude/hooks/xfail-invariant.sh"
+REPO_DIR="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+HOOK="$REPO_DIR/.claude/hooks/xfail-invariant.sh"
 FIX="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures"
+
+SCRATCH=$(mktemp -d)
+trap 'rm -rf "$SCRATCH"' EXIT
+
+# Verdict runs point CLAUDE_PROJECT_DIR at a fresh CLEAN scratch repo, never at
+# the real checkout (PR #36 r4): the hook now denies on a dirty worktree, and
+# the real checkout is dirty for most of any development session — every case
+# below would be flaky. The scratch repo carries a committed tests/ so the
+# same-repo cd/cwd cases keep their original meaning.
+new_clean_repo() { # -> prints path to a fresh, committed, clean repo
+  local r="$SCRATCH/repo-$RANDOM$RANDOM"
+  mkdir -p "$r/tests"
+  git -C "$r" init -q >/dev/null 2>&1
+  printf 'placeholder\n' > "$r/tests/test_placeholder.py"
+  git -C "$r" add -A >/dev/null 2>&1
+  git -C "$r" -c user.email=t@example.com -c user.name=t \
+    commit -qm init >/dev/null 2>&1
+  printf '%s' "$r"
+}
+
+PROJECT_DIR=$(new_clean_repo)
 export CLAUDE_PROJECT_DIR="$PROJECT_DIR"
 
 pass=0; fail=0
@@ -121,6 +142,38 @@ got=$(verdict "$(printf '{"tool_input":{"command":"git -C /tmp push"}}' \
       | ALLOW_CROSS_TREE_GIT=1 XFAIL_INVARIANT_OUTPUT="$FIX/pytest-failed.txt" bash "$HOOK" 2>/dev/null)")
 [ "$got" = deny ] && ok "escape: red suite still denies" "deny" \
                   || bad "escape: red suite still denies" deny "$got"
+
+# Discriminating pair: the SAME green fixture allows on a clean tree and denies
+# on a dirty one, so the deny can only come from the cleanliness gate. The
+# clean+failed case proves the seam is still reached after the new gate.
+echo "A dirty worktree must deny the push (PR #36 r4):"
+decision_in() { # <project-dir> <command> <fixture> -> allow|deny
+  local out
+  out=$(printf '{"tool_input":{"command":"%s"}}' "$2" \
+        | CLAUDE_PROJECT_DIR="$1" XFAIL_INVARIANT_OUTPUT="$3" bash "$HOOK" 2>/dev/null)
+  verdict "$out"
+}
+xexpect() { # <want> <label> <project-dir> <command> <fixture>
+  local got; got=$(decision_in "$3" "$4" "$5")
+  [ "$got" = "$1" ] && ok "$2" "$got" || bad "$2" "$1" "$got"
+}
+
+r=$(new_clean_repo); printf 'changed\n' > "$r/tests/test_placeholder.py"
+xexpect deny  "modified tracked file, green suite"  "$r" "git push origin HEAD" "$FIX/pytest-ok.txt"
+reason=$(printf '{"tool_input":{"command":"git push"}}' \
+         | CLAUDE_PROJECT_DIR="$r" XFAIL_INVARIANT_OUTPUT="$FIX/pytest-ok.txt" bash "$HOOK" 2>/dev/null \
+         | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')
+case "$reason" in
+  *"Worktree is not clean"*) ok "deny cites cleanliness, not the suite" "found" ;;
+  *) bad "deny cites cleanliness, not the suite" "the cleanliness sentence" "${reason:-<empty>}" ;;
+esac
+
+r=$(new_clean_repo); printf 'x\n' > "$r/tests/test_new.py"
+xexpect deny  "untracked file, green suite"         "$r" "git push origin HEAD" "$FIX/pytest-ok.txt"
+r=$(new_clean_repo)
+xexpect allow "clean tree, green suite"             "$r" "git push origin HEAD" "$FIX/pytest-ok.txt"
+r=$(new_clean_repo)
+xexpect deny  "clean tree, red suite (seam alive)"  "$r" "git push origin HEAD" "$FIX/pytest-failed.txt"
 
 echo "The bypass must allow an otherwise-denied push:"
 got=$(verdict "$(printf '{"tool_input":{"command":"git push"}}' \
