@@ -25,7 +25,12 @@ Sourced from `ARCHITECTURE.md` §7 and the handoff docs.
   misread once: it is `require_session` and what the **gateway** accepts. A cookie between a
   browser and one of our own BFFs, where the BFF still sends `Authorization: Bearer` onward, does
   not cross it (ADR 0014); making `require_session` accept a cookie does, and stays
-  approval-gated.
+  approval-gated. ⚠️ **`auth.yaml` is declarative only — nothing parses it** (measured
+  2026-08-06). The never-expire behaviour is hardcoded in `security.py:275-279`, and
+  `password_min_length: 6` is enforced **nowhere** — no length check exists on any login or
+  user-creation path, so the file asserts a control the system does not have. Read it as a record
+  of intent, never as evidence of behaviour, and do not answer a session or password finding by
+  editing it: the change would be inert.
 - ⚠️ **IDOR on chart reads** — `GET /patients/{id}/records` requires a session but never binds it
   to `{patient_id}`; ids are sequential and walkable. Intentional gap, documented in code (D11).
   **Cross-patient reads are not only reachable by walking ids:** `GET /patients`,
@@ -33,7 +38,12 @@ Sourced from `ARCHITECTURE.md` §7 and the handoff docs.
   patients. Since ADR 0017 each requires its role capability (`records.search`,
   `disclosures.read`), but **a capability is not a patient bind** — these reads are cross-patient
   by construction — so the D11 fix must be sized against this whole set, not against
-  `/patients/{id}/records` alone.
+  `/patients/{id}/records` alone. **And the set includes a path that needs no ids at all**
+  (measured 2026-08-06): `q` reaches the search pattern un-escaped
+  (`services/records-service/app.py:48,159`), so `GET /records/search?q=%25` is a bare `%`
+  wildcard that matches every row and returns full `Record.body` for all of them, unbounded by any
+  `LIMIT`. Sizing the fix against "sequential ids are walkable" alone under-scopes it by the whole
+  corpus. Detail and candidate fixes in `docs/debt-log.md` D11.
 - ⚠️ **Domain services are network-internal** (D15, ADR 0016) — no domain service has auth of its
   own; the gateway is the only session check, so 8071–8076 are `expose`-only and host publishing
   is a closed allowlist in `tests/test_compose_topology.py`. Do not add `ports:` to a service (or

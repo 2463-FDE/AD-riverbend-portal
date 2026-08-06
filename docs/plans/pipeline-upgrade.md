@@ -1,5 +1,26 @@
 # Pipeline upgrade plan
 
+**Status:** Superseded 2026-08-06 — this plan is not being executed, and the toolchain it stages on
+is not on `main`. Every stage in §0 is a call into `/feature-start`, `spec-lens`, `pr-open`,
+`verify-stack`, `address-review` or `/dashboard`. Those exist — 42 files on branch
+`chore/noref-track-claude-tooling`, raised as PR #36 and again as PR #37, both closed unmerged
+2026-08-06 — but they never reached `main`, and the 2026-08-06 decision is that **the prior
+engagement's tooling is not adopted: process and tooling are rebuilt from scratch.** That branch is
+a historical record, not a source to copy from. `PIPE-1`–`PIPE-6` and `PG-0`–`PG-3` are therefore dead vocabulary, as
+are the stage names in §0's diagram. Do not resurrect a work package from here; do not
+find-and-replace its tool names with new ones. Read this as the plan as approved, not as current
+plan. Cleanup of the ~17 docs still citing that toolchain is `docs/todo.md` TODO-53; the standing
+rule is `CLAUDE.md` §11.
+
+**What outlives it, and is worth reading §0–§2 for:** the target *property* — every stage output is
+a file with stable IDs, artifacts rather than tooling, which is what makes parallel streams
+possible — is independent of any particular command, and is the thing a from-scratch process should
+still aim at. So is the measured current-state evidence below (1/11 spec conformance; the
+requirement-ID scheme having no enforcer; registry-ID collision under parallelism, observed twice).
+One outcome did land by another route: PIPE-1's substance — `CLAUDE.md` tracked in-repo, `.claude/`
+tracked with machine-local exclusions — is now in effect, decided 2026-08-06 rather than through
+this plan's gates. Nothing below has been edited.
+
 > Plan for taking the repo from its current state (chat-only briefs, 1/11 spec conformance,
 > unfireable design gate) to a staged, gated pipeline where **every stage output is a file with
 > stable IDs**. That property — artifacts, not tooling — is what makes N parallel streams
