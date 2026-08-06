@@ -20,6 +20,12 @@ trap 'rm -rf "$SCRATCH"' EXIT
 # the real checkout is dirty for most of any development session — every case
 # below would be flaky. The scratch repo carries a committed tests/ so the
 # same-repo cd/cwd cases keep their original meaning.
+# commit.gpgsign / core.hooksPath are pinned, not inherited: a global setting
+# would fail the fixture commit, leave the repo staged-but-uncommitted, and the
+# cleanliness gate under test would then deny EVERY case in this file for a
+# reason that has nothing to do with the hook (r4 diff-reviewer). TODO-50's
+# endpoint sets core.hooksPath, so this is a live exposure, not a hypothetical.
+mkdir -p "$SCRATCH/nohooks"
 new_clean_repo() { # -> prints path to a fresh, committed, clean repo
   local r="$SCRATCH/repo-$RANDOM$RANDOM"
   mkdir -p "$r/tests"
@@ -27,7 +33,9 @@ new_clean_repo() { # -> prints path to a fresh, committed, clean repo
   printf 'placeholder\n' > "$r/tests/test_placeholder.py"
   git -C "$r" add -A >/dev/null 2>&1
   git -C "$r" -c user.email=t@example.com -c user.name=t \
-    commit -qm init >/dev/null 2>&1
+    -c commit.gpgsign=false -c core.hooksPath="$SCRATCH/nohooks" \
+    commit -qm init >/dev/null 2>&1 \
+    || { printf '  FATAL fixture commit failed in %s\n' "$r"; exit 2; }
   printf '%s' "$r"
 }
 

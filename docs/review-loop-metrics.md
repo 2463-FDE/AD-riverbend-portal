@@ -477,7 +477,48 @@ headers: an escaped one-shot commit is still scanned against the pre-stage index
 ref that is not HEAD still validates HEAD's tree (CI stays authoritative, §10.1). Harness
 prerequisite refactor: test-xfail-invariant.sh pointed `CLAUDE_PROJECT_DIR` at the real
 checkout, which is dirty for most of a session — verdict runs now use a fresh clean scratch
-repo, or all 35 existing cases would have gone flaky. Harnesses 58+40 (was 44+35); layer A vs
-r3 tip `3a4b829` 7+3 red; mutations (allowlist fallback inverted / compound stage-detection
-deleted / cleanliness gate deleted) red 6/1/3. Container suite unchanged (821 passed, 5
-deselected, 1 xfailed).
+repo, or all 35 existing cases would have gone flaky.
+
+**The pre-push delta-pack diff-reviewer pass (96k tokens/15 calls) then found 6 defects in that
+first cut, 2 of them [high] bypasses, all 6 reproduced first-hand before acting.** [high] the
+gate classified only the FIRST git invocation (`grep -oE … | head -1`), so `git commit -m x &&
+git commit -am y` and `git commit -m x && git add . && git commit -m y` walked straight through
+— the second commit was never looked at, and staging *between* two commits sat in neither the
+prefix nor the tail. [high] the "staging before the commit" half was a BLOCKLIST
+(`add|rm|mv|restore`) while the entry above claimed both halves were allowlists; `git checkout
+<ref> -- <path>`, `git reset <ref> -- <path>`, `git stash pop --index`, `git apply --cached`,
+`git update-index --add` and `git cherry-pick -n` all staged and committed unscanned, and the
+first of those is the idiom verify-stack §4 itself prescribes. Fixed by rewriting the gate as a
+left-to-right walk that classifies *every* invocation and checks non-commit subcommands against
+a read-only allowlist, with staging only counting when a commit follows it. [medium]×2 and
+[low]×2: `;` was swallowed into the preceding value so `git commit -m x; git log` false-denied
+while the `&&` spelling allowed; the POSIX apostrophe idiom `'\''` and `\"` inside a message
+unbalanced the quote walker; the unterminated-quote sentinel was reported to the operator as if
+it were an argument they typed (now its own denial reason); and the scratch-repo builders did
+not pin `commit.gpgsign`/`core.hooksPath`, which would have flipped every harness case on a
+machine that sets them — live, since TODO-50's endpoint *is* `core.hooksPath`. Also taken from
+the pass: `-n`/`--no-verify` came OFF the allowlist — index-safe, but it is exactly what would
+disable TODO-50's git-native gate, and the two guards must not both be satisfiable by one flag.
+One finding **accepted rather than fixed** and now pinned by harness cases: the match is
+lexical, so a command that merely quotes a commit shape (`echo 'git commit -am wip'`,
+`grep -rn 'git commit -a' docs/`) denies — it fired on the reviewer's own probe. Narrowing to
+command position would let `bash -c "git commit -am x"` through, and a bypass here is [high]
+while a false deny is an inconvenience.
+
+**The r3 trend flag ticks.** The r3 entry set the criterion: "if r4 finds a fourth
+matcher-shape miss, the matcher strategy (regex over shell text) is the defect, not the shapes."
+The r4 *findings* were state-timing, and this entry originally recorded that the flag stood at
+3. That reading does not survive the pre-push pass: the fix for a state-timing fault is a new
+shell-text parser, and three of the six defects found in it (first-match-only scoping, the `;`
+stop set, backslash escapes) are that same class, in code written this round. Counting them, the
+strategy has now produced 6+ defects across three rounds. **Standing conclusion: TODO-50's
+git-native `.githooks/` + `core.hooksPath` gate is promoted from follow-up to the fix, and the
+guards on this PR are explicitly interim** — they close the reproduced bypasses and fail closed,
+but no further shell-text shape should be chased inside them.
+
+Harnesses 80+40 (was 44+35); layer A vs r3 tip `3a4b829` 23+3 red, and vs the round's own first
+cut `57181b0` 15+0 red (the reviewer-response delta on its own); mutations — allowlist fallback
+inverted 13, walk scope reduced to the first invocation 4, staging allowlist reverted to the
+four-verb blocklist 6, separators dropped from the token stop set 1, `--no-verify` re-allowed 2,
+backslash-escape handling removed 2, cleanliness gate deleted 3. Container suite unchanged (821
+passed, 5 deselected, 1 xfailed).

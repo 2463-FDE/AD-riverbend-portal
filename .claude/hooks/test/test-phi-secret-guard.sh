@@ -29,6 +29,18 @@ new_repo() {
   printf '%s' "$r"
 }
 
+# Machine-level git config must not reach the scratch repos: a global
+# commit.gpgsign or core.hooksPath would fail the fixture commit below, leaving
+# a staged-but-uncommitted tree that reads as a second (wrong) reason for every
+# verdict (r4 diff-reviewer). Failures are asserted, not discarded.
+mkdir -p "$SCRATCH/nohooks"
+scratch_commit() { # <repo> <message>
+  git -C "$1" -c user.email=t@example.com -c user.name=t \
+    -c commit.gpgsign=false -c core.hooksPath="$SCRATCH/nohooks" \
+    commit -qm "$2" >/dev/null 2>&1 \
+    || { printf '  FATAL fixture commit failed in %s\n' "$1"; exit 2; }
+}
+
 stage() { # <repo> <relpath> <content>
   local repo="$1" rel="$2"
   mkdir -p "$repo/$(dirname "$rel")"
@@ -189,8 +201,7 @@ unstaged_secret_repo() { # -> repo whose working tree (not index) holds a key
   mkdir -p "$r/services"
   printf 'x = 1\n' > "$r/services/app.py"
   git -C "$r" add services/app.py >/dev/null 2>&1
-  git -C "$r" -c user.email=t@example.com -c user.name=t \
-    commit -qm init >/dev/null 2>&1
+  scratch_commit "$r" init
   printf "key = '%s'\n" "$AWS_KEY" > "$r/services/app.py"
   printf '%s' "$r"
 }
@@ -215,6 +226,59 @@ feat: something
 body line
 EOF
 )"'
+
+# The gate walks EVERY git invocation, not just the first: a first-match-only
+# gate let the second commit in a compound stage unchecked, and staging BETWEEN
+# two commits landed in neither the prefix nor the tail (r4 diff-reviewer).
+echo "Every invocation in a compound is classified, not just the first:"
+r=$(unstaged_secret_repo); expect deny  "commit -m x && commit -am y"  "$r" "git commit -m x && git commit -am y"
+r=$(unstaged_secret_repo); expect deny  "commit -m x || commit -am y"  "$r" "git commit -m x || git commit -am wip"
+r=$(unstaged_secret_repo); expect deny  "amend && commit -am y"        "$r" "git commit --amend --no-edit && git commit -am wip"
+r=$(unstaged_secret_repo); expect deny  "commit && add . && commit"    "$r" "git commit -m x && git add . && git commit -m y"
+
+# Staging verbs are an ALLOWLIST too: a blocklist of add/rm/mv/restore missed
+# six other index-writing subcommands, and `git checkout <ref> -- <path>` is the
+# idiom verify-stack §4 itself prescribes (r4 diff-reviewer).
+echo "Any non-read-only git subcommand before a commit denies:"
+r=$(unstaged_secret_repo); expect deny  "checkout <ref> -- <path> && commit" "$r" "git checkout origin/main -- services/x.py && git commit -m x"
+r=$(unstaged_secret_repo); expect deny  "reset <ref> -- <path> && commit"    "$r" "git reset origin/main -- services/x.py && git commit -m x"
+r=$(unstaged_secret_repo); expect deny  "stash pop --index && commit"        "$r" "git stash pop --index && git commit -m x"
+r=$(unstaged_secret_repo); expect deny  "apply --cached && commit"           "$r" "git apply --cached /tmp/p.patch && git commit -m x"
+r=$(unstaged_secret_repo); expect deny  "update-index --add && commit"       "$r" "git update-index --add services/x.py && git commit -m x"
+r=$(unstaged_secret_repo); expect deny  "cherry-pick -n && commit"           "$r" "git cherry-pick -n abc123 && git commit -m x"
+
+echo "...but read-only subcommands before, and staging AFTER, still allow:"
+r=$(new_repo); stage "$r" "docs/note.md" "nothing sensitive"
+expect allow "git status && git commit"        "$r" "git status --porcelain && git commit -m x"
+expect allow "git log && git commit"           "$r" "git log --oneline -1 && git commit -m x"
+expect allow "git commit && git add (after)"   "$r" "git commit -m x && git add docs/other.md"
+
+echo "-n/--no-verify is NOT allowlisted (it would disable the git-native gate):"
+r=$(unstaged_secret_repo); expect deny  "git commit -n -m x"        "$r" "git commit -n -m x"
+r=$(unstaged_secret_repo); expect deny  "git commit --no-verify"    "$r" "git commit --no-verify -m x"
+
+# Accepted residual, pinned so its size stays on record rather than being
+# rediscovered in use: the match is lexical, so a command that merely QUOTES a
+# commit shape denies. Narrowing to command position would let
+# `bash -c "git commit -am x"` through, which is a bypass.
+echo "Residual on record: non-commit commands that quote a commit shape deny:"
+r=$(new_repo); stage "$r" "docs/note.md" "nothing sensitive"
+jexpect deny "echo mentioning a one-shot commit"  "$r" "echo 'run git commit -am wip to save'"
+jexpect deny "grep for a one-shot commit shape"   "$r" "grep -rn 'git commit -a' docs/"
+
+echo "Separators and quoting parse consistently:"
+r=$(new_repo); stage "$r" "docs/note.md" "nothing sensitive"
+expect  allow "semicolon chain (matches the && form)" "$r" "git commit -m x; git log --oneline"
+jexpect allow "POSIX apostrophe escape in message"    "$r" "git commit -m 'don'\''t ship'"
+jexpect allow "escaped double quote in message"       "$r" 'git commit -m "fix: the \"thing\""'
+jexpect deny  "unbalanced quoting is unparseable"     "$r" 'git commit -m "no closing quote'
+reason=$(jq -n --arg c 'git commit -m "no closing quote' '{tool_input:{command:$c}}' \
+  | CLAUDE_PROJECT_DIR="$r" bash "$HOOK" 2>/dev/null \
+  | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')
+case "$reason" in
+  *"could not parse the command's quoting"*) printf '  ok    %-42s found\n' "unparseable gets its own reason"; pass=$((pass+1)) ;;
+  *) printf '  FAIL  %-42s want the quoting reason got %s\n' "unparseable gets its own reason" "${reason:-<empty>}"; fail=$((fail+1)) ;;
+esac
 
 echo "ALLOW_ONE_SHOT_COMMIT=1 skips the shape gate but NOT the scan:"
 r=$(unstaged_secret_repo)

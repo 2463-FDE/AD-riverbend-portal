@@ -163,43 +163,91 @@ fi
 # misses as a recurring class, and a blocklist would put every future miss back
 # in the [high] column.
 #
-# Only the invocation's own tail is classified; text after a shell separator
-# (; && || | < > newline) runs AFTER the commit and cannot affect it. Staging
-# BEFORE the commit is caught separately, on the text preceding the invocation.
+# The command is walked left to right and EVERY git invocation in it is
+# classified, not just the first (r4 diff-reviewer, reproduced: `git commit -m x
+# && git commit -am y` and `git commit -m x && git add . && git commit -m y`
+# both slipped a first-match-only gate — the second commit was never looked at,
+# and staging BETWEEN two commits sat in neither the prefix nor the tail).
+# Non-commit subcommands are checked against a read-only ALLOWLIST for the same
+# reason the tail is: a blocklist of staging verbs missed `git checkout <ref> --
+# <path>`, `git reset <ref> -- <path>`, `git stash pop --index`, `git apply
+# --cached`, `git update-index --add` and `git cherry-pick -n`, all reproduced
+# bypasses, and the first of those is the idiom verify-stack §4 itself
+# prescribes. A staging verb only matters when a commit FOLLOWS it, so
+# `git commit -m x && git add .` is still allowed.
 #
-# Accepted residual: with ALLOW_ONE_SHOT_COMMIT=1 the scan still runs against
-# the pre-stage index, so an approved one-shot commit is only partly covered.
-# Knowingly accepted; CI gitleaks stays the tree-wide net and TODO-50's
-# git-native .githooks/ gate is the real endpoint.
+# Accepted residuals, both fail-closed and both escapable:
+#   - The match is lexical, with no notion of shell quoting (the r2 residual,
+#     widened here): a command that merely MENTIONS a commit shape — `echo 'git
+#     commit -am wip'`, `grep -rn 'git commit -a' docs/` — is denied. Kept
+#     deliberately. Narrowing it to command position would let `bash -c "git
+#     commit -am x"` through, which is a bypass, and this whole gate exists
+#     because bypasses here are [high] while false denies are an inconvenience.
+#     Pinned by harness cases so the size of the surface stays on record.
+#   - With ALLOW_ONE_SHOT_COMMIT=1 the scan still runs against the pre-stage
+#     index, so an approved one-shot commit is only partly covered.
+# CI gitleaks stays the tree-wide net; TODO-50's git-native .githooks/ gate is
+# the endpoint that closes both.
 NL=$'\n'
 # Commit options that take an argument and never stage. (-C/-c/-t here are
 # commit's own --reuse-message/--reedit-message/--template, not git's global
 # flags — those sit before the subcommand and are handled by GIT_INV_RE.)
 RE_COMMIT_ARG='^(--message|--file|--reuse-message|--reedit-message|--author|--date|--template|--trailer|-m|-F|-C|-c|-t)'
 RE_COMMIT_ARG_EQ='^(--message|--file|--reuse-message|--reedit-message|--author|--date|--template|--trailer)='
-# Commit options that take no argument and never stage.
-RE_COMMIT_BARE='^(--amend|--no-edit|--edit|--no-verify|--signoff|--allow-empty|--allow-empty-message|--dry-run|--no-gpg-sign|--verbose|--quiet|-e|-v|-q|-n|-s|-S)([[:blank:]]|$)'
-# A git invocation whose SUBCOMMAND stages — same shape as GIT_INV_RE.
-GIT_STAGE_RE="(^|[^[:alnum:]_])git([[:space:]]+(-C|-c|--git-dir|--work-tree|--namespace|--config-env|--attr-source)[[:space:]]+$Q_ARG|[[:space:]]+-[^[:space:]]+)*[[:space:]]+(add|rm|mv|restore)([^[:alnum:]_-]|\$)"
+# Commit options that take no argument and never stage. -n/--no-verify is
+# deliberately ABSENT: it is index-safe, but it is also what would disable
+# TODO-50's git-native .githooks/ gate, and the two guards must not both be
+# satisfiable by one flag (r4 diff-reviewer).
+RE_COMMIT_BARE='^(--amend|--no-edit|--edit|--signoff|--allow-empty|--allow-empty-message|--dry-run|--no-gpg-sign|--verbose|--quiet|-e|-v|-q|-s|-S)([[:blank:]]|$)'
+# Any git invocation, whatever its subcommand — same prefix machinery as
+# GIT_INV_RE, which stays the trigger matcher.
+GIT_ANY_RE="(^|[^[:alnum:]_])git([[:space:]]+(-C|-c|--git-dir|--work-tree|--namespace|--config-env|--attr-source)[[:space:]]+$Q_ARG|[[:space:]]+-[^[:space:]]+)*[[:space:]]+[a-zA-Z][a-zA-Z-]*([^[:alnum:]_-]|\$)"
+# Subcommands that provably cannot write the index. Anything absent counts as
+# staging. `commit` is here because each commit invocation is classified on its
+# own tail below, not because it is inert.
+RE_GIT_READONLY='^(commit|log|status|diff|diff-tree|diff-index|show|show-ref|shortlog|whatchanged|blame|grep|rev-parse|rev-list|name-rev|merge-base|describe|ls-files|ls-tree|ls-remote|cat-file|for-each-ref|symbolic-ref|reflog|config|var|version|help|count-objects|check-ignore|check-attr|verify-commit|verify-tag|branch|tag|notes|remote|fetch|push|bisect)$'
+# Unquoted characters that end a bare token: whitespace, quote openers, a
+# backslash escape, and every shell separator. Omitting the separators let a
+# `;` glue itself onto the preceding value, so `git commit -m x; git log`
+# false-denied while the `&&` spelling allowed (r4 diff-reviewer).
+TOK_STOP='[[:space:]"'\''\;\&\|\<\>\)\\]'
+# Inside a double-quoted run only the closing quote and a backslash matter.
+DQ_STOP='[\\"]'
 
 # Consumes one argument off $t (dynamic scope: $t belongs to commit_residue).
 # Quoted runs may span newlines — `-m "$(cat <<'EOF' … EOF )"` is this repo's
-# normal commit shape and must not read as a residue.
+# normal commit shape and must not read as a residue. Backslash escapes are
+# consumed as a unit so the POSIX apostrophe idiom `'\''` does not unbalance
+# the walk (r4 diff-reviewer: `git commit -m 'don'\''t ship'` false-denied).
 consume_value() {
   local v
   t=${t#"${t%%[![:blank:]]*}"}
   while [ -n "$t" ]; do
     case "$t" in
-      '"'*) v=${t#\"}; case "$v" in *'"'*) t=${v#*\"} ;; *) t='unterminated-quote'; return ;; esac ;;
-      "'"*) v=${t#\'}; case "$v" in *"'"*) t=${v#*\'} ;; *) t='unterminated-quote'; return ;; esac ;;
+      \\*)  t=${t#?}; t=${t#?} ;;
+      '"'*) # Double quotes honour \" — a single-quoted run never does (POSIX),
+            # which is why only this branch walks escapes.
+            t=${t#\"}
+            while :; do
+              case "$t" in
+                '')   parse_error=1; return ;;
+                '"'*) t=${t#\"}; break ;;
+                \\*)  t=${t#?}; t=${t#?} ;;
+                *)    v=${t%%$DQ_STOP*}
+                      [ -z "$v" ] && { parse_error=1; t=""; return; }
+                      t=${t#"$v"} ;;
+              esac
+            done ;;
+      "'"*) v=${t#\'}; case "$v" in *"'"*) t=${v#*\'} ;; *) parse_error=1; t=""; return ;; esac ;;
       [[:space:]]*) break ;;
-      *) v=${t%%[[:space:]\"\']*}; t=${t#"$v"} ;;
+      *) v=${t%%$TOK_STOP*}; [ -z "$v" ] && break; t=${t#"$v"} ;;
     esac
   done
 }
 
-commit_residue() { # <text after the commit word> -> prints leftover; empty = index-stable
-  local t="$1"
+commit_residue() { # <text after the commit word> -> leftover; empty = index-stable,
+                   # 'unbalanced-quoting' = could not parse (its own denial)
+  local t="$1" parse_error=""
   while :; do
     t=${t#"${t%%[![:blank:]]*}"}
     [ -z "$t" ] && break
@@ -219,6 +267,7 @@ commit_residue() { # <text after the commit word> -> prints leftover; empty = in
       break
     fi
   done
+  [ -n "$parse_error" ] && { printf 'unbalanced-quoting'; return; }
   printf '%s' "$t"
 }
 
@@ -226,25 +275,45 @@ commit_residue() { # <text after the commit word> -> prints leftover; empty = in
 # pattern scan below still run) — same user-confirmed doctrine as
 # ALLOW_CROSS_TREE_GIT, never a routine prefix.
 if [ "${ALLOW_ONE_SHOT_COMMIT:-}" != "1" ]; then
-  seg=$(printf '%s' "$cmd" | grep -oE "$GIT_INV_RE" | head -1)
-  after=${cmd#*"$seg"}
-  before=${cmd%%"$seg"*}
-  residue=$(commit_residue "$after")
-  if [ -n "$residue" ]; then
-    deny "One-shot commit blocked fail-closed: unrecognised commit argument \
+  rest="$cmd"
+  staged_first=""
+  while : ; do
+    seg=$(printf '%s' "$rest" | grep -oE "$GIT_ANY_RE" | head -1)
+    [ -z "$seg" ] && break
+    rest=${rest#*"$seg"}
+    # Last word of the matched invocation, minus the delimiter GIT_ANY_RE ate.
+    sub=$(printf '%s' "$seg" | sed -E 's/[^a-zA-Z-]+$//; s/.*[^a-zA-Z-]//')
+    if [ "$sub" != "commit" ]; then
+      [[ $sub =~ $RE_GIT_READONLY ]] || staged_first="$sub"
+      continue
+    fi
+    if [ -n "$staged_first" ]; then
+      deny "Compound stage-then-commit blocked fail-closed: this command runs 'git \
+$staged_first' before it commits, and that can write the index, but the scan below \
+already read the index as it was BEFORE the command ran. Run the staging command on \
+its own so the scan sees its result, then commit. Only provably read-only git \
+subcommands may precede a commit in one command; if '$staged_first' is one of them and \
+the allowlist does not know it, re-run with ALLOW_ONE_SHOT_COMMIT=1 after the user \
+confirms."
+    fi
+    residue=$(commit_residue "$rest")
+    if [ "$residue" = "unbalanced-quoting" ]; then
+      deny "Commit blocked fail-closed: this guard could not parse the command's \
+quoting, so it cannot tell whether the invocation stages anything. It scans 'git diff \
+--cached' BEFORE the command runs, and an unreadable command is treated as unsafe \
+rather than assumed safe. Simplify the quoting (a message file with -F avoids it \
+entirely), or re-run with ALLOW_ONE_SHOT_COMMIT=1 after the user confirms."
+    fi
+    if [ -n "$residue" ]; then
+      deny "One-shot commit blocked fail-closed: unrecognised commit argument \
 '${residue%%[[:space:]]*}'. This guard scans 'git diff --cached' BEFORE the command \
 runs, so anything that stages while it commits (-a/-am/--all, a pathspec, -i/-o/-p) \
 is validated against the wrong index. Stage with a separate 'git add', let this guard \
 see the result, then commit with flags only. If the argument is index-safe and the \
-allowlist simply does not know it, re-run with ALLOW_ONE_SHOT_COMMIT=1 after the user \
-confirms."
-  fi
-  if printf '%s' "$before" | grep -qE "$GIT_STAGE_RE"; then
-    deny "Compound stage-then-commit blocked fail-closed: this command stages (git \
-add/rm/mv/restore) before it commits, but the scan below already read the index as it \
-was BEFORE the command ran. Run the staging command on its own so the scan sees the \
-result, then commit. ALLOW_ONE_SHOT_COMMIT=1 overrides after the user confirms."
-  fi
+allowlist simply does not know it — or if this command is not a commit at all and only \
+quotes one — re-run with ALLOW_ONE_SHOT_COMMIT=1 after the user confirms."
+    fi
+  done
 fi
 
 # Added lines only, staged. Two corpora, one per scan tier (header).
