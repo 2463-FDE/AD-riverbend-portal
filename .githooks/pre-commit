@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Fast local feedback, NOT a security control: scans the staged diff with the
+# same .gitleaks.toml CI enforces. The enforcement layer is CI's secret-scan
+# job + branch protection on main — a bypassed or uninstalled copy of this
+# hook changes nothing about what can merge (TODO-50: git-native gate; the
+# shell-text PreToolUse guards it replaces live on archive/pipe1-hooks-r5).
+#
+# One-time setup per clone (CLAUDE.md §3):
+#   git config core.hooksPath .githooks
+#
+# Requires either a local gitleaks binary or docker. Skips with a warning if
+# neither is present — fail-open is fine here precisely because CI is the gate.
+
+set -u
+
+repo_root=$(git rev-parse --show-toplevel)
+
+if command -v gitleaks >/dev/null 2>&1; then
+  exec gitleaks protect --staged --redact --config "$repo_root/.gitleaks.toml" --source "$repo_root"
+fi
+
+if command -v docker >/dev/null 2>&1; then
+  exec docker run --rm -v "$repo_root:/repo" zricethezav/gitleaks:v8.18.4 \
+    protect --staged --redact --config /repo/.gitleaks.toml --source /repo
+fi
+
+echo "pre-commit: gitleaks not available (no binary, no docker) — skipping staged scan." >&2
+echo "CI's secret-scan job still enforces .gitleaks.toml." >&2
+exit 0

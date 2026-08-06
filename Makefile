@@ -67,6 +67,15 @@ eval:          ## check eval/rag/REPORT.md + db/seed/seed.sql are current agains
 psql: .env.ai-proxy .env.redis ## open a psql shell
 	docker compose exec postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend}
 
+# Suite invariant — the expected counters for a green unit run (verify-stack §1
+# points here; single source, do not restate elsewhere). Deselected counts the
+# `integration`-marked tests (tests/integration/); it was 4 until PR #28 /
+# a77ad08 added a fifth. A deliberate change to a count means bumping the
+# constant here, in the same change, on purpose.
+EXPECT_XFAILED     := 1
+EXPECT_DESELECTED  := 5
+EXPECT_FAILED      := 0
+
 test:          ## run unit tests (no infra needed)
 	pip install -r requirements-dev.txt >/dev/null
 	pytest -m "not integration" -q

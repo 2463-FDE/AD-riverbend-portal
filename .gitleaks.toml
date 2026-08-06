@@ -1,0 +1,75 @@
+# Gitleaks config — extends the default credential ruleset with this repo's
+# PHI shapes (D1/D3 recurrence guard). Enforcement lives in CI's secret-scan
+# job (tracked-tree scan, --no-git) + branch protection on main; the local
+# .githooks/pre-commit runs the same config for fast feedback only.
+#
+# gitleaks (pinned v8.18.4 in ci.yml) auto-loads this file from the --source
+# root, so ci.yml needs no --config flag.
+#
+# Two tiers, ported from the retired .claude/hooks/phi-secret-guard.sh
+# (archive/pipe1-hooks-r5):
+#   - credential rules (the extended defaults) scan EVERY path — a real key is
+#     never legitimate anywhere, fake-data trees included.
+#   - PHI-shaped rules below carry per-rule allowlists for tests/ and db/seed/:
+#     adversarial tests deliberately plant fake SSNs (docs/landmines.md §3) and
+#     the seed holds SSN/MRN/DOB-shaped demo values; scanning them would fail
+#     every CI run.
+# Residual, accepted (carried over from the hook): a REAL SSN pasted into
+# tests/ is regex-indistinguishable from the fake ones the negative-test rule
+# requires — no allowlist fixes that.
+#
+# Allowlist paths use (^|/) anchors because gitleaks reports absolute paths
+# under whatever --source mount CI/hook/tests use (/repo, /scan, ...), so a
+# repo-root-relative ^tests/ never matches. Cost: a nested .../tests/ or
+# .../db/seed/ dir anywhere would also be allowlisted for the PHI rules —
+# no such dir exists today. Behavior pinned by tests/tooling/test-gitleaks-config.sh.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "riverbend-ssn"
+description = "SSN-shaped value (NNN-NN-NNNN)"
+regex = '''\b\d{3}-\d{2}-\d{4}\b'''
+[rules.allowlist]
+paths = ['''(^|/)tests/''', '''(^|/)db/seed/''']
+# SSA-invalid placeholder (area 000) and the canonical example SSN — both used
+# in code comments (eval/rag/data.py, frontend intake) and neither can be a
+# real SSN. RE2 has no lookahead, so these are allowlist literals rather than
+# exclusions in the rule regex.
+regexes = ['''000-00-0000''', '''123-45-6789''']
+
+[[rules]]
+id = "riverbend-mrn"
+description = "MRN assignment (mrn = M#### — the seed's MRN shape, keyed on the field name to avoid matching every M+digits token)"
+regex = '''(?i)\bmrn["']?\s*[:=]\s*["']?M?\d{4,10}\b'''
+keywords = ["mrn"]
+[rules.allowlist]
+paths = ['''(^|/)tests/''', '''(^|/)db/seed/''']
+
+[[rules]]
+id = "riverbend-dob"
+description = "DOB assignment (keyed on the field name — a bare ISO date matches every changelog line)"
+regex = '''(?i)\b(dob|date_of_birth|birth_?date)["']?\s*[:=]\s*["']?\d{4}-\d{2}-\d{2}\b'''
+keywords = ["dob", "date_of_birth", "birthdate", "birth_date"]
+[rules.allowlist]
+paths = ['''(^|/)tests/''', '''(^|/)db/seed/''']
+
+# The retired hook's fuzzy tier scanned only staged diff lines; tree-wide it
+# matched bare identifiers (`flight_token = ai_singleflight_acquire(...)` in
+# the gateway), so the ported rule requires the value to be QUOTED (code/config
+# literals) or an env-file-style `NAME=value` line. The default generic-api-key
+# rule stays as the entropy-gated net on everything else.
+[[rules]]
+id = "riverbend-secret-assignment-quoted"
+description = "secret-like assignment with a quoted real-looking value (ported fuzzy tier; the default generic-api-key rule is entropy-gated and misses low-entropy real values)"
+regex = '''(?i)(api[_-]?key|secret|password|token)["']?\s*[:=]\s*["'][A-Za-z0-9+/_-]{20,}["']'''
+[rules.allowlist]
+paths = ['''(^|/)tests/''', '''(^|/)db/seed/''']
+
+[[rules]]
+id = "riverbend-secret-assignment-env"
+description = "secret-like env-style assignment (NAME=value line, unquoted)"
+regex = '''(?im)^\s*(export\s+)?[A-Za-z0-9_]*(api_?key|secret|password|token)\s*=\s*[A-Za-z0-9+/_-]{20,}\s*$'''
+[rules.allowlist]
+paths = ['''(^|/)tests/''', '''(^|/)db/seed/''']

@@ -85,7 +85,10 @@ jobs:
   # Secret scanning — recurrence guard for D9 (committed-secret exposure).
   # Scans the checked-out tree (--no-git) so any secret in a TRACKED file fails
   # the build: if a future change force-commits a gitignored secret file (e.g.
-  # .env), it lands on disk at checkout and is caught here. This does NOT scan
+  # .env), it lands on disk at checkout and is caught here. Since 2026-08-06 the
+  # scan also enforces the repo's PHI shapes: gitleaks auto-loads /repo/.gitleaks.toml
+  # (verified on v8.18.4 — no --config flag needed), which extends the default
+  # credential rules with SSN/MRN/DOB patterns and their fake-data allowlists. This does NOT scan
   # full git history — the pre-existing .env/PHI-log blobs already in branch
   # history are separate, human-run remediation (rotate + history scrub +
   # force-push), owned in docs/debt-log.md. A dependency vuln scan and a

@@ -7,9 +7,9 @@
 > **Where this file lives, and why.** Repo root, **tracked** — re-tracked 2026-08-05, reversing
 > PR #32 the same day it landed (`docs/plans/pipeline-upgrade.md` PIPE-1): parallel worktrees
 > and fresh clones must inherit the rules, the ~97 in-repo doc references must resolve, and
-> rule changes get PR review. **Edits to this file are approval-gated (§7).** `.claude/`
-> tracking is decided too (OD-1, exclusions listed there) and lands in the immediate follow-up
-> PR. The old shadow-rename guard is disabled per its own instruction
+> rule changes get PR review. **Edits to this file are approval-gated (§7).** `.claude/` is
+> tracked too (OD-1; machine-local state excluded — the `.gitignore` block lists it). The old
+> shadow-rename guard is disabled per its own instruction
 > (`git config riverbend.allowRepoClaudeMd true`); the parent copy at
 > `~/Documents/REVATURE/Riverbend/` is renamed `inactive-claude.md` once PIPE-1 step 8's
 > preconditions are met (riverbend-demo rebased or retired first).
@@ -78,8 +78,8 @@ docs/
                       #   portal.har
 tests/                # pytest; integration tests marked and need live infra
 eval/ · scripts/ · logs/  # eval harness; local tooling (gitignored); local logs
-.claude/              # skills, hooks, commands, settings. Tracking lands in the follow-up
-                      #   PR (pipeline-upgrade OD-1, exclusions apply). See §10.1.
+.claude/              # skills, hooks, commands, agents, settings. TRACKED
+                      #   (OD-1; machine-local state excluded via .gitignore). See §10.1.
 ```
 
 - **Entry points:** each service is `app.py` (FastAPI app + routers). Frontend boots via Next.js.
@@ -108,7 +108,11 @@ eval/ · scripts/ · logs/  # eval harness; local tooling (gitignored); local lo
 - **`make status` is retired** — the dashboard was mostly the rebuild's gate track. Engagement
   status comes from `docs/specs/`, `docs/debt-log.md` and `gh pr list`.
 - **Setup:** `cp .env.example .env` then `make up`, which also generates the gitignored
-  `.env.ai-proxy` / `.env.redis` if absent. Postgres seeds on first boot.
+  `.env.ai-proxy` / `.env.redis` if absent. Postgres seeds on first boot. One-time per clone:
+  `git config core.hooksPath .githooks` — wires the tracked pre-commit gitleaks scan
+  (`.gitleaks.toml`, PHI + secret shapes). That hook is fast feedback only; enforcement is
+  CI's `secret-scan` job + branch protection on `main` (required checks, 1 review, no
+  force-push, enabled 2026-08-06).
 - **Demo logins** (all password `portal123`): `frontdesk`, `drnguyen`, `roiclerk`, `mokonkwo`, …
   (see `db/seed/generate_seed.py`).
 - **Ports** are in `docker-compose.yml` and the §2 map; the gateway serves `/docs`. ⚠️ Redis 6379
@@ -195,8 +199,8 @@ indexes both — several IDs appear nowhere else, so do not thin it to a pointer
   wins** on how-to, and the disagreement is a bug to fix immediately in whichever file is behind.
   (Duplication cost a review round on 2026-07-27: one instruction, two files, only one maintained,
   and the shorter more confident copy won.) The same rule is why §6/§7 above are pointers.
-- **This file is tracked (2026-08-05, reversing PR #32), and `.claude/` tracking lands in the
-  follow-up PR** (pipeline-upgrade OD-1; excluded and still local-only: `settings.local.json`,
+- **This file and `.claude/` are tracked (2026-08-05, reversing PR #32 and the 2026-07-30
+  untracking)** (pipeline-upgrade OD-1; excluded and still local-only: `settings.local.json`,
   `gates/state.json`, `scheduled_tasks.lock`, `__pycache__`). Rule changes therefore get PR
   review; the "push code and docs, tooling stays local" rule is retired. Backup:
   `../.riverbend-tooling-snapshots/` — its own git repo, deliberately outside `Riverbend/`;
@@ -219,9 +223,8 @@ indexes both — several IDs appear nowhere else, so do not thin it to a pointer
   hooks stay installed, not deleted. Mechanics in the snapshots `README.md`. Branches cut
   before the re-track carry their own older `CLAUDE.md` — a checkout showing "modified:
   CLAUDE.md" after switching back is that, not an edit.
-- **`git clean -xfd` deletes ignored files** — until the `.claude/` tracking PR lands that is
-  all of `.claude/`, and after it the OD-1 exclusions — survivable only back to the last
-  snapshot commit.
+- **`git clean -xfd` deletes ignored files** — for `.claude/` that is now only the OD-1
+  exclusions — survivable only back to the last snapshot commit.
 - **CI cannot run any `.claude/` tooling, tracked or not** — hooks execute only inside Claude
   Code sessions. Anything that must gate a merge belongs in `.github/workflows/` or the
   `Makefile`; a hook-only check is advisory. Tracking buys portability and review, not
@@ -240,15 +243,15 @@ fan out** — this model delegates readily, so the cap is the lever that matters
 | Locate code / call sites | `caveman:cavecrew-investigator` or `Explore` | read-only |
 | Bounded 1–2 file edit | `caveman:cavecrew-builder` | refuses 3+ file scope |
 | Ad-hoc mid-development diff review | `caveman:cavecrew-reviewer` | **not** a pre-push gate — retired from that role 2026-07-25 (78k tokens, 0 findings, missed every real defect) |
-| §4 regression proof (layer reverts + red counts) | `regression-proof` workflow (`.claude/workflows/regression-proof.js`) | `verify-stack` §4 is authoritative; 3 Haiku worktree agents, verdict computed in-script, main thread defines the proof |
 | Week-boundary doc-drift sweep | `doc-drift` skill (`.claude/skills/doc-drift/`): sequential Haiku `Explore` readers, one per doc family | skill authorizes each reader, one at a time; report-only, never edits docs |
 | Brief perspective review after `/feature-start` | `spec-lens` skill (`.claude/skills/spec-lens/`): sequential session-model read-only lenses (security/authz, ops/runbook, decision record) | skill authorizes each lens, one at a time; report-only, never edits brief or spec — human amendment of the brief is the HITL gate |
 
 **Authorisation.** Sessions may run under a standing "don't spawn subagents unless asked" rule. A
 skill or command that instructs a subagent step **is** that authorisation for that step
 (`verify-stack`'s adversarial diff review is the standing example). The same doctrine covers
-workflows: a skill's instruction to run a workflow authorises every agent that workflow spawns —
-`verify-stack` §4's `regression-proof` (three worktree agents) counts as **one** delegated step.
+workflows: a skill's instruction to run a workflow authorises every agent that workflow spawns,
+and the whole workflow counts as **one** delegated step. (The `regression-proof` workflow that
+was this rule's worked example is retired — `verify-stack` §4 is a serial manual procedure now.)
 The one-subagent cap governs ad-hoc fan-out, not a skill-specified workflow. Otherwise ask before fanning
 out. **Review subagents get facts, never verdicts — the spawn prompt names the branch and nothing
 else; `diff-reviewer` assembles its own pack, and `verify-stack` §6 owns the pack spec and wins on
@@ -269,10 +272,10 @@ any disagreement (§10.1).**
 Since this file is tracked (2026-08-05), **every checkout — worktree or clone, wherever it
 lives — carries it at its own root.** What still varies is `.claude/`:
 
-- **Create worktrees under `~/Documents/REVATURE/Riverbend/`** (e.g. `git worktree add
-  ../riverbend-<name>`) **until the `.claude/` tracking PR lands** — a worktree elsewhere has
-  the rules and `docs/landmines.md` but no skills or hooks. Once `.claude/` is tracked, the
-  location rule relaxes to a preference (the OD-1 exclusions still exist only here).
+- **Worktree location is now a preference, not a requirement** — with `.claude/` tracked, any
+  checkout carries the skills, hooks and commands. `~/Documents/REVATURE/Riverbend/` remains
+  the tidy default. The OD-1 exclusions (`settings.local.json`, gates state, lock) exist only
+  in this main checkout; a fresh worktree simply runs without them.
 - ⚠️ **Branches cut before the re-track** check out their own older `CLAUDE.md` (or none, e.g.
   `riverbend-demo`'s tip `07a0c0b`) — rebase onto current `main` before trusting the rules a
   stale tree shows.
