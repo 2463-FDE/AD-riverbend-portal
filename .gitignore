@@ -22,12 +22,16 @@ dist/
 *.log.2
 .venv/
 
-# Claude Code tooling (skills, hooks, commands, settings) — untracked as of
-# 2026-07-30 so it stays identical across branches and commits. Note the
-# consequences: a fresh clone arrives with no tooling, and CI cannot run any of it,
-# so anything that must gate a merge belongs in .github/workflows/ or the Makefile
-# instead.
-.claude/
+# Claude Code tooling (.claude/) is TRACKED as of 2026-08-06, reversing the
+# 2026-07-30 decision to ignore it: parallel worktrees and fresh clones must
+# inherit the same skills and hooks, and changes to them get PR review. Only
+# machine-local state stays out — credentials, per-machine paths, mutable run
+# state. Note the unchanged consequence: CI cannot execute any of it (hooks and
+# skills run only inside a Claude Code session), so anything that must gate a
+# merge belongs in .github/workflows/ or the Makefile instead.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/**/__pycache__/
 
 # CLAUDE.md was ignored here 2026-08-05 (PR #32) and re-tracked the same day
 # (docs/plans/pipeline-upgrade.md PIPE-1, reversing #32): parallel worktrees and
