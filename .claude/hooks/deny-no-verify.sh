@@ -22,7 +22,9 @@ if printf '%s' "$cmd" | grep -qE 'git[^;|&]*\b(commit|push)\b[^;|&]*--no-verify'
   deny "git --no-verify disables the .githooks/ gitleaks gate. Drop the flag; if the hook is misfiring, show the user the output and let them run the bypass themselves."
 fi
 
-if printf '%s' "$cmd" | grep -qE 'git[^;|&]*\bcommit\b[^;|&]*[[:space:]]-n([[:space:]]|$)'; then
+# -n may sit anywhere in a fused short-flag cluster (`-nm`, `-anm`): match any
+# cluster containing n, accepting false denies on other n-flags (courtesy layer).
+if printf '%s' "$cmd" | grep -qE 'git[^;|&]*\bcommit\b[^;|&]*[[:space:]]-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|$)'; then
   deny "git commit -n is --no-verify and disables the .githooks/ gitleaks gate. Drop the flag; if the hook is misfiring, show the user the output and let them run the bypass themselves."
 fi
 

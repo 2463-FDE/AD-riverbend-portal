@@ -61,7 +61,12 @@ def _run(cmd: list[str]) -> tuple[int, str]:
 
 def check_python(path: str, src: str) -> str | None:
     # Compile with THIS interpreter (3.12 via the launcher). Compiling repo code
-    # under the system 3.8 would reject valid 3.12 syntax.
+    # under the system 3.8 would reject valid 3.12 syntax, so if the launcher's
+    # last-resort python3 is older than the repo target, skip — fail open like
+    # every tool-absent checker; the launcher must never be why an edit is
+    # reported broken.
+    if sys.version_info < (3, 12):
+        return None
     try:
         compile(src, path, "exec")
     except SyntaxError as exc:

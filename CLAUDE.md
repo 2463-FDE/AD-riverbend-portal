@@ -200,9 +200,10 @@ indexes both — several IDs appear nowhere else, so do not thin it to a pointer
   (Duplication cost a review round on 2026-07-27: one instruction, two files, only one maintained,
   and the shorter more confident copy won.) The same rule is why §6/§7 above are pointers.
 - **This file and `.claude/` are tracked (2026-08-05, reversing PR #32 and the 2026-07-30
-  untracking)** (pipeline-upgrade OD-1; excluded and still local-only: `settings.local.json`,
-  `gates/state.json`, `scheduled_tasks.lock`, `__pycache__`). Rule changes therefore get PR
-  review; the "push code and docs, tooling stays local" rule is retired. Backup:
+  untracking)** (pipeline-upgrade OD-1; machine-local state stays untracked — **the `.claude/`
+  block in `.gitignore` is the single source for what**, do not enumerate it here). Rule
+  changes therefore get PR review; the "push code and docs, tooling stays local" rule is
+  retired. Backup:
   `../.riverbend-tooling-snapshots/` — its own git repo, deliberately outside `Riverbend/`;
   `snapshot.sh` fires on Claude Code **SessionEnd**, `restore.sh <ref>` restores point-in-time.
   It still covers the OD-1 exclusions, the memory base and the gitignored `scripts/`; `.env*`

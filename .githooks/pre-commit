@@ -19,6 +19,16 @@ if command -v gitleaks >/dev/null 2>&1; then
   exec gitleaks protect --staged --redact --config "$repo_root/.gitleaks.toml" --source "$repo_root"
 fi
 
+# The docker fallback cannot scan a LINKED WORKTREE: its .git is a file whose
+# gitdir: target lives outside the mount, and gitleaks v8.18.4 then logs a
+# partial-scan warning and exits 0 — a silent pass that looks like a scan
+# (reproduced with a staged SSN). Take the loud skip instead; CI still scans.
+if [ ! -d "$repo_root/.git" ]; then
+  echo "pre-commit: linked worktree and no local gitleaks binary — docker fallback cannot see this worktree's index; skipping staged scan." >&2
+  echo "CI's secret-scan job still enforces .gitleaks.toml." >&2
+  exit 0
+fi
+
 if command -v docker >/dev/null 2>&1; then
   exec docker run --rm -v "$repo_root:/repo" zricethezav/gitleaks:v8.18.4 \
     protect --staged --redact --config /repo/.gitleaks.toml --source /repo

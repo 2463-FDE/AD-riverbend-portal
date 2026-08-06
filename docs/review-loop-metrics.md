@@ -541,3 +541,19 @@ only; xfail-invariant unreplaced (a red push is now a red required check). Loop 
 record: five rounds hardened a layer whose failure class was structural — the r3 flag was the
 correct early signal, and the design answer was moving enforcement to where git/CI can see
 truth, not a fifth regex.
+
+PR #37 r1 — 1 finding: 1 A · [high] the ported secret-assignment rules path-allowlisted
+tests/ + db/seed/, leaving the low-entropy committed-credential path green. Design-gated
+(4 options; enumerated-exact-value allowlist chosen over .gitleaksignore fingerprints
+(line-brittle) and fixture renames (out of scope)): path allowlists removed from both rules,
+the four planted fakes exempted by anchored ^value$ with secretGroup binding the anchor to
+the value — superstring-of-fake-value pinned blocked. Codex's predicted follow-up
+(fake values exempt in any path) pre-empted in the config comment: a value published
+verbatim in the config is burned by construction. Behavior tests 17→20 cases. Pre-push
+diff-reviewer (151k/29 calls, findings all reproduced not hypothesized) front-loaded 6:
+[medium] pre-commit docker fallback silently exit-0'd in linked worktrees (partial scan) →
+loud skip; fused -nm bypass in the deny hook (the retired matcher-class recurring in the
+replacement's first commit — accepted there because the layer is a courtesy tripwire, CI is
+the control); syntax-hook 3.8-fallback latent false-broken → version gate; test-script
+header claim false + docker-125 flake; Makefile constants unwired → declared
+reference-only; CLAUDE.md §10.1 stale OD-1 enumeration → pointer at .gitignore.

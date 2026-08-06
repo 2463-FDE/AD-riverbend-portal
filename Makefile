@@ -72,6 +72,9 @@ psql: .env.ai-proxy .env.redis ## open a psql shell
 # `integration`-marked tests (tests/integration/); it was 4 until PR #28 /
 # a77ad08 added a fifth. A deliberate change to a count means bumping the
 # constant here, in the same change, on purpose.
+# REFERENCE-ONLY, deliberately unwired: no target asserts these — CI red-flags
+# failed/xpassed (the xfail is strict), and the deselected-count / xfail-identity
+# comparison against these numbers is the verify-stack §1 ritual's job.
 EXPECT_XFAILED     := 1
 EXPECT_DESELECTED  := 5
 EXPECT_FAILED      := 0

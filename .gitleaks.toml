@@ -60,16 +60,30 @@ paths = ['''(^|/)tests/''', '''(^|/)db/seed/''']
 # the gateway), so the ported rule requires the value to be QUOTED (code/config
 # literals) or an env-file-style `NAME=value` line. The default generic-api-key
 # rule stays as the entropy-gated net on everything else.
+#
+# NO path allowlist on these two rules (PR #37 r1): low-entropy real
+# credentials are exactly what lands in a test helper by accident, so tests/
+# and db/seed/ are NOT exempt — unlike the PHI rules above. The negative-test
+# fixtures that deliberately plant fake credentials are exempted by EXACT
+# VALUE instead (anchored ^...$ against the captured secret, so a real secret
+# merely containing one of these strings still fails). The values are listed
+# verbatim in this public config, which is also why the exemption is safe in
+# any path: a credential published here is burned by construction and cannot
+# be a secret. A future test that plants a NEW fake credential goes red in CI
+# until its value is added here — fail-closed, blessed by name in review.
 [[rules]]
 id = "riverbend-secret-assignment-quoted"
 description = "secret-like assignment with a quoted real-looking value (ported fuzzy tier; the default generic-api-key rule is entropy-gated and misses low-entropy real values)"
-regex = '''(?i)(api[_-]?key|secret|password|token)["']?\s*[:=]\s*["'][A-Za-z0-9+/_-]{20,}["']'''
+regex = '''(?i)(api[_-]?key|secret|password|token)["']?\s*[:=]\s*["']([A-Za-z0-9+/_-]{20,})["']'''
+secretGroup = 2
 [rules.allowlist]
-paths = ['''(^|/)tests/''', '''(^|/)db/seed/''']
+regexes = [
+  '''^test-internal-secret$''',            # tests/test_ai_intake_instructions.py, tests/test_ai_visit_chat.py
+  '''^s2s-secret-value-do-not-log$''',     # tests/test_gateway_ai_proxy.py
+  '''^unit-test-redis-credential$''',      # tests/test_gateway_redis_auth.py
+]
 
 [[rules]]
 id = "riverbend-secret-assignment-env"
 description = "secret-like env-style assignment (NAME=value line, unquoted)"
 regex = '''(?im)^\s*(export\s+)?[A-Za-z0-9_]*(api_?key|secret|password|token)\s*=\s*[A-Za-z0-9+/_-]{20,}\s*$'''
-[rules.allowlist]
-paths = ['''(^|/)tests/''', '''(^|/)db/seed/''']
