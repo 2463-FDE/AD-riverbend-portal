@@ -20,8 +20,9 @@ requirement synthesis → spec (EARS) → code plan
 - **Codex review** is the existing PR loop: comment `@codex-review`, answer each round with
   an `rN:` disposition comment (A/B/C labels), iterate until dry.
 - Stage mechanisms are decided when a stage is first reached and recorded here. Currently
-  defined: requirement synthesis (`.claude/skills/requirement-synthesis/`). Spec, plan,
-  gate, and implement stages: not yet defined.
+  defined: requirement synthesis (`.claude/skills/requirement-synthesis/`), spec
+  (`.claude/skills/spec-authoring/`, decided 2026-08-06 on first reach). Plan, gate, and
+  implement stages: not yet defined.
 
 ## Layout
 
