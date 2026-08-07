@@ -25,6 +25,9 @@ silently; ask which part to land.
 
 ## Sequence
 
+0. **Survey open PRs** before branching: `gh pr list --state open`. Every open PR branch
+   goes stale the moment this lands. Note them now — step 8 refreshes them, and one case
+   needs a decision *before* you merge (see "Ordering against an open code PR").
 1. **Branch** off latest `main`: `docs/noref-<slug>` for docs/ADRs, `chore/noref-<slug>`
    for `.claude/` tooling or mixed non-code (use the real ticket key instead of `noref`
    when one exists).
@@ -46,10 +49,59 @@ silently; ask which part to land.
 7. **Sync local:** `git checkout main && git pull --ff-only`, confirm local `main` is at
    the squash commit, and confirm the working tree is clean. Report PR number, squash SHA,
    and files landed.
+8. **Refresh stale branches** (below). Do not report the merge as done until every open PR
+   branch from step 0 is either refreshed or explicitly deferred by the owner.
+
+## Refreshing stale branches (step 8)
+
+A squash merge rewrites `main`'s history, so every branch cut before it is now behind and
+its PR shows "out of date". Non-code merges are frequent here, so this is the normal state
+after landing, not an exception. For each open PR branch from step 0:
+
+1. **Classify the drift.** `git diff --name-only <branch>...main` (files main gained) and
+   `git log --oneline <branch>..main`. No overlap with the branch's own changed files
+   (`git diff --name-only main...<branch>`) means a clean rebase; overlap means expect
+   conflicts and slow down.
+2. **Rebase, don't merge.** `git rebase main <branch>`. Keep branch history linear —
+   `main` merge commits into a feature branch make the eventual squash diff unreadable.
+   On conflict, resolve only the conflicting hunks; never take a side wholesale on a file
+   in a `docs/landmines.md` §1 zone.
+3. **GATE — ask before force-pushing.** A rebased branch needs
+   `git push --force-with-lease`, which rewrites published history. Show branch, commits
+   moved, and conflict count; push only on explicit approval. Never plain `--force`.
+   If the branch was never pushed, no gate is needed — just rebase.
+4. **Re-verify code branches.** Rebasing a code branch onto a new `main` invalidates the
+   verification behind it. Re-run the suite (`make test-docker`) and confirm the baseline
+   count still holds. If the branch carries an `IMPLEMENTED` stamp from `/impl-gate`, the
+   stamp covered the pre-rebase tree — say so, and re-run `/impl-gate` if `main` gained
+   anything that touches the branch's surface.
+5. **Report** per branch: rebased / conflicted / deferred, new head SHA, suite result.
+
+Non-code branches (docs, `.claude/`) need steps 1–3 only.
+
+## Ordering against an open code PR
+
+The trap this repo hits: workflow artifacts for a work item (`docs/workflow/<item>/plan.md`
+stamps, `impl-findings.md`, `pr-body.md`) are non-code and qualify for this fast path, so
+they land on `main` while the item's code PR is still open. Result: `main` documents an
+implementation that has not merged, and the code branch does not contain its own
+paperwork.
+
+That is acceptable — the stages are decoupled on purpose — but state it explicitly rather
+than letting it happen silently:
+
+- Say, before step 6, which open code PR the artifacts describe and that `main` will
+  briefly claim work that is not yet merged.
+- Do **not** cherry-pick the artifacts onto the code branch; they belong to `main` once,
+  and duplicating them produces a conflicting second copy at that branch's merge.
+- If the artifacts would contradict a still-changing branch (a stamp for a plan whose
+  implementation is still being revised), hold them and land them after the code PR.
 
 ## Never
 
-- Never push or merge without the step-3 approval.
+- Never push or merge without the step-3 approval, or force-push a rebased branch without
+  the step-8.3 approval.
+- Never merge `main` into a feature branch to clear the out-of-date banner — rebase.
 - Never bypass CI or merge red.
 - Never use this path for anything in a `docs/landmines.md` §1 approval-gated zone, even
   when the file is technically "docs" (e.g. editing the README compliance claim is
