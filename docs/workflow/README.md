@@ -24,9 +24,10 @@ requirement synthesis → spec (EARS) → code plan
   (`.claude/skills/spec-authoring/`, decided 2026-08-06 on first reach), code plan
   (`.claude/skills/plan-authoring/`, decided 2026-08-06 on first reach with e1),
   implement (`.claude/skills/implementation/` + its inner loop `.claude/skills/tdd/`,
-  decided 2026-08-07, ahead of first reach). Gate stage: not yet defined — the implement
-  skill requires a plan with `Status: GATED`, so the gate must be defined before any
-  item enters implementation.
+  decided 2026-08-07, ahead of first reach), gate (`.claude/skills/drift-gate/`, decided
+  2026-08-07, codified from the e1 fresh-context prototype run of 2026-08-06). The gate
+  runs only in a session that did not author the plan and stamps `Status: GATED`, which
+  the implement skill requires at entry. All five stages are now defined.
 
 ## Layout
 
