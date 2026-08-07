@@ -279,6 +279,37 @@ exit-2 (process fix: explicit `git add`, verified `A` in the round's stage); thi
 did not exist yet at review time (this is it). Sound-list covered mask/seed/derivation/exit
 contract/CI wiring; pass verified 3.8+3.12 green first-hand. Fix commit `fb0e3a1`.
 
+PR #49 r1 — 1 finding: 1 A / 0 B / 0 C · **[medium] A, fixed** — dev/test toolchain (Vitest, Vite,
+jsdom, Testing Library, ESLint) shipped in the production frontend image: the Dockerfile ran plain
+`npm install` and never pruned dev deps. Fixed by splitting `frontend/Dockerfile` into `build`
+(full install + `next build`) and `runtime` (`npm ci --omit=dev`, copies `.next` + `next.config.mjs`)
+stages, plus a `frontend-boot` CI guard that fails if `node_modules/vitest` survives in the built
+image. No state introduced → trivial patch, no re-gate. Runtime-verified: image builds, vitest
+absent + next/react present, `/healthz` 200. Note vs PR #25 r2: the near-identical "empty runtime
+deps" refutation there was SvelteKit adapter-node (rollup-bundled, needs no runtime `node_modules`);
+this Next portal runs `next start` and genuinely needs prod deps, so `--omit=dev` is the correct
+prune here, not an over-prune.
+
+PR #49 r2 — 1 finding: 1 A / 0 B / 0 C · **[medium] A, fixed** — `frontend-boot` was not in
+`docker-build.needs`, so the terminal fan-in job branch protection reads could go green while the
+boot probe went red. Fixed by adding the edge; stale `docker-build` NOTE comment corrected, and the
+runbook/TODO-45 closure claims made precise about the wiring. **Lesson (both gates missed it):**
+E1-SPEC-17 says the pipeline "shall report an overall failure", and the drift gate and impl gate
+both accepted "a job exists that polls `/healthz`" as conformance. A CI clause about *pipeline*
+outcome is only satisfied by an edge into whatever job is terminal — check the graph, not the job.
+Generalizes: for any spec clause naming a system-level outcome, verify the wiring that carries the
+signal, not just the component that produces it. Zero-cost to check (`needs` closure over the parsed
+workflow), and it was the second consecutive round where a correct component sat behind missing
+packaging/wiring (r1 was the Dockerfile).
+
+PR #49 r3 — 0 findings · **dry, verdict `approve`** — "No defensible ship-blocking issue found in
+the branch diff. No material findings." Loop closed at 3 rounds (2 A-fixes, 1 dry); squash-merged
+`efe6f32`. The dry round did useful confirming work rather than just going quiet: it verified the
+r1 fix did not over-prune (runtime image still ships every file the app needs), which is the
+regression the `--omit=dev` change could plausibly have caused and which no test in this PR covers.
+Reading a dry round for what it *checked*, not only for its empty finding list, is what makes it
+evidence rather than an absence of evidence.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
