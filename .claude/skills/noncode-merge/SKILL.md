@@ -72,18 +72,20 @@ after landing, not an exception. For each open PR branch from step 0:
    If the branch was never pushed, no gate is needed — just rebase.
 4. **Re-verify code branches.** Rebasing a code branch onto a new `main` invalidates the
    verification behind it. Re-run the suite (`make test-docker`) and confirm the baseline
-   count still holds. If the branch carries an `IMPLEMENTED` stamp from `/impl-gate`, the
-   stamp covered the pre-rebase tree — say so, and re-run `/impl-gate` if `main` gained
-   anything that touches the branch's surface.
+   count still holds. If the item's `pr-body.md` carries an `IMPLEMENTED` stamp from
+   `/impl-gate` (the stamp lives on `pr-body.md`, not the branch), it covered the
+   pre-rebase tree — say so, and re-run `/impl-gate` if `main` gained anything that
+   touches the branch's surface.
 5. **Report** per branch: rebased / conflicted / deferred, new head SHA, suite result.
 
 Non-code branches (docs, `.claude/`) need steps 1–3 only.
 
 ## Ordering against an open code PR
 
-The trap this repo hits: workflow artifacts for a work item (`docs/workflow/<item>/plan.md`
-stamps, `impl-findings.md`, `pr-body.md`) are non-code and qualify for this fast path, so
-they land on `main` while the item's code PR is still open. Result: `main` documents an
+The trap this repo hits: workflow artifacts for a work item (`docs/workflow/<item>/plan.md`,
+`impl-findings.md`, `pr-body.md` — which carries the delivery `Status:` — and
+`review-findings.md`) are non-code and qualify for this fast path, so they land on `main`
+while the item's code PR is still open. Result: `main` documents an
 implementation that has not merged, and the code branch does not contain its own
 paperwork.
 

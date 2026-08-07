@@ -1,7 +1,19 @@
-# e1 PR body (draft)
+# e1 PR body + delivery artifact
 
-> Stage-4 artifact for branch `feat/noref-e1-frontend-js-gates`. Paste the content below the
-> rule into the PR body at open time. Round-1 impl-gate finding 1 is closed by this file.
+> Status: PUSHED PR #49 2026-08-07
+>   DRAFT -> IMPLEMENTED 2026-08-07 -> PUSHED PR #49 2026-08-07 -> (merge pending)
+> Impl-gate record: impl-gated fresh-context 2026-08-07, round 3 clean — branch
+> `feat/noref-e1-frontend-js-gates` @ `0dc7ef5`. Rounds 1 (PR-body draft absent) and 2
+> (runbook `secret-scan` clause dropped, colliding with TODO-52) both fixed and re-verified.
+> Baseline observed: `821 passed, 5 deselected, 1 xfailed` (make test-docker, exact/unmoved);
+> `npm test` 2 passed + SPEC-3 negative exit 1; typecheck/lint exit 0. Residuals accepted:
+> E1-SPEC-11 (page-level runtime health out of scope); `vite ^5` pin deviation (disclosed,
+> keeps `@types/node` pin); SPEC-15 verified at gate round 2 not stage 4 (plan Verification
+> item 4 negative not executable under default CMD — disclosed below).
+>
+> Working-tree delivery artifact for branch `feat/noref-e1-frontend-js-gates`, landed on
+> `main` via noncode-merge (not committed on the code branch). The content below the rule is
+> the PR body, already open as PR #49. Codex round 1 is logged in `review-findings.md`.
 > Title: `feat(frontend): add JS gates, Vitest harness, truthful /healthz`
 
 ---
