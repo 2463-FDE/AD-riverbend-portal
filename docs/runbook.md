@@ -177,5 +177,7 @@ the host. Removing PHI from logs is an open remediation item.
 `.github/workflows/ci.yml`: frontend build + JS gates (`typecheck`, `lint`,
 `npm test`) and a `frontend-boot` job that runs the production image and polls
 `/healthz` (ADR 0018, `e1`), per-service import smoke, unit tests
-(`pytest -m "not integration"`), then `docker compose build`. There is no
+(`pytest -m "not integration"`), then `docker compose build`. `docker-build` is
+the terminal fan-in job and `needs` `frontend-boot`, so a boot-broken frontend
+image cannot show green there. There is no
 secret-scan, dependency-vuln-scan, or image-scan step — another known gap.

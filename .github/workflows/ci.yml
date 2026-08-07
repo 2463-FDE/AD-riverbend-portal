@@ -129,7 +129,10 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
-    needs: [frontend, services, tests, secret-scan, eval]
+    # Terminal fan-in: branch protection and any deploy automation read this job.
+    # frontend-boot is in the list (codex r2) so a boot-broken frontend image
+    # cannot present a green terminal signal.
+    needs: [frontend, frontend-boot, services, tests, secret-scan, eval]
     steps:
       - uses: actions/checkout@v4
       # .env and .env.ai-proxy are gitignored (untracked secret files). Compose
@@ -141,9 +144,9 @@ jobs:
           cp .env.example .env
           cp .env.ai-proxy.example .env.ai-proxy
           cp .env.redis.example .env.redis
-      # NOTE: this proves every image COMPILES, never that any of them runs. The
-      # one step that started a container and polled its health surface was the
-      # SvelteKit portal's, removed with the rebuild. Nothing here would notice a
-      # service that builds and then crashes on boot.
+      # NOTE: these steps prove every image COMPILES, never that any of them runs.
+      # Runtime coverage comes from the frontend-boot dependency above, and covers
+      # the frontend only — a domain service that builds and then crashes on boot
+      # is still invisible here.
       - name: Build images
         run: docker compose build
