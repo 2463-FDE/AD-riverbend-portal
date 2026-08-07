@@ -21,7 +21,8 @@ requirement synthesis → spec (EARS) → code plan
   an `rN:` disposition comment (A/B/C labels), iterate until dry.
 - Stage mechanisms are decided when a stage is first reached and recorded here. Currently
   defined: requirement synthesis (`.claude/skills/requirement-synthesis/`), spec
-  (`.claude/skills/spec-authoring/`, decided 2026-08-06 on first reach). Plan, gate, and
+  (`.claude/skills/spec-authoring/`, decided 2026-08-06 on first reach), code plan
+  (`.claude/skills/plan-authoring/`, decided 2026-08-06 on first reach with e1). Gate and
   implement stages: not yet defined.
 
 ## Layout
@@ -38,5 +39,8 @@ docs/workflow/
 
 - Requirements come fresh from the engagement owner each week; the deprecated specs are
   archive, not input.
+- `eN` items are internal enablers (source: engagement team, not the client) — same
+  pipeline, same artifacts, numbered separately so `wN` stays client asks only.
+  (Decided 2026-08-06 with `e1`.)
 - Repo-wide rules still bind every stage: `docs/landmines.md` (approval-gated zones,
   change safety, negative tests), `CONTRIBUTING.md` (branching, commits, PR process).
