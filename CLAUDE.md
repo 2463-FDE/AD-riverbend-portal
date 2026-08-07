@@ -192,8 +192,11 @@ only things worth repeating, because they are easy to get wrong and expensive to
 **`.claude/` is tracked as of 2026-08-06.** From-scratch tooling lands here as the staged
 workflow (`docs/workflow/README.md`) defines each stage. Currently:
 `skills/requirement-synthesis/` (workflow stage 1), `skills/spec-authoring/` (stage 2),
-`skills/plan-authoring/` (stage 3), `skills/noncode-merge/` (gated fast path landing
-non-code changes on `main`). Nothing else — no hooks, no agents.
+`skills/plan-authoring/` (stage 3), `skills/mockup/` (optional plan-stage input for portal
+surfaces; output stays scratch, outside the repo), `skills/drift-gate/` (plan/spec gate),
+`skills/implementation/` (stage 4) with its inner loop `skills/tdd/`, `skills/impl-gate/`
+(pre-push gate), `skills/noncode-merge/` (gated fast path landing non-code changes on
+`main`). Nothing else — no hooks, no agents.
 
 **The prior engagement's tooling is deliberately not adopted.** It is not lost — 42 files under
 `.claude/` exist on branch `chore/noref-track-claude-tooling` (PR #36, and a second attempt in
