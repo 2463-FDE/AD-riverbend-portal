@@ -20,10 +20,14 @@ requirement synthesis → spec (EARS) → code plan
 - The **spec is the frozen contract** once agreed. The drift gate and the review both anchor
   against it. It changes only by explicit human decision, never silently mid-loop.
 - **Codex review** is the existing PR loop: comment `@codex-review`, answer each round with
-  an `rN:` disposition comment (A/B/C labels), iterate until dry. The push→review→merge
-  segment is artifact-backed and owned by the implementation skill: `pr-body.md` carries
-  the delivery `Status:` (PUSHED PR #n → MERGED sha) and `review-findings.md` is the round
-  log. No separate skill owns it.
+  an `rN:` disposition comment (A/B/C/E labels, defined in `docs/review-loop-metrics.md`
+  §1), iterate until dry. The push→review→merge segment is artifact-backed and owned by
+  the implementation skill: `pr-body.md` carries the delivery `Status:` (PUSHED PR #n →
+  MERGED sha) and `review-findings.md` is the round log. No separate skill owns it. The
+  fix-session procedure (label → cluster → route: state-touching fixes back to stage 3,
+  repeat findings get the class fix, rest patched on branch) is the implementation
+  skill's "Addressing a round" section — decided 2026-08-07 on first reach with e1
+  PR #49, rebuilt from scratch informed by `docs/review-loop-metrics.md` §3.
 - Stage mechanisms are decided when a stage is first reached and recorded here. Currently
   defined: requirement synthesis (`.claude/skills/requirement-synthesis/`), spec
   (`.claude/skills/spec-authoring/`, decided 2026-08-06 on first reach), code plan
