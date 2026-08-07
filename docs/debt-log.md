@@ -333,7 +333,7 @@ collects a "Policy holder is the patient" checkbox instead. The AI checklist con
 `policy_holder_is_self`, a boolean derived from the field's emptiness at
 `frontend/app/intake/page.tsx:147` — the name string reaches nothing but the Review display — so
 the checkbox supplies everything downstream uses. The measurement behind that call is on branch
-`alt/sveltekit-portal` (`docs/specs/frontend-rebuild.md` §8.1); the decision stands on its own and
+`alt/sveltekit-portal` (`docs/specs-deprecated/frontend-rebuild.md` §8.1); the decision stands on its own and
 is not restated here.
 
 **The debt this leaves, recorded because the fix removes the field rather than storing it:** the

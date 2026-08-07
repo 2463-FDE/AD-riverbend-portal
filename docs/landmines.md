@@ -6,7 +6,7 @@
 > worked entries behind each one.
 >
 > **This file is the tracked source of truth for the three rules below.** `CONTRIBUTING.md`, the
-> PR template, `adr/_template.md` and `docs/specs/_template.md` all cite it and none of them
+> PR template, `adr/_template.md` and `docs/specs-deprecated/_template.md` all cite it and none of them
 > restate it. Anything that paraphrases these rules somewhere else is a bug to fix here, not
 > there. Landmine §1 was previously carried in `CLAUDE.md` §6 and moved here on 2026-08-05 when
 > that file was untracked — a required rule cannot live in a file a fresh clone does not have.

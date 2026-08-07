@@ -33,13 +33,13 @@ this plan's gates. Nothing below has been edited.
 > `brief` removed from the stage enum; under PIPE-2 the brief *is* the plan file, no artifact
 > distinguishes a separate brief stage. (a3) PIPE-2 — dry-run ledger lines carry a `dry-run`
 > tag. **PG-0 passed same day** — decisions recorded in §6. Work-package IDs (`PIPE-n`) and
-> gate IDs (`PG-n`) are allocated once and never renumbered (`docs/specs/_template.md` §0
+> gate IDs (`PG-n`) are allocated once and never renumbered (`docs/specs-deprecated/_template.md` §0
 > discipline).
 
 ## 0. Target end state
 
 ```
-/feature-start W6   → writes docs/specs/w6.md §1/§2   → PG-1: human confirms the decode
+/feature-start W6   → writes docs/specs-deprecated/w6.md §1/§2   → PG-1: human confirms the decode
    spec stage       → writes §5 EARS + IDs, §6 gates  → PG-2: human signs the end state
    plan stage       → writes docs/plans/w6-<slug>.md  → spec-lens → PG-3: human amends
    impl             → worktree, pr-open → verify-stack → address-review
@@ -63,7 +63,7 @@ Template §6 shape. "User" = the engagement owner running the session.
 | Gate | Blocks | Artifact | Verified how | Signed by |
 |---|---|---|---|---|
 | PG-0 | PIPE-1 starting | this plan's OD-1 row, decided | decision recorded in §6 + `docs/todo.md` | user |
-| PG-1 decode | spec stage for the week | `docs/specs/wN.md` §1 (verbatim ask) + §2 (decode) | human reads §1 against the pasted curriculum ask; §2 names debt IDs | user |
+| PG-1 decode | spec stage for the week | `docs/specs-deprecated/wN.md` §1 (verbatim ask) + §2 (decode) | human reads §1 against the pasted curriculum ask; §2 names debt IDs | user |
 | PG-2 spec sign-off | plan stage | `wN.md` §5 EARS table + §6 gate table | EARS lint by inspection: "shall" only, one behaviour per ID, every row has a Verification cell | user |
 | PG-3 plan amend | branching (`pr-open`) | `docs/plans/wN-<slug>.md` + spec-lens findings report | each finding amended into the plan file or waived in it by name | user |
 | (existing) design gate | fix rounds in `address-review` | §3 design page citing `WN-Rn` IDs | per `address-review` §3 | user |
@@ -215,9 +215,9 @@ rewriting shipped client-ask prose.
   under this package's pattern as the first live conversion, since W4's `address-review`
   rounds are the first that will need IDs.
 
-**Files:** `docs/specs/_template.md` (+~20 lines: the amendment-pattern rules above, in the
-§0 guidance voice); `docs/specs/w4.md` (§5 → EARS table with `W4-Rn` IDs, verification cells
-mapping to the existing checklist criteria — discharges TODO-5); optionally `docs/specs/w3.md`
+**Files:** `docs/specs-deprecated/_template.md` (+~20 lines: the amendment-pattern rules above, in the
+§0 guidance voice); `docs/specs-deprecated/w4.md` (§5 → EARS table with `W4-Rn` IDs, verification cells
+mapping to the existing checklist criteria — discharges TODO-5); optionally `docs/specs-deprecated/w3.md`
 §5b as TODO-6 specifies, as the worked shipped-week example. `docs/todo.md`: check off
 TODO-5 (and TODO-6 if done).
 
@@ -320,7 +320,7 @@ by hand, and PG-1/PG-2 never exist.
 column: `— / spec / plan / impl / shipped` (amendment a2: no `brief` stage — the brief *is*
 the plan file), derived from artifacts, not memory:
 
-- `spec` — `wN.md` §5 contains an EARS table (`grep -l '^| \`W[0-9]*-R'` over `docs/specs/`);
+- `spec` — `wN.md` §5 contains an EARS table (`grep -l '^| \`W[0-9]*-R'` over `docs/specs-deprecated/`);
 - `plan` — `docs/plans/wN-*.md` exists (`ls docs/plans/`);
 - `impl` — open PR or branch for the week (already gathered in step 1A);
 - `shipped` — existing Done verdict.
@@ -366,7 +366,7 @@ formally landed — it costs one line).
 | Out | Why | Tracked where |
 |---|---|---|
 | Runtime parallelism (port offsets, concurrent `make up`) | `docker-compose.yml` publishes fixed host ports (5432, 8070, 3070); unit tests don't need the stack. Known limit, fix unplanned unless the human asks | CLAUDE.md §10.4 ("Only one Docker stack at a time across trees") |
-| Retro-EARS on shipped weeks (W1–W3, W7 §5 rewrites) | Shipped prose criteria are the graded record; lazy backfill only | PIPE-3 pattern in `docs/specs/_template.md`; TODO-6 for W3's §5b |
+| Retro-EARS on shipped weeks (W1–W3, W7 §5 rewrites) | Shipped prose criteria are the graded record; lazy backfill only | PIPE-3 pattern in `docs/specs-deprecated/_template.md`; TODO-6 for W3's §5b |
 | CI running `.claude/` tooling | Impossible by design even under full tracking — hooks don't run in CI; anything gating a merge belongs in `.github/workflows/` or the Makefile | `.gitignore` comment block; CLAUDE.md §10.1 |
 | TODO-1 (intake contract break), TODO-44 (visit-chat UI) | Pipeline **cargo**, not pipeline work — they are the first weeks the pipeline should carry, not steps of it | `docs/todo.md` TODO-1 / TODO-44 |
 | `.claude/gates` statusline revival | The `/gates` tracker was the rebuild's gate track, retired with it; PG-n visibility lives in `/dashboard` (PIPE-6) | TODO-23 (closed) is the record |

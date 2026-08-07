@@ -5,7 +5,7 @@
 # tests/test_gateway_authz.py pins the two equal — edit both together or the
 # suite fails.
 #
-# Capability vocabulary comes from docs/specs/w4.md §3.1 (records.search,
+# Capability vocabulary comes from docs/specs-deprecated/w4.md §3.1 (records.search,
 # schedule.read, disclosures.read named there) plus the pre-existing grants
 # below. `billing.read` and `records.write` are defined but currently mapped
 # to no gateway route.

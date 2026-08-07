@@ -9,7 +9,7 @@ the design set that motivated a rebuild at all. Nothing below has been edited to
 descope — read it as the decision as taken, not as current plan.
 **Date:** 2026-07-30
 **Author:** Riverbend engagement team
-**Debt:** none directly — new scope (`docs/specs/frontend-rebuild.md`). Adjacent to D4, D6, D8 and
+**Debt:** none directly — new scope (`docs/specs-deprecated/frontend-rebuild.md`). Adjacent to D4, D6, D8 and
 D11 through the requirements this decision makes satisfiable; it closes none of them by itself.
 
 ## Context
@@ -91,7 +91,7 @@ explicitly so it is not smuggled in later as "how SvelteKit does auth."
 > **Amended 2026-07-31 — see `adr/0014-frontend-session-and-automatic-logoff.md`.** The invariant
 > above stands: the transport *to the gateway* is unchanged, and `require_session` is never asked to
 > accept a cookie. But the paragraph over-generalised from that hop to both hops, and was read
-> (including by this ADR's own author, and by `docs/specs/frontend-rebuild.md` §8 #12) as excluding
+> (including by this ADR's own author, and by `docs/specs-deprecated/frontend-rebuild.md` §8 #12) as excluding
 > `httpOnly` cookies altogether. It does not: a cookie between the **browser and our own BFF**,
 > where the portal's server holds the token and still sends `Authorization: Bearer` onward, touches
 > no auth boundary. ADR 0014 takes that option, and the sentence "the token is held client-side"
@@ -144,7 +144,7 @@ in the compiler and apply to every component by default. React's equivalent
 > no accessible name; `<button {...rest}>`; `aria-label={maybeUndefined}` (attribute presence
 > satisfies it, the value is never evaluated); and `<div role="button">` with no name. So the gate
 > covers **buttons and links**, not "interactive elements" — see gap #5, `FE-R17`'s reworded scope in
-> `docs/specs/frontend-rebuild.md` §5, and ADR 0013's re-opened axe question.
+> `docs/specs-deprecated/frontend-rebuild.md` §5, and ADR 0013's re-opened axe question.
 >
 > **Narrowed again 2026-07-31 by a second measurement — see §Implementation-round corrections.** "It
 > catches an icon-only `<button>` or `<a>`" is true of every icon shape *except* the commonest one: a
@@ -159,7 +159,7 @@ a DOB field — stands and is still owed by `FE-R7`, now re-implemented natively
 
 ### 7. What is explicitly not decided here
 
-The test harness. `docs/specs/frontend-rebuild.md` §4 deliverable 3 requires its own ADR written
+The test harness. `docs/specs-deprecated/frontend-rebuild.md` §4 deliverable 3 requires its own ADR written
 **after** this one; Vitest is the presumptive shape and is not chosen by this file. Data-loading
 strategy per surface (server `load` vs client fetch) belongs to P3/P4. The component-gallery question
 (open decision #5) stays deferred until real primitives exist.
@@ -318,7 +318,7 @@ form-control accessible names, on spread attributes, on dynamic `aria-label` val
 gap #5 is extended. The decision itself stands: Svelte's rules are on by default for every
 component, which is still an advantage over an opt-in rule, and `FE-R17` was never the only
 criterion. What changed is that the criterion is smaller than written, so `FE-R17`'s wording in
-`docs/specs/frontend-rebuild.md` §5 is narrowed to match the mechanism rather than left as an
+`docs/specs-deprecated/frontend-rebuild.md` §5 is narrowed to match the mechanism rather than left as an
 aspiration the gate does not enforce.
 
 **Finding 4 — spec decision #15's premise does not hold.** `eslint-plugin-svelte` has no a11y rules,

@@ -11,7 +11,7 @@ the gateway's `require_session` accept a cookie does, and stays approval-gated.
 **Date:** 2026-07-31
 **Author:** Riverbend engagement team
 **Debt:** D10 (no session expiry) · D1/D3 (PHI at rest, for the storage half) · new scope for the
-rebuilt portal (`docs/specs/frontend-rebuild.md` §8 #12, `FE-R27`–`FE-R29`)
+rebuilt portal (`docs/specs-deprecated/frontend-rebuild.md` §8 #12, `FE-R27`–`FE-R29`)
 
 ## Context
 
@@ -51,7 +51,7 @@ network, and the only thing that revokes it is an operator choosing to click Sig
 `POST /logout` does destroy the Redis session (`services/gateway/app.py:196-199`, called from
 `frontend/app/components/AppShell.tsx:102`), and nothing else does, because `create_session` sets no
 TTL. Verified, not assumed: there is no idle timeout anywhere in the current portal, and
-`docs/specs/frontend-rebuild.md` carried no session requirement before this ADR.
+`docs/specs-deprecated/frontend-rebuild.md` carried no session requirement before this ADR.
 
 The deployment that matters is a shared front-desk workstation in a clinic waiting area. In that
 setting `localStorage` writes the credential in plaintext into the browser profile on disk, where it
@@ -75,7 +75,7 @@ relevant standard, and the current implementation is the pattern two of those so
 specifically as the thing not to do.
 
 One further force, and the reason this ADR exists rather than a one-line spec row: the option the
-external guidance recommends had been **excluded** by `docs/specs/frontend-rebuild.md` §8 #12 and by
+external guidance recommends had been **excluded** by `docs/specs-deprecated/frontend-rebuild.md` §8 #12 and by
 ADR 0012 §3, both of which read `httpOnly` cookies as an auth-behaviour change requiring §6 approval
 and gate G4.
 
@@ -386,7 +386,7 @@ credential the page cannot read, which is the property a two-audience origin nee
 **Tests that hold the line** (all P2, ADR 0013's harness): `FE-R27`'s adversarial storage/cookie
 scan, `FE-R28`'s timer unit test plus the 401-after-timeout assertion, `FE-R29`'s post-search and
 post-chart storage scan. A failure in any of these is a regression of this decision, not a new bug.
-`FE-R27` and `FE-R29` are prohibitions, so each needs the mutation check `docs/specs/_template.md`
+`FE-R27` and `FE-R29` are prohibitions, so each needs the mutation check `docs/specs-deprecated/_template.md`
 and project memory `thresholds-must-be-reachable` require: break the control deliberately and confirm
 the test fails, or the test is decoration.
 

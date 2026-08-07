@@ -139,7 +139,7 @@ PR #28 r2 — 2 findings: same two as r1, restated verbatim (same anchors, same 
 main merge + this ledger), so a further tag on an unchanged diff reproduces the round — loop
 recognized and cut: dispositions stand as r1 recorded, no re-tag, merge proceeds on the human
 §6 approval this PR's review was designated to carry (ADR 0017 context; gate table in
-`docs/specs/rbac.md` §6). Method note: a scoped-out finding restated on an unchanged diff is
+`docs/specs-deprecated/rbac.md` §6). Method note: a scoped-out finding restated on an unchanged diff is
 recorded as a restatement, not a new A — it measures the bot's statelessness, not our defect rate.
 
 PR #29 r1 — 1 finding: 1 A · **[medium] parked** — score-table mask blanks whole rows, so

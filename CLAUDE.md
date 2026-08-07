@@ -14,7 +14,7 @@
 A **training repository**. "Riverbend Community Health," "Helix Digital Partners," the COO
 persona, the RIV tickets, the patients, and the credentials are all fictional. The code is a
 realistic brownfield HIPAA-regulated system carrying **deliberately planted defects**, used as a
-ten-week curriculum (`docs/specs/w1.md`–`w10.md`, each with the client ask in §1 and the decoded
+ten-week curriculum (`docs/specs-deprecated/w1.md`–`w10.md`, each with the client ask in §1 and the decoded
 defect in §2).
 
 Everything downstream follows from this: **a defect here is usually a teaching artifact, not a
@@ -56,7 +56,8 @@ db/migrations/      ordered SQL files with no runner (see §8) — hand-synced t
 db/seed/generate_seed.py  deterministic generator → seed.sql
 adr/0001..0017      _template.md owns the required sections
 docs/               landmines.md · debt-log.md · phi-logging-policy.md · runbook.md ·
-                    onboarding-seam-map.md · todo.md · specs/wN.md · handover/ · research/
+                    onboarding-seam-map.md · todo.md · workflow/ (staged delivery pipeline,
+                    see its README) · specs-deprecated/wN.md (archive) · handover/ · research/
 tests/              pytest; only tests/integration/ needs live infra
 eval/rag/           RIV-160 retrieval eval + the CI drift gate
 ```
@@ -187,9 +188,9 @@ only things worth repeating, because they are easy to get wrong and expensive to
 
 ## 11. Tooling
 
-**`.claude/` is tracked as of 2026-08-06, and is currently empty.** There is no `.claude/`
-directory in this repo yet — no skills, no hooks, no commands, no agents. That is the intended
-starting state, not something broken.
+**`.claude/` is tracked as of 2026-08-06.** From-scratch tooling lands here as the staged
+workflow (`docs/workflow/README.md`) defines each stage. Currently:
+`skills/requirement-synthesis/` (workflow stage 1). Nothing else — no hooks, no agents.
 
 **The prior engagement's tooling is deliberately not adopted.** It is not lost — 42 files under
 `.claude/` exist on branch `chore/noref-track-claude-tooling` (PR #36, and a second attempt in
