@@ -33,6 +33,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t frontend-boot ./frontend
+      # Pin the multi-stage invariant (codex r1): the runtime image is production-only.
+      # Inspect the built image directly — `npm ls` in the repo would not catch a dev
+      # dep leaking back into the shipped layer. vitest stands in for the dev toolchain.
+      - name: Assert no devDependencies in runtime image
+        run: |
+          if docker run --rm frontend-boot ls node_modules/vitest >/dev/null 2>&1; then
+            echo "devDependency 'vitest' leaked into the runtime image"; exit 1
+          fi
+          echo "runtime image is production-only"
       - run: docker run -d --name fe -p 3070:3070 frontend-boot
       - name: Poll /healthz (fail if not healthy in window)
         run: |
