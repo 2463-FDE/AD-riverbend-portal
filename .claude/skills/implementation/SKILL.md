@@ -52,6 +52,10 @@ Deviation handling, per the pipeline:
 
 - Commits: format per `CONTRIBUTING.md`; no `Co-Authored-By` trailer
   (`CONTRIBUTING.md:53`).
+- **Impl gate before push:** the finished branch is checked against plan and spec by
+  `.claude/skills/impl-gate/` in a fresh session that did not write the code. Findings
+  come back here as a round in `impl-findings.md`; the stamp
+  (`Status: IMPLEMENTED`) is what makes the branch push-ready.
 - **Ask before pushing.** Push is human-gated.
 - PR body: "Risk & landmines" section is required — name the §1 zones touched or "none
   touched". Copy the accepted residuals from the plan's Landmines section; a residual the
