@@ -22,8 +22,11 @@ requirement synthesis → spec (EARS) → code plan
 - Stage mechanisms are decided when a stage is first reached and recorded here. Currently
   defined: requirement synthesis (`.claude/skills/requirement-synthesis/`), spec
   (`.claude/skills/spec-authoring/`, decided 2026-08-06 on first reach), code plan
-  (`.claude/skills/plan-authoring/`, decided 2026-08-06 on first reach with e1). Gate and
-  implement stages: not yet defined.
+  (`.claude/skills/plan-authoring/`, decided 2026-08-06 on first reach with e1),
+  implement (`.claude/skills/implementation/` + its inner loop `.claude/skills/tdd/`,
+  decided 2026-08-07, ahead of first reach). Gate stage: not yet defined — the implement
+  skill requires a plan with `Status: GATED`, so the gate must be defined before any
+  item enters implementation.
 
 ## Layout
 
