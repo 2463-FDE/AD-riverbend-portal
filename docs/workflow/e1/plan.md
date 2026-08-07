@@ -1,9 +1,18 @@
 # E1 Code Plan — frontend test harness + healthcheck
 
-> Status: GATED 2026-08-07
+> Status: IMPLEMENTED 2026-08-07
 > Gate record: gated fresh-context 2026-08-07, round 1 clean (no findings; no round log
 > created). Residual-named SPECs: E1-SPEC-11 (route-level probe answers 200 while a page
 > may break at runtime — accepted, see Landmines / risk).
+> Impl-gate record: impl-gated fresh-context 2026-08-07, round 3 clean — branch
+> `feat/noref-e1-frontend-js-gates` @ `0dc7ef5`. Rounds 1 (PR-body draft absent) and 2
+> (runbook `secret-scan` clause dropped, colliding with TODO-52) both fixed and re-verified.
+> Baseline observed: `821 passed, 5 deselected, 1 xfailed` (make test-docker, exact/unmoved);
+> `npm test` 2 passed + SPEC-3 negative exit 1; typecheck/lint exit 0. Residuals accepted:
+> E1-SPEC-11 (page-level runtime health out of scope); `vite ^5` pin deviation (disclosed,
+> keeps `@types/node` pin); SPEC-15 verified at gate round 2 not stage 4 (plan Verification
+> item 4 negative not executable under default CMD — disclosed in PR body). Push stays
+> human-gated.
 > Workflow stage 3 (code plan). Anchors to the frozen spec `docs/workflow/e1/spec.md`
 > (E1-SPEC-1..19). Requirements: `docs/workflow/e1/requirements.md` (AGREED 2026-08-06).
 
