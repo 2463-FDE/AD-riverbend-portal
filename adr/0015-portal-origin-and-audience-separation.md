@@ -9,7 +9,7 @@ with the staff app puts an XSS in reach of staff credentials — is the constrai
 surface inherits, whatever framework serves it.
 **Date:** 2026-07-31
 **Author:** Riverbend engagement team
-**Debt:** none directly — new scope (`docs/specs/frontend-rebuild.md` §8 #16, `FE-R30`–`FE-R31`).
+**Debt:** none directly — new scope (`docs/specs-deprecated/frontend-rebuild.md` §8 #16, `FE-R30`–`FE-R31`).
 Adjacent to D11 (a patient principal is unsafe until session→`patient_id` binding lands) and to
 D10/D1 through the controls ADR 0014 depends on this file to define. It closes none of them.
 
@@ -24,7 +24,7 @@ the portal is served from.
   against the app's own origin. Under `adapter-node` behind a reverse proxy, the server only knows its
   public origin if it is told.
 
-Neither ADR 0012, 0013, 0014 nor `docs/specs/frontend-rebuild.md` mentions transport security, a
+Neither ADR 0012, 0013, 0014 nor `docs/specs-deprecated/frontend-rebuild.md` mentions transport security, a
 hostname, or `ORIGIN`. What the repository does contain, measured 2026-07-31:
 
 - **No TLS anywhere in the stack we ship.** `docker-compose.yml` has no reverse proxy, no certificate
@@ -38,7 +38,7 @@ hostname, or `ORIGIN`. What the repository does contain, measured 2026-07-31:
   of a local stack, which is why `Secure` is not currently a live problem — browsers treat
   `http://localhost` as a secure context.
 
-The second force is the audience question. `docs/specs/frontend-rebuild.md` §8 #16 reopened a
+The second force is the audience question. `docs/specs-deprecated/frontend-rebuild.md` §8 #16 reopened a
 patient-facing surface on 2026-07-31, and §8 #16 already states the consequence this ADR has to
 answer:
 
@@ -124,7 +124,7 @@ it is a login loop with no error message, which is the failure this ADR exists t
 
 - **Patient authentication.** Blocked on D11: `GET /patients/{id}/records` checks only "is logged in",
   so a patient account reads every other patient's chart. That bind is W4 analysis and a
-  `CLAUDE.md` §6 approval at G4 — and `docs/specs/w4.md:138-139` is explicit that W4's shippable
+  `CLAUDE.md` §6 approval at G4 — and `docs/specs-deprecated/w4.md:138-139` is explicit that W4's shippable
   output is analysis plus prototype, with the live fix landing later. **Nothing in this ADR makes a
   patient login safe to ship.**
 - **The patient principal's place in the role model.** "Patient" is a different principal class, not a
@@ -186,7 +186,7 @@ is one additional compose service and one DNS name at the point a patient surfac
    0014 gap #3 owns that, and a CSP is still unadopted (§4).
 4. **`FE-R30` and `FE-R31` are prohibitions and configuration, which are weak test surfaces.**
    `FE-R30` (no `Domain`) is testable by asserting the `Set-Cookie` header, and it needs the mutation
-   check `docs/specs/_template.md` and project memory `thresholds-must-be-reachable` require: add a
+   check `docs/specs-deprecated/_template.md` and project memory `thresholds-must-be-reachable` require: add a
    `Domain` deliberately and confirm the test fails. `FE-R31` is verified by inspection plus one
    container check that a non-default `ORIGIN` is honoured at runtime — the same proof ADR 0012 §4's
    rule needs and has never had.
@@ -203,7 +203,7 @@ the portal in its health-check block (ADR 0014's Consequences). `.env.example` g
 local value and a comment stating there is no production default.
 
 **New requirements:** `FE-R30` (host-only cookie, no `Domain`) and `FE-R31` (`ORIGIN` from runtime
-env) in `docs/specs/frontend-rebuild.md` §5, both at **G2**, because both are properties of the login
+env) in `docs/specs-deprecated/frontend-rebuild.md` §5, both at **G2**, because both are properties of the login
 surface P2 builds and neither can be retrofitted without touching it.
 
 **No change to any service in `services/`.** The gateway is not edited, `require_session` is not

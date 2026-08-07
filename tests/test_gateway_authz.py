@@ -1,4 +1,4 @@
-"""Gateway role→capability enforcement (ADR 0017, docs/specs/rbac.md).
+"""Gateway role→capability enforcement (ADR 0017, docs/specs-deprecated/rbac.md).
 
 Three drift surfaces are pinned here, because each can silently diverge:
 

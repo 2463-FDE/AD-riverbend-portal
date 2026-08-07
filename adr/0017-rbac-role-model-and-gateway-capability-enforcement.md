@@ -4,7 +4,7 @@
 **Date:** 2026-08-02
 **Author:** Riverbend engagement team
 **Debt:** D8 (weak authz / no segregation of duties), D7 (minimum necessary unenforced) — the
-client's payer-audit ask (`docs/handover/jira-tickets.md`, W9 row). Spec: `docs/specs/rbac.md`.
+client's payer-audit ask (`docs/handover/jira-tickets.md`, W9 row). Spec: `docs/specs-deprecated/rbac.md`.
 
 ## Context
 
@@ -12,7 +12,7 @@ Every account holds the single `staff` role and the gateway checks only "is logg
 (`require_session`). CLAUDE.md §6: "a single `staff` role for everyone; no per-action authz."
 Codex review of PR #26 raised the concrete instance three rounds running — `GET /schedule`
 enforces no `schedule.read` — and the standing refutation was structural: with one role, a
-capability check denies nobody and its regression test cannot fail. `docs/specs/w4.md` §3.1
+capability check denies nobody and its regression test cannot fail. `docs/specs-deprecated/w4.md` §3.1
 then named the capability each cross-patient read would require, on three measured facts:
 `config/roles.yaml` is read by no code, the session hash already carries `role`
 (`services/gateway/security.py`), and the whole enforcement surface is the set of
@@ -34,7 +34,7 @@ four real roles can be denied anything. No schema change: `users.role TEXT NOT N
 ### 2. Capability matrix (minimum necessary, 45 CFR 164.502(b))
 
 14 capabilities; the vocabulary extends `roles.yaml`'s original seven with the names
-`docs/specs/w4.md` §3.1 allocated (`records.search`, `schedule.read`) plus `profile.read`,
+`docs/specs-deprecated/w4.md` §3.1 allocated (`records.search`, `schedule.read`) plus `profile.read`,
 `eligibility.check`, `disclosures.write`, `ai.use`, `hl7.ingest`.
 
 | Capability | front_desk | clinician | roi_clerk | admin | staff |
@@ -104,7 +104,7 @@ fail-open deploy default this repo has shipped wrong before
   fails the suite on drift.
 - **Shadow / log-only rollout.** Rejected — §4 above; nobody real can be denied.
 - **Route-path exemption lists** (bind everything, exempt `/records/search` etc.). Rejected by
-  `docs/specs/w4.md` §3.1: that is the shape a later week rewrites; naming capabilities is the
+  `docs/specs-deprecated/w4.md` §3.1: that is the shape a later week rewrites; naming capabilities is the
   shape it populates.
 - **Enforce only the routes reviews complained about** (`schedule.read` on `/schedule`).
   Rejected: partial coverage leaves the "which routes are protected" question open every future

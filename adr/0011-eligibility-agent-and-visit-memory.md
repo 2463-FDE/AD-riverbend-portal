@@ -10,12 +10,12 @@ stack this endpoint joins), ADR 0009 (Bedrock provider — the paid inference pa
 ADR 0006 (metadata-only observability), ADR 0010 (eligibility resilience — the
 bounded payer path this agent consumes), ADR 0003 (authentication/sessions —
 deliberately untouched), ADR 0001 (no shared library; copy-paste service layout).
-Second half of the Week-3 deliverable (`docs/specs/w3.md` §4, items 1 and 3):
+Second half of the Week-3 deliverable (`docs/specs-deprecated/w3.md` §4, items 1 and 3):
 PR #11 shipped resilience, this ships the assistant and its visit memory.
 
 ## Context
 
-The client ask (Dr. Okonkwo, COO, verbatim in `docs/specs/w3.md` §1):
+The client ask (Dr. Okonkwo, COO, verbatim in `docs/specs-deprecated/w3.md` §1):
 
 > Can you build them a little chat assistant that checks a patient's eligibility
 > and keeps track of the visit context as they go?
@@ -31,7 +31,7 @@ job is to surface that verdict conversationally without ever converting an
 Four constraints shape every decision below.
 
 1. **The vendor boundary is not cleared for PHI.** Debt **D13 / #5** (CLAUDE.md
-   §9, `docs/specs/w8.md`): Bedrock is used on standard SaaS terms with **no BAA**.
+   §9, `docs/specs-deprecated/w8.md`): Bedrock is used on standard SaaS terms with **no BAA**.
    ADR 0004 kept `/intake-instructions` safe by construction — its request is
    closed vocabulary (enum/bool only), so nothing PHI-shaped can reach the prompt.
    A free-text chat box is the obvious way to break that invariant, and W8 — the
@@ -200,7 +200,7 @@ already lives): `visit_memory_get` / `visit_memory_save` / `visit_lock_acquire` 
 a new Redis client there). Rejected: ai-assistant is horizontally scalable and
 stateless by design, in-process state breaks under replicas, and adding a
 datastore to the egress service is the same "more surface, no benefit" trade ADR
-0007 already rejected. This also answers `docs/specs/w3.md` open question 2 —
+0007 already rejected. This also answers `docs/specs-deprecated/w3.md` open question 2 —
 Redis, gateway-held.
 
 ### 4. ai-assistant → eligibility-service is bounded like every other hop
@@ -426,7 +426,7 @@ follow-up, not a claim of principle.
    a repeat of the member id no longer spends another payer call while the visit
    holds a fresh definitive verdict for that id. See "Round 4 corrections".
 7. **No stale-verdict cache when the breaker is open (decided; scope narrowed in
-   round 4).** This answers `docs/specs/w3.md` open question 1: when eligibility
+   round 4).** This answers `docs/specs-deprecated/w3.md` open question 1: when eligibility
    is degraded the agent reports *unconfirmed* rather than serving a
    stale-but-usable cached verdict. A cached coverage answer is a financial fact
    with an expiry we cannot see, and caching it would put PHI-derived state in a

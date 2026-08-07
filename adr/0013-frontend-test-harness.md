@@ -9,7 +9,7 @@ intake contract break that §4 deliverable 3 was to make impossible as a *class*
 measurement before re-deciding.
 **Date:** 2026-07-30
 **Author:** Riverbend engagement team
-**Debt:** none directly — new scope (`docs/specs/frontend-rebuild.md` §4 deliverable 3). The gap it
+**Debt:** none directly — new scope (`docs/specs-deprecated/frontend-rebuild.md` §4 deliverable 3). The gap it
 closes is the unregistered defect that spec §4 deliverable 6 is adding to `docs/debt-log.md` (the
 intake contract break). Adjacent to D1 through `FE-R16` and to D4 through `FE-R2`; it closes neither.
 
@@ -29,18 +29,18 @@ What that costs is not hypothetical:
   `insurance.carrier` vs `payer_name`). Every submission 422s, the gateway relays it as HTTP 200, the
   portal prints "Intake submitted successfully.", and no patient row is created. It shipped green past
   `npm run build` **and** past 730 passing pytest tests, because nothing asserts the two sides of that
-  payload against each other. `docs/specs/frontend-rebuild.md` §1.
+  payload against each other. `docs/specs-deprecated/frontend-rebuild.md` §1.
 - **The review loop keeps asking.** Codex requested frontend tests on PR #8 and PR #9. A finding that
   recurs across PRs is the C-class case in `docs/review-loop-metrics.md`; a harness is what stops it
   recurring rather than being re-argued.
 
 `adr/0012-frontend-framework-sveltekit.md` §7 deliberately left this open: "The test harness.
-`docs/specs/frontend-rebuild.md` §4 deliverable 3 requires its own ADR written **after** this one;
+`docs/specs-deprecated/frontend-rebuild.md` §4 deliverable 3 requires its own ADR written **after** this one;
 Vitest is the presumptive shape and is not chosen by this file." G1 is signed, so that precondition is
 discharged.
 
 The requirement set, not general good practice, is what this harness has to serve.
-`docs/specs/frontend-rebuild.md` §5 names a verification method per requirement, and the JS-side load
+`docs/specs-deprecated/frontend-rebuild.md` §5 names a verification method per requirement, and the JS-side load
 is: eight **component tests** (`FE-R4`, `R5`, `R7`, `R9`, `R10`, `R11`, `R20`, and `R2`'s DOM half),
 two **JS tests** (`FE-R2` both branches, `FE-R3`), a **contract test** asserted from both sides
 (`FE-R1`, `FE-R3`, `FE-R21`, `FE-R22`), one **formatter unit test run under a non-clinic `TZ`**
@@ -187,7 +187,7 @@ item in a testing-tools decision.
 > | `FE-R29` no patient data in web storage | a component fed fixture data writes **nothing** to storage — real coverage, no server and no network needed | post-search and post-chart storage state on the running app |
 >
 > **Invariant: which half of each requirement is CI-proven and which is gate-driven is written down
-> per requirement, never left to inference.** `docs/specs/frontend-rebuild.md` §5's verification column
+> per requirement, never left to inference.** `docs/specs-deprecated/frontend-rebuild.md` §5's verification column
 > carries it. The driven halves are recorded at G2 the way the gate text already demands ("`make
 > test-docker` **and** driving the app; a 200 proves nothing here"), and they join the five existing
 > `driven repro` rows under gap #3 — which is now the largest hole in this ADR by a wider margin than
@@ -365,7 +365,7 @@ no browser download in CI, it is faster per file, and it is the shape a React-ex
 would recognise — which mitigates ADR 0012's open gap #2. **Eleven of the twelve requirements would be
 served correctly by it** (§1). It loses on `FE-R7` and on the patient-search combobox, for the reasons
 in §1, and secondarily on rune-driven state. Choosing it would mean amending `FE-R7`'s verification
-method in `docs/specs/frontend-rebuild.md` §5 from "component test" to a documented manual repro,
+method in `docs/specs-deprecated/frontend-rebuild.md` §5 from "component test" to a documented manual repro,
 because a jsdom test of that requirement passes without evidence. Trading a cached browser binary for
 honest verification of the DOB field and the control that replaces the ID box is the trade this ADR
 takes.
@@ -471,7 +471,7 @@ projects; `devDependencies` for `vitest`, `@vitest/browser`, `vitest-browser-sve
 
 **New, outside it:** `tests/contracts/intake_payload.json` and its pytest assertions;
 `.github/workflows/ci.yml` gains the second frontend job described in §5; `Makefile` gains
-`make test-frontend`; `docs/specs/frontend-rebuild.md` §4 deliverable 3 is discharged by this file.
+`make test-frontend`; `docs/specs-deprecated/frontend-rebuild.md` §4 deliverable 3 is discharged by this file.
 
 **The runtime image must not carry test tooling.** Note the existing pattern before copying it:
 `frontend/Dockerfile` runs a bare `npm install`, which installs devDependencies into the image it
