@@ -75,13 +75,37 @@ Deviation handling, per the pipeline:
   code branch — see step 6). The "Risk & landmines" section is required — a residual the
   plan accepted is disclosed in the PR, not rediscovered by review.
 - **After push (an owned step, artifact-backed):** advance the `pr-body.md` `Status:`
-  line to `PUSHED PR #<n> <date>`, then comment `@codex-review`. Log every review round in
-  `docs/workflow/<item>/review-findings.md` (round log, created on the first finding;
-  template and round-3 rule mirror `gate-findings.md` / `impl-findings.md`); answer each
-  round with an `rN:` disposition comment (A/B/C labels); iterate until dry. Structural
-  findings go back to stage 3 per the pipeline; trivial ones are patched and re-reviewed.
-  On merge, advance `pr-body.md` `Status:` to `MERGED <sha> <date>`. No seventh skill —
-  this skill owns the push→review→merge segment; the artifacts, not memory, carry its state.
+  line to `PUSHED PR #<n> <date>`, then comment `@codex-review`. Each round is worked by
+  the fix-session procedure below; iterate until dry. On merge, advance `pr-body.md`
+  `Status:` to `MERGED <sha> <date>`. No seventh skill — this skill owns the
+  push→review→merge segment; the artifacts, not memory, carry its state.
+
+## Addressing a round (the fix session)
+
+The procedure for responding to a codex round. The label definitions and the measured
+reasoning behind these steps live in `docs/review-loop-metrics.md` (§1 labels, §3 the
+baseline analysis) — that file is the why, this section is the how.
+
+1. Append the round to `review-findings.md` (template below), one row per finding.
+2. **Label** each finding A/B/C/E per `docs/review-loop-metrics.md` §1. A finding
+   believed wrong is refuted with runtime evidence (build it, run it, hit the endpoint —
+   never inference from static config) and closed with an anchored comment, no code
+   change.
+3. **Cluster** findings that share one root cause; fix causes, not instances.
+4. **Route** each cluster:
+   - The fix would introduce or alter state (counter, TTL, lock, breaker, budget,
+     cache) → structural. Back to stage 3; plan revised and re-gated; spec unchanged.
+     Every B round in the baseline came from improvising exactly this mid-review.
+   - Labelled **C** (an earlier fix didn't close it) → the instance fix already failed
+     once; fix the class and add the guard or regression test that proves the class is
+     closed, not another instance patch.
+   - Otherwise trivial: patch on the branch. PHI, authz, and sanitization paths take
+     the negative test (`docs/landmines.md` §3).
+5. Re-verify: full suite plus the pinned-baseline count check (end-of-implementation
+   steps 1–2).
+6. Close the round: fill the round-log dispositions, reply with the `rN:` disposition
+   comment carrying the labels, append one ledger line to
+   `docs/review-loop-metrics.md` §4, re-tag `@codex-review`.
 
 ## Review round log (`review-findings.md`)
 
@@ -102,8 +126,8 @@ disposition column, and the round-3 owner-escalation rule. Delivery status lives
 
 <n> findings.
 
-| # | SPEC | Finding | Disposition (r1: A/B/C) |
-|---|------|---------|-------------------------|
+| # | SPEC | Finding | Disposition (r1: A/B/C/E) |
+|---|------|---------|---------------------------|
 | 1 | <id or —> | <one line> | |
 ```
 

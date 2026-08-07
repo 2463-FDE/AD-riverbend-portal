@@ -1,12 +1,15 @@
 # Review-loop metrics
 
-> Why the `address-review` skill has a clustering step and a design gate, and how we
-> tell whether they are working. Baseline measured 2026-07-28 over every code PR merged
-> to that date. **Do not re-derive this from scratch** — append to it (§4).
+> Why the review fix session clusters findings and design-gates stateful fixes, and how
+> we tell whether that works. Baseline measured 2026-07-28 over every code PR merged to
+> that date, under the prior engagement's `address-review` loop (a dead name on `main` —
+> CLAUDE.md §11); the labels and lessons carry over. The current procedure is
+> `.claude/skills/implementation/` "Addressing a round".
+> **Do not re-derive this from scratch** — append to it (§4).
 
 ## 1. What is measured
 
-Every automated-review finding gets one label at triage time (`address-review` §2):
+Every automated-review finding gets one label at triage time (fix-session step 2):
 
 | Label | Meaning |
 |-------|---------|
@@ -63,7 +66,7 @@ In four of six PRs the review loop wrote more code than the feature did.
 
 1. **Every B finding came from stateful machinery** — counters, TTLs, locks,
    single-flight, breakers, budgets, ID catalogs. None came from a plain logic edit.
-   That is why `address-review` §2's design-gate trigger is *"the fix introduces or
+   That is why the design-gate trigger (fix-session step 4) is *"the fix introduces or
    alters state"* rather than a judgement call about size.
 2. **PR #7 is the worst case and the clearest one.** r6 was a legitimate A finding —
    the paid AI endpoint genuinely had no aggregate abuse control. The fix invented a
@@ -72,7 +75,7 @@ In four of six PRs the review loop wrote more code than the feature did.
    subsystem correct. Eleven of that PR's findings never existed until we wrote them.
 3. **C is a different failure with a different cure.** PR #2's budget-egress defect
    survived four fixes because each fix addressed the instance in front of it. The
-   cure is the class sweep (`address-review` §4), not the design gate.
+   cure is the class sweep (fix-session step 4, the C branch), not the design gate.
 4. **The reviewer never objects to complexity — 0 findings out of 64.** Nothing
    external will flag machinery growth. If complexity is to be justified, the
    justification has to come from our own spec (requirement IDs) and from §3's
@@ -81,7 +84,7 @@ In four of six PRs the review loop wrote more code than the feature did.
 ## 4. Ongoing log (append one line per round)
 
 Format: `PR #N r<k> — <count> findings: <labels> · <one-line note>`.
-The ledger also goes in the PR reply (`address-review` §6) so it survives independently
+The ledger also goes in the PR reply (fix-session step 6) so it survives independently
 of this file.
 
 <!-- append below -->
