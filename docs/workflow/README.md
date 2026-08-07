@@ -9,7 +9,9 @@ pipeline; every stage leaves a reviewable artifact in this tree.
 ```
 requirement synthesis → spec (EARS) → code plan
         → GATE: plan/spec drift check
-        → implement → codex review (@codex-review PR loop)
+        → implement
+        → GATE: impl/plan check (pre-push, fresh context)
+        → push → codex review (@codex-review PR loop)
         → approve? → merge to main
              └─ trivial fix → patch impl, re-review
              └─ structural  → back to code plan (spec unchanged)
@@ -25,9 +27,12 @@ requirement synthesis → spec (EARS) → code plan
   (`.claude/skills/plan-authoring/`, decided 2026-08-06 on first reach with e1),
   implement (`.claude/skills/implementation/` + its inner loop `.claude/skills/tdd/`,
   decided 2026-08-07, ahead of first reach), gate (`.claude/skills/drift-gate/`, decided
-  2026-08-07, codified from the e1 fresh-context prototype run of 2026-08-06). The gate
-  runs only in a session that did not author the plan and stamps `Status: GATED`, which
-  the implement skill requires at entry. All five stages are now defined.
+  2026-08-07, codified from the e1 fresh-context prototype run of 2026-08-06), impl gate
+  (`.claude/skills/impl-gate/`, decided 2026-08-07, ahead of first reach). Each gate
+  runs only in a fresh session that did not author the artifact it checks: the drift
+  gate stamps `Status: GATED` (required by the implement skill at entry); the impl gate
+  checks the finished branch against plan and spec pre-push and stamps
+  `Status: IMPLEMENTED` (push stays human-gated). All six stages are now defined.
 
 ## Layout
 
@@ -39,11 +44,13 @@ docs/workflow/
     plan.md           ← code plan
     gate-findings.md  ← gate round log (created on first finding; owned by the
                         drift-gate skill, dispositions filled in stage 3)
+    impl-findings.md  ← impl-gate round log (created on first finding; owned by the
+                        impl-gate skill, dispositions filled in stage 4)
 ```
 
 Workflow state is derivable from these files alone — plan `Status:` header plus the
-round log; no session memory required. The decode table lives in
-`.claude/skills/drift-gate/`.
+round logs; no session memory required. The decode tables live in
+`.claude/skills/drift-gate/` and `.claude/skills/impl-gate/`.
 
 ## Ground rules
 
