@@ -18,11 +18,38 @@ jobs:
           node-version: "22"
       - run: npm install
       - run: npm run build
+      - run: npm run typecheck   # E1-SPEC-6,7
+      - run: npm run lint        # E1-SPEC-8,9
+      - run: npm test            # E1-SPEC-4,5
 
-  # There is no JavaScript gate. The `frontend` job above builds the inherited
-  # Next.js portal and nothing type-checks, lints or tests it — the two-project
-  # Vitest harness that would have was built for the SvelteKit rebuild, which is
-  # descoped (branch alt/sveltekit-portal). Standing gap, not an oversight.
+  # E1-REQ-7 / E1-SPEC-16,17: runtime boot check. `next build` (the frontend job)
+  # proves the image COMPILES; this proves it SERVES. Standalone `docker run` of
+  # the same Dockerfile the compose image builds — the health route needs no
+  # gateway — then poll /healthz. A boot-broken image never answers 200, so the
+  # job goes red and cannot ship green (closes TODO-45).
+  frontend-boot:
+    runs-on: ubuntu-latest
+    needs: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t frontend-boot ./frontend
+      # Pin the multi-stage invariant (codex r1): the runtime image is production-only.
+      # Inspect the built image directly — `npm ls` in the repo would not catch a dev
+      # dep leaking back into the shipped layer. vitest stands in for the dev toolchain.
+      - name: Assert no devDependencies in runtime image
+        run: |
+          if docker run --rm frontend-boot ls node_modules/vitest >/dev/null 2>&1; then
+            echo "devDependency 'vitest' leaked into the runtime image"; exit 1
+          fi
+          echo "runtime image is production-only"
+      - run: docker run -d --name fe -p 3070:3070 frontend-boot
+      - name: Poll /healthz (fail if not healthy in window)
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3070/healthz; then echo "healthy"; exit 0; fi
+            sleep 2
+          done
+          echo "frontend did not become healthy"; docker logs fe; exit 1
 
   services:
     runs-on: ubuntu-latest
@@ -102,7 +129,10 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
-    needs: [frontend, services, tests, secret-scan, eval]
+    # Terminal fan-in: branch protection and any deploy automation read this job.
+    # frontend-boot is in the list (codex r2) so a boot-broken frontend image
+    # cannot present a green terminal signal.
+    needs: [frontend, frontend-boot, services, tests, secret-scan, eval]
     steps:
       - uses: actions/checkout@v4
       # .env and .env.ai-proxy are gitignored (untracked secret files). Compose
@@ -114,9 +144,9 @@ jobs:
           cp .env.example .env
           cp .env.ai-proxy.example .env.ai-proxy
           cp .env.redis.example .env.redis
-      # NOTE: this proves every image COMPILES, never that any of them runs. The
-      # one step that started a container and polled its health surface was the
-      # SvelteKit portal's, removed with the rebuild. Nothing here would notice a
-      # service that builds and then crashes on boot.
+      # NOTE: these steps prove every image COMPILES, never that any of them runs.
+      # Runtime coverage comes from the frontend-boot dependency above, and covers
+      # the frontend only — a domain service that builds and then crashes on boot
+      # is still invisible here.
       - name: Build images
         run: docker compose build

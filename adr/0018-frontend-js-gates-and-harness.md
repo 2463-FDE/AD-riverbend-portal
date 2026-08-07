@@ -1,6 +1,6 @@
 # ADR 0018 — JS gates on the inherited Next portal: Vitest + RTL + jsdom harness; CI test/typecheck/lint steps; boot check against the production image
 
-**Status:** Proposed — until the e1 implementation lands
+**Status:** Accepted — e1 implementation landed
 **Date:** 2026-08-06
 **Author:** Riverbend engagement team
 **Debt:** none directly — new scope, internal enabler `e1` (`docs/workflow/e1/`). Closes TODO-45

@@ -252,6 +252,17 @@ services:
       - "3070:3070"
     depends_on:
       - gateway
+    # E1-SPEC-13..15: truthful health status. node:22-slim has no curl/wget, so
+    # probe with a node -e HTTP GET — the language-native analogue of the
+    # gateway's `python -c urllib` probe. start_period covers `next start` boot
+    # (starting -> healthy); container-up but app-dead flips unhealthy within
+    # interval*retries. Additive only: ports/build untouched (topology tests).
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3070/healthz', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
 
 volumes:
   pgdata:

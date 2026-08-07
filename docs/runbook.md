@@ -62,11 +62,10 @@ for s in intake-service:8071 eligibility-service:8072 records-service:8073 \
 done
 ```
 
-The Next.js portal has no compose healthcheck: it reports up as soon as the
-container starts, whether or not it can reach the gateway. The one frontend that
-had a fail-closed `/healthz` was the SvelteKit rebuild, now descoped (branch
-`alt/sveltekit-portal`), so a dead-but-running UI is currently invisible to
-`make ps`.
+The Next.js portal has a compose `healthcheck` (added by `e1`, ADR 0018) polling
+its own `/healthz` route: `make ps` shows it `starting` during boot, then
+`healthy`, and flips `unhealthy` if the app stops serving while the container
+keeps running. `curl -s localhost:3070/healthz` → `{"status":"ok"}` when serving.
 
 A service that won't become healthy is almost always (a) Postgres not ready yet
 or (b) bad DB creds in `.env`. Check `make logs`.
@@ -175,6 +174,10 @@ the host. Removing PHI from logs is an open remediation item.
 
 ## CI
 
-`.github/workflows/ci.yml`: frontend build, per-service import smoke, unit tests
-(`pytest -m "not integration"`), then `docker compose build`. There is no
+`.github/workflows/ci.yml`: frontend build + JS gates (`typecheck`, `lint`,
+`npm test`) and a `frontend-boot` job that runs the production image and polls
+`/healthz` (ADR 0018, `e1`), per-service import smoke, unit tests
+(`pytest -m "not integration"`), then `docker compose build`. `docker-build` is
+the terminal fan-in job and `needs` `frontend-boot`, so a boot-broken frontend
+image cannot show green there. There is no
 secret-scan, dependency-vuln-scan, or image-scan step — another known gap.

@@ -70,8 +70,10 @@ Portal: http://localhost:3070  ·  Gateway docs: http://localhost:8070/docs
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -m "not integration"     # unit tests (no infra)
+pytest -m "not integration"     # backend unit tests (no infra)
 pytest -m integration           # needs Postgres + Redis up
+
+cd frontend && npm install && npm test   # frontend UI-component tests (Vitest)
 ```
 
 Coverage is uneven — the happy paths are covered, several security/edge paths

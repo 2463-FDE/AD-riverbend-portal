@@ -82,9 +82,10 @@ eval/rag/           RIV-160 retrieval eval + the CI drift gate
 - `make eval` — the drift gate (`eval/rag/check_drift.py`); also runs in CI.
 - Everyday targets are `##`-documented in the `Makefile`. That is the single source — do not
   restate them here or anywhere else.
-- **There is no JavaScript gate.** CI builds `frontend/` and nothing lints, type-checks, or tests
-  it. Nothing starts the frontend container either, so a build-clean, boot-broken UI ships green
-  (TODO-45).
+- **The frontend JS gate is Vitest + RTL + jsdom** (ADR 0018, landed by `e1`). CI runs
+  `npm run build`, `typecheck`, `lint`, and `npm test` on `frontend/`, plus a `frontend-boot` job
+  that `docker run`s the production image and polls `/healthz` — a boot-broken UI now goes red, not
+  green (closed TODO-45). Local one-command: `cd frontend && npm install && npm test`.
 
 ## 4. How things actually work
 
