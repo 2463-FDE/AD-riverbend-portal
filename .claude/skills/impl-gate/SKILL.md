@@ -36,8 +36,10 @@ own drift (same lesson as `.claude/skills/drift-gate/`).
    reverse.
 2. **Close the diff against the scope map both ways.** `git diff main...HEAD --stat`,
    then the full diff. Every changed file traces to a scope-map slice; every planned
-   slice appears in the diff or the PR-body draft records why not. An untraceable file
-   is a finding — unplanned scope, however helpful-looking, goes back to stage 4.
+   slice appears in the diff or the PR-body draft (`docs/workflow/<item>/pr-body.md`,
+   committed on the branch — implementation skill step 6) records why not. A missing
+   pr-body.md is itself a finding. An untraceable file is a finding — unplanned scope,
+   however helpful-looking, goes back to stage 4.
 3. **Planted-defect check.** For any diff hunk near known defects (`docs/debt-log.md`,
    `docs/landmines.md` §1, the phi-logging register), confirm the change does not
    silently repair or disturb a teaching artifact. A "helpful" fix of a planted defect
@@ -59,8 +61,10 @@ own drift (same lesson as `.claude/skills/drift-gate/`).
      plan's Landmines section
 7. **Verification evidence.** The plan's Verification section was run end-to-end,
    including negative (break-then-revert) checks — evidence in the implementation
-   session's notes or reproducible now. The PR-body draft discloses which slices ran
-   test-first and which didn't, and copies the plan's accepted residuals.
+   session's notes or reproducible now. The PR-body draft
+   (`docs/workflow/<item>/pr-body.md`) discloses which slices ran test-first and which
+   didn't, records every plan deviation with rationale, and copies the plan's accepted
+   residuals.
 
 ## Outcome
 

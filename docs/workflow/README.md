@@ -44,6 +44,8 @@ docs/workflow/
     plan.md           ← code plan
     gate-findings.md  ← gate round log (created on first finding; owned by the
                         drift-gate skill, dispositions filled in stage 3)
+    pr-body.md        ← PR-body draft (written in stage 4 before the impl gate;
+                        deviations, test-first split, residuals, Risk & landmines)
     impl-findings.md  ← impl-gate round log (created on first finding; owned by the
                         impl-gate skill, dispositions filled in stage 4)
 ```

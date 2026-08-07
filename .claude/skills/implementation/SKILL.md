@@ -29,8 +29,8 @@ test-first and which didn't.
 
 Deviation handling, per the pipeline:
 
-- **Plan fact wrong, fix trivial** (path moved, name changed): patch, note it in the PR
-  body, continue.
+- **Plan fact wrong, fix trivial** (path moved, name changed): patch, record it in
+  `docs/workflow/<item>/pr-body.md` (see end-of-implementation step 6), continue.
 - **Plan design wrong** (seam doesn't hold, change fights a wall): stop. Back to stage 3;
   plan revised and re-gated; spec unchanged. Do not improvise structure mid-loop.
 
@@ -47,6 +47,15 @@ Deviation handling, per the pipeline:
    anchor to.
 5. Run the plan's own Verification section end-to-end, including its negative
    (break-then-revert) checks.
+6. Write the PR-body draft at `docs/workflow/<item>/pr-body.md` and commit it on the
+   branch. It must contain: the required "Risk & landmines" section (§1 zones touched or
+   "none touched"); the accepted residuals copied from the plan's Landmines section;
+   which slices ran test-first and which didn't; every plan deviation with its rationale;
+   and any planned slice absent from the diff with why — an empty result ("discovery
+   found nothing to fix") is still recorded. The impl gate checks this file (steps 2 and
+   7 of `.claude/skills/impl-gate/`); the branch is not gate-ready without it. Commit
+   messages and session memory do not carry these disclosures — if it isn't in the
+   draft, the gate and the next session don't know it.
 
 ## Landing
 
@@ -57,9 +66,10 @@ Deviation handling, per the pipeline:
   come back here as a round in `impl-findings.md`; the stamp
   (`Status: IMPLEMENTED`) is what makes the branch push-ready.
 - **Ask before pushing.** Push is human-gated.
-- PR body: "Risk & landmines" section is required — name the §1 zones touched or "none
-  touched". Copy the accepted residuals from the plan's Landmines section; a residual the
-  plan accepted is disclosed in the PR, not rediscovered by review.
+- PR body: copy from `docs/workflow/<item>/pr-body.md` (end-of-implementation step 6);
+  the draft stays on the branch as the durable record. The "Risk & landmines" section is
+  required — a residual the plan accepted is disclosed in the PR, not rediscovered by
+  review.
 - After push: comment `@codex-review`; answer each round with an `rN:` disposition
   comment (A/B/C labels); iterate until dry. Structural findings go back to stage 3 per
   the pipeline; trivial ones are patched and re-reviewed.
