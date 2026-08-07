@@ -7,8 +7,10 @@ description: Gate stage of the delivery workflow (docs/workflow/README.md) — f
 
 Input: `docs/workflow/<item>/spec.md` with `Status: AGREED` (frozen) and
 `docs/workflow/<item>/plan.md` with `Status: DRAFT`.
-Output: either the plan stamped `Status: GATED <date>`, or a findings list and the plan
-back to stage 3 (spec unchanged, per the pipeline).
+Output: either the plan stamped `Status: GATED <date>`, or a findings round appended to
+`docs/workflow/<item>/gate-findings.md` and the plan back to stage 3 (spec unchanged,
+per the pipeline). The round log — not chat history or session memory — is what carries
+findings between sessions; workflow state must always be derivable from the docs alone.
 
 The mechanism is codified from the e1 prototype run (2026-08-06): a fresh-context read of
 the plan against the spec caught real gaps the authoring session could not see. The fresh
@@ -49,15 +51,58 @@ context is the mechanism, not a nicety.
 
 ## Outcome
 
-- **Any finding → no stamp.** Report the findings list (SPEC-cited, one line each). Plan
-  returns to stage 3; spec unchanged. Re-gate is a full re-run, fresh session.
+- **Any finding → no stamp.** Append a round to `docs/workflow/<item>/gate-findings.md`
+  (create the file on the first-ever finding; template below), findings SPEC-cited, one
+  line each. Plan returns to stage 3; spec unchanged. Re-gate is a full re-run, fresh
+  session.
 - **Clean → stamp.** Set the plan header to `Status: GATED <date>` and append a short
   gate record under it: date, "gated fresh-context", and the residual-named SPECs (so
   implementation and review inherit the accepted residuals without re-deriving them).
+  If `gate-findings.md` exists, close it with a final `## Round N — <date>` reading
+  `Clean — stamped.` so the round log agrees with the plan header.
   The stamp is what `.claude/skills/implementation/` checks at entry.
+
+## Round log (`gate-findings.md`)
+
+Gate sessions append rounds; the stage-3 revision session fills dispositions. The round
+number is the last round in the file plus one (1 for a new file). State decodes from
+the docs alone:
+
+| Observation | State |
+|---|---|
+| plan `DRAFT`, no `gate-findings.md` | gate not yet run |
+| latest round has findings with empty dispositions | stage-3 revision pending |
+| dispositions filled, plan still `DRAFT` | re-gate pending |
+| plan `GATED` | done; round log closed |
+
+Template:
+
+```markdown
+# <item> gate findings
+
+> Round log for the drift gate (see `.claude/skills/drift-gate/`). Gate sessions append
+> rounds; the stage-3 revision session fills dispositions. Plan status lives in plan.md.
+
+## Round 1 — <date>
+
+<n> findings, no stamp.
+
+| # | SPEC | Finding | Disposition (stage 3) |
+|---|------|---------|-----------------------|
+| 1 | <id> | <one line> | |
+```
+
+**Round-3 rule:** a third round with any open finding stops the loop. Report to the
+owner, who decides per finding: accept it as a named residual, overrule it, or change
+the spec (stage 2, explicit decision). Record each decision in that finding's
+disposition cell; the next gate run honors recorded owner decisions rather than
+re-flagging them.
 
 ## Never
 
 - Never gate a plan this session helped write.
-- Never edit plan or spec from the gate session.
+- Never edit plan or spec from the gate session — the round log and the stamp are the
+  only files a gate session writes.
 - Never stamp with an open finding, however minor — minor goes back to stage 3 cheaply.
+- Never hand findings off through chat or memory alone — if it isn't in the round log,
+  the next session doesn't know it.

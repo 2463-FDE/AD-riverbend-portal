@@ -37,7 +37,13 @@ docs/workflow/
     requirements.md   ← requirement synthesis output
     spec.md           ← EARS spec (contract)
     plan.md           ← code plan
+    gate-findings.md  ← gate round log (created on first finding; owned by the
+                        drift-gate skill, dispositions filled in stage 3)
 ```
+
+Workflow state is derivable from these files alone — plan `Status:` header plus the
+round log; no session memory required. The decode table lives in
+`.claude/skills/drift-gate/`.
 
 ## Ground rules
 
