@@ -1,7 +1,7 @@
 # e1 PR body + delivery artifact
 
-> Status: PUSHED PR #49 2026-08-07
->   DRAFT -> IMPLEMENTED 2026-08-07 -> PUSHED PR #49 2026-08-07 -> (merge pending)
+> Status: MERGED PR #49 2026-08-07 (squash `efe6f32`)
+>   DRAFT -> IMPLEMENTED 2026-08-07 -> PUSHED PR #49 2026-08-07 -> MERGED 2026-08-07
 > Impl-gate record: impl-gated fresh-context 2026-08-07, round 3 clean — branch
 > `feat/noref-e1-frontend-js-gates` @ `0dc7ef5`. Rounds 1 (PR-body draft absent) and 2
 > (runbook `secret-scan` clause dropped, colliding with TODO-52) both fixed and re-verified.
@@ -11,9 +11,14 @@
 > keeps `@types/node` pin); SPEC-15 verified at gate round 2 not stage 4 (plan Verification
 > item 4 negative not executable under default CMD — disclosed below).
 >
-> Working-tree delivery artifact for branch `feat/noref-e1-frontend-js-gates`, landed on
-> `main` via noncode-merge (not committed on the code branch). The content below the rule is
-> the PR body, already open as PR #49. Codex round 1 is logged in `review-findings.md`.
+> Codex rounds: r1 (1 A, fixed `f1f3be5` — dev deps in the shipped image), r2 (1 A, fixed
+> `43aca20` — `frontend-boot` outside the terminal fan-in), r3 dry (verdict `approve`, no
+> material findings). Both fixes trivial, no re-gate. See `review-findings.md`.
+>
+> Working-tree delivery artifact for branch `feat/noref-e1-frontend-js-gates` (deleted on
+> merge), landed on `main` via noncode-merge (not committed on the code branch). The content
+> below the rule is the PR body as merged in PR #49. All three codex rounds are logged in
+> `review-findings.md`.
 > Title: `feat(frontend): add JS gates, Vitest harness, truthful /healthz`
 
 ---
@@ -77,7 +82,16 @@ an inline suppression. `next lint` reports one pre-existing non-failing `jsx-a11
   separate steps so a failure is attributable per gate. New `frontend-boot` job (`needs: frontend`)
   builds the same Dockerfile the compose image builds, `docker run`s it standalone (the health
   route needs no gateway), and polls `/healthz` for up to 60s, dumping `docker logs` on failure.
-  The stale "There is no JavaScript gate" comment block is removed — it is now false.
+  It is in `docker-build.needs` (codex r2) — `docker-build` is the terminal fan-in job branch
+  protection and deploy automation read, so a red boot probe cannot present a green terminal
+  signal (E1-SPEC-17). The stale "There is no JavaScript gate" comment block is removed — it is now
+  false, and `docker-build`'s "nothing here would notice a boot crash" NOTE is narrowed to the
+  domain services, which is what it is still true of.
+- `frontend/Dockerfile` multi-stage (codex r1): a `build` stage does the full `npm install` +
+  `next build`; a `runtime` stage does `npm ci --omit=dev` and copies only `.next` +
+  `next.config.mjs`, so the Vitest/Vite/jsdom/RTL/ESLint toolchain this PR adds never reaches the
+  shipped image. Pinned by a `frontend-boot` step that inspects the built image and fails if
+  `node_modules/vitest` survives.
 - `docker-compose.yml`: `healthcheck` block on the `frontend` service only.
 - Docs corrected in the same PR per the CLAUDE.md self-correction rule: CLAUDE.md §3, `README.md`,
   `docs/runbook.md` (the one-command local run and the healthcheck/CI descriptions), `docs/todo.md`
