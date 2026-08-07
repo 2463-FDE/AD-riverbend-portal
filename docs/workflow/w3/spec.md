@@ -1,6 +1,6 @@
 # W3 Spec (EARS)
 
-> Status: DRAFT
+> Status: AGREED 2026-08-07 (frozen)
 > Source: docs/workflow/w3/requirements.md (AGREED 2026-08-06)
 >
 > Backfill of record for W3-REQ-1..8 and 10: statements are derived from the requirements
@@ -23,7 +23,7 @@
 |----|-----------|-------|
 | W3-SPEC-3 | When a front-desk user sends a follow-up message within a visit conversation, the assistant shall use the context of that visit's earlier turns | |
 | W3-SPEC-4 | The assistant shall scope conversation context to a single visit; context from one visit shall never influence or be readable from another visit's or another patient's conversation | negative tests (landmines §3) |
-| W3-SPEC-5 | Visit context shall persist only for a configured visit lifetime, after which it is no longer retrievable | |
+| W3-SPEC-5 | When a configured inactivity lifetime elapses since a visit conversation's last activity, that visit's context shall no longer be retrievable | inactivity lifetime, not fixed lifetime — active visits legitimately extend it |
 
 ### W3-REQ-3 — grounded verdicts
 
@@ -44,7 +44,7 @@
 
 | ID | Statement | Notes |
 |----|-----------|-------|
-| W3-SPEC-11 | While the payer is unavailable or degraded, the registration path shall continue to accept and process submissions | scoped to the eligibility dependency, not TODO-1 |
+| W3-SPEC-11 | While the payer is unavailable or degraded, the registration path shall not reject or block submissions because of the eligibility dependency | scoped to the eligibility dependency; TODO-1 breakage is out of scope |
 | W3-SPEC-12 | If eligibility verification fails or times out during a registration, then the registration shall proceed with eligibility marked unverified rather than blocking or failing the registration | |
 | W3-SPEC-13 | A payer outage shall not exhaust the registration path's request-handling capacity | RIV-141 non-recurrence |
 
@@ -61,7 +61,7 @@
 | ID | Statement | Notes |
 |----|-----------|-------|
 | W3-SPEC-17 | If a coverage verdict cannot be verified, then any answer shown to the front desk shall be explicitly marked as unverified or pending | |
-| W3-SPEC-18 | The system shall never present an unverified eligibility outcome as a coverage denial on any front-desk surface | negative tests (landmines §3) |
+| W3-SPEC-18 | The system shall never present an unverified eligibility outcome as a coverage denial on any front-desk surface | negative tests (landmines §3); ⚠ plan carry-over: the shared portal status-badge tone map renders unknown/unverified quieter than a denial — the plan must give the new surface a distinct verdict presentation |
 
 ### W3-REQ-8 — ADR of record
 
@@ -98,24 +98,3 @@
 | W3-REQ-8 | W3-SPEC-19 |
 | W3-REQ-9 | W3-SPEC-20, W3-SPEC-21, W3-SPEC-22 |
 | W3-REQ-10 | W3-SPEC-23, W3-SPEC-24 |
-
-## 3. Open questions
-
-1. **W3-SPEC-11's statement is false on `main` as written.** Registration is entirely
-   non-functional (TODO-1: the portal payload 422s at intake-service, the gateway relays
-   it as 200). The Notes column scopes the statement to the eligibility dependency; the
-   statement text does not, and the backfill verification reads statements. Reword before
-   freeze — e.g. "While the payer is unavailable or degraded, the registration path shall
-   not reject or block submissions because of the eligibility dependency" — fix the text,
-   not the code.
-2. **W3-SPEC-5 contradicts the implemented sliding TTL.** "persist only for a configured
-   visit lifetime" — but the TTL refreshes on every write
-   (`tests/test_visit_memory.py:138`, `test_ttl_is_sliding_and_created_at_is_preserved`),
-   so an active visit's context outlives any fixed lifetime indefinitely. Behavior is
-   correct; the statement is wrong. Reword to an inactivity lifetime.
-3. **W3-SPEC-18 constraint for the portal surface (carries into the plan).** The shared
-   `frontend/app/components/StatusBadge.tsx` maps `pending → warn` and has no entry for
-   `unknown` or `inactive` — both fall through to `neutral`, so a genuine denial renders
-   *quieter* than a failed check. Reusing the shared component silently breaks
-   W3-SPEC-18 on the new surface; the plan needs a separate verdict tone map, and the
-   negative-test rule (landmines §3) applies to this path regardless.
