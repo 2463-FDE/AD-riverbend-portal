@@ -69,6 +69,9 @@ Run these against the finished draft; each has caught a real gap.
 # W<N> Code Plan — <short name>
 
 > Status: DRAFT | GATED <date>
+> Plan maturity only. The plan header never carries delivery state (IMPLEMENTED, pushed,
+> merged) — that lives in `docs/workflow/w<N>/pr-body.md`. The impl gate does not touch
+> this header.
 > Workflow stage 3 (code plan). Anchors to the frozen spec `docs/workflow/w<N>/spec.md`
 > (W<N>-SPEC-1..<n>). Requirements: `docs/workflow/w<N>/requirements.md` (AGREED <date>).
 

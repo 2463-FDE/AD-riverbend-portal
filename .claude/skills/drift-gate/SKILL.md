@@ -65,15 +65,9 @@ context is the mechanism, not a nicety.
 ## Round log (`gate-findings.md`)
 
 Gate sessions append rounds; the stage-3 revision session fills dispositions. The round
-number is the last round in the file plus one (1 for a new file). State decodes from
-the docs alone:
-
-| Observation | State |
-|---|---|
-| plan `DRAFT`, no `gate-findings.md` | gate not yet run |
-| latest round has findings with empty dispositions | stage-3 revision pending |
-| dispositions filled, plan still `DRAFT` | re-gate pending |
-| plan `GATED` | done; round log closed |
+number is the last round in the file plus one (1 for a new file). The gate-stage state
+decode table lives in `docs/workflow/README.md` ("State decode tables"), next to the
+files it decodes.
 
 Template:
 

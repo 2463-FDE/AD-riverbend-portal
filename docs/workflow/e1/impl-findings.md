@@ -97,4 +97,9 @@ Gate evidence (reproduced fresh this session):
   trailer on `0dc7ef5`, no `docs/landmines.md` §1 zone touched. Planted defects intact — no
   inherited `frontend/**` source modified, registration/TODO-1 untouched.
 
-Plan stamped `Status: IMPLEMENTED 2026-08-07`. Push-ready; push stays human-gated.
+Delivery stamped `Status: IMPLEMENTED 2026-08-07` — on `pr-body.md` since the 2026-08-07
+state-split; the plan header stays `GATED`. **The item was pushed after this gate:** PR #49
+is open with codex round 1 pending. Current delivery state and the codex loop live in
+`pr-body.md` and `review-findings.md`. (This line was corrected from its original
+"Push-ready; push stays human-gated", which predated the push — recorded, not deleted, per
+TODO-52's convention.)
