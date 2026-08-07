@@ -26,6 +26,13 @@ a route body short enough to be the spec of itself).
 5. **Owner reviews; plan goes to the gate.** Structural review findings during
    implementation come back to this stage (spec unchanged) per the pipeline.
 
+## Optional input: spec-anchored mockup
+
+Where the item's spec names the portal as a system element, a static mockup
+(`.claude/skills/mockup/`) may inform this stage. The mockup is evidence, not contract —
+it stays scratch (untracked), and what it teaches lands here as text: plan-stage
+decisions and per-SPEC changes. Items with no UI surface skip this entirely.
+
 ## Revision after a gate round
 
 When the gate returns the plan, the findings are the latest round in

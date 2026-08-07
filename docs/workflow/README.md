@@ -40,7 +40,11 @@ requirement synthesis → spec (EARS) → code plan
   gate stamps the plan `Status: GATED` (required by the implement skill at entry); the impl
   gate checks the finished branch against plan and spec pre-push and stamps `pr-body.md`
   `Status: IMPLEMENTED` — the plan header stays `GATED`, delivery state lives on `pr-body.md`
-  (push stays human-gated). All six stages are now defined.
+  (push stays human-gated). All six stages are now defined. One optional stage input is
+  also defined: a spec-anchored mockup for items whose spec names the portal as a system
+  element (`.claude/skills/mockup/`, decided 2026-08-07 on first reach with W3) — plan-stage
+  evidence only, kept scratch outside the repo, never a tracked artifact; items without a
+  UI surface skip it.
 
 ## Layout
 

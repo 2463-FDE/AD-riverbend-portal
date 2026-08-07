@@ -101,4 +101,21 @@
 
 ## 3. Open questions
 
-None.
+1. **W3-SPEC-11's statement is false on `main` as written.** Registration is entirely
+   non-functional (TODO-1: the portal payload 422s at intake-service, the gateway relays
+   it as 200). The Notes column scopes the statement to the eligibility dependency; the
+   statement text does not, and the backfill verification reads statements. Reword before
+   freeze — e.g. "While the payer is unavailable or degraded, the registration path shall
+   not reject or block submissions because of the eligibility dependency" — fix the text,
+   not the code.
+2. **W3-SPEC-5 contradicts the implemented sliding TTL.** "persist only for a configured
+   visit lifetime" — but the TTL refreshes on every write
+   (`tests/test_visit_memory.py:138`, `test_ttl_is_sliding_and_created_at_is_preserved`),
+   so an active visit's context outlives any fixed lifetime indefinitely. Behavior is
+   correct; the statement is wrong. Reword to an inactivity lifetime.
+3. **W3-SPEC-18 constraint for the portal surface (carries into the plan).** The shared
+   `frontend/app/components/StatusBadge.tsx` maps `pending → warn` and has no entry for
+   `unknown` or `inactive` — both fall through to `neutral`, so a genuine denial renders
+   *quieter* than a failed check. Reusing the shared component silently breaks
+   W3-SPEC-18 on the new surface; the plan needs a separate verdict tone map, and the
+   negative-test rule (landmines §3) applies to this path regardless.
