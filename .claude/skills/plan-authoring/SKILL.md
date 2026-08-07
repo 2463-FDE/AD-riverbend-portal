@@ -26,6 +26,15 @@ a route body short enough to be the spec of itself).
 5. **Owner reviews; plan goes to the gate.** Structural review findings during
    implementation come back to this stage (spec unchanged) per the pipeline.
 
+## Revision after a gate round
+
+When the gate returns the plan, the findings are the latest round in
+`docs/workflow/wN/gate-findings.md` — the round log is the handoff, not chat history or
+session memory. Address every finding and fill its disposition cell (what changed, or
+the recorded owner decision where one overruled a finding or accepted it as residual),
+re-run the three checks, and leave the plan at `Status: DRAFT` for a full fresh-session
+re-gate. The round-3 escalation rule lives in `.claude/skills/drift-gate/`.
+
 ## Three checks (lessons of e1)
 
 Run these against the finished draft; each has caught a real gap.

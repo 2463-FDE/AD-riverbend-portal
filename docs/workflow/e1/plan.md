@@ -1,6 +1,9 @@
 # E1 Code Plan — frontend test harness + healthcheck
 
-> Status: DRAFT
+> Status: GATED 2026-08-07
+> Gate record: gated fresh-context 2026-08-07, round 1 clean (no findings; no round log
+> created). Residual-named SPECs: E1-SPEC-11 (route-level probe answers 200 while a page
+> may break at runtime — accepted, see Landmines / risk).
 > Workflow stage 3 (code plan). Anchors to the frozen spec `docs/workflow/e1/spec.md`
 > (E1-SPEC-1..19). Requirements: `docs/workflow/e1/requirements.md` (AGREED 2026-08-06).
 
