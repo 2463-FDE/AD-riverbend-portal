@@ -112,6 +112,40 @@
   register-first / out-of-band re-verification (instant 201 + async verify),
   and moving the gateway `proxy_intake` path off the legacy error-swallowing
   `_post` onto `_post_checked`.
+- **Three residuals measured 2026-08-07** (W3 backfill verification against
+  `docs/workflow/w3/spec.md`; none is new breakage, and none is scheduled):
+  1. **"Bounded" means each network phase, not total wall time.** The timeouts
+     cap connect and read separately — `requests`' read timeout is the gap
+     between bytes and its connect timeout does not cover `getaddrinfo` — so a
+     payer trickling bytes or a hanging resolver can exceed the ~6s design
+     budget while every individual phase stays inside its bound. Classification
+     stays correct (a slow payer lands on the slow side); the number is a design
+     budget, not a hard ceiling. Self-documented at
+     `adr/0010-eligibility-resilience.md:246-251`; recorded here because D4's
+     status above otherwise reads as a total-time guarantee.
+  2. **An unexpected exception in verification still fails the registration,
+     after the patient row is committed.** `_verify_eligibility`
+     (`services/intake-service/app.py:205-213`) wraps its call in `try/finally`
+     with no `except`, so anything the shaping helper does not catch propagates
+     out of `POST /intake` as a 500 — and `create_intake` commits the patient
+     (`:96`) and the coverage row (`:98`) *before* calling it at `:109` and
+     records consents at `:111` *after*. The failure window therefore leaves a
+     patient with no consent rows and a 500 at the desk. The `try/finally` is
+     deliberate and test-pinned for what it does guarantee — the breaker always
+     settles, `tests/test_intake_breaker.py:469` — so this is reported, not
+     fixed; closing it means deciding what `POST /intake` owes a caller when a
+     non-eligibility fault lands mid-sequence, which is register-first's
+     territory.
+  3. **The verdict is never persisted.** `_create_coverage` writes
+     `payer_name`/`member_id`/`group_number`/`plan_type` only, so
+     `insurance_coverages.status` keeps its schema default `'unknown'`
+     (`db/schema.sql:53`) and `verified_at` stays NULL for every registration,
+     whatever the payer returned. The verdict exists only as a field in the
+     `POST /intake` response (`schemas.IntakeResponse.eligibility`), which no
+     front-desk surface renders (see TODO-56). Noted in
+     `adr/0010-eligibility-resilience.md:153-157`; the consequence worth having
+     here is that no stored record distinguishes "verified active" from "never
+     checked", so nothing can be reported on or re-verified from the database.
 
 ### D3b — Redis holds PHI-adjacent state on an unauthenticated, host-published instance
 - **Location:** `docker-compose.yml` `redis:` service (`ports: 6379:6379`, no
@@ -231,6 +265,8 @@
 | D6 | `services/interop-service/app.py:7` | HL7 parser maps PID/PV1 only; AL1 (allergies) and RXA (meds) silently dropped — missing allergy data is a patient-safety risk | RIV-160 | OPEN |
 | D8 | `services/records-service/app.py:95,145` | N+1 encounter queries + full-table ILIKE search with no index → chart loads degrade with data growth. **Widened 2026-08-06:** `db/schema.sql` contains **zero `CREATE INDEX` statements** — not just the known gap on `records.body`. `records.patient_id`, `records.encounter_id`, `encounters.patient_id`, `appointments.patient_id`, `insurance_coverages.patient_id`, `consents.patient_id` and the `audit_logs` columns are all unindexed, so every FK-shaped lookup on the hot chart-load path is a sequential scan. That, not the N+1 alone, is the mechanism behind the "degrades with growth" symptom, and indexing is the cheaper half of the fix | — | OPEN |
 | D11 | `services/records-service/app.py:91` | IDOR: sequential integer `patient_id` served to any logged-in user; sessions not patient-bound — cross-patient chart reads succeed. **Exposure is larger than id-walking (measured 2026-08-06):** `q` is interpolated into the search pattern un-escaped at `records-service/app.py:48` and `:159`, so `GET /records/search?q=%25` (a bare `%` wildcard) matches every row and returns full `Record.body` text for all of them, with no `LIMIT`. One request, whole corpus, no ids required. Escape the LIKE metacharacters and bound the result set; size the D11 fix against this too, per `docs/landmines.md` §1 | — | OPEN (xfail test in suite) |
+| D13 | `services/ai-assistant/` (both endpoints); `adr/0004`, `adr/0006`, `adr/0009`, `adr/0011`, `docs/phi-logging-policy.md` | **PHI to a cloud LLM vendor with no BAA.** Riverbend is a covered entity, so any prompt may carry PHI, and the assistant runs against Bedrock on standard SaaS terms — no executed Business Associate Agreement covers it. `/ai/*` is the estate's only vendor-egress path, which is why every AI ADR treats D13 as the constraint it designs around: `/intake-instructions` is safe by construction (closed-vocabulary enums/bools, ADR 0004) and `/visit-chat` never egresses clerk prose (ADR 0011; `tests/test_visit_chat_phi.py:239` asserts the prompt is byte-identical to the deterministic build). So the boundary holds *today by construction*, not by contract — a future feature that interpolates free text into a prompt breaches it with no gate to stop it. `adr/0009-ai-assistant-bedrock-provider.md:21-33` names the closing mechanism: Bedrock is HIPAA-eligible under an executed AWS BAA with a BAA-covered region/model, so routing under BAA closes this rather than widening it. **Row added 2026-08-07** (W3 backfill): D13 gated a whole path and was cited in five ADRs, a policy doc and two code comments while having no entry in this register | — | OPEN — precondition for any real-PHI traffic; scenario-scheduled for W8 |
+| D14 | no code site on `main` — defined in `docs/specs-deprecated/w8.md:7,20,48` (archive), referenced by `adr/0009-ai-assistant-bedrock-provider.md:158` | **Fake de-identification.** The scenario's "de-identified" export strips `name` only, leaving **17 of the 18** Safe-Harbor identifiers (45 CFR 164.514(b)(2)) — DOB, address, phone, email, SSN, MRN — so the output is trivially re-identifiable while being described as anonymized. The business risk is the label, not the data: a payload called de-identified is handled with fewer controls and may be shared outside the covered entity's protections. **Verified 2026-08-07: no such export or scrub path exists on `main`** — `ai-assistant` exposes only `/intake-instructions` and `/visit-chat`, and the `redaction.py` copies are log-scrubbers (SSN/email/phone patterns), not a de-identification path. D14 is therefore a *forward* constraint: it binds whoever builds the export, and ADR 0009:154-161 already records that any future "anonymized" payload must be a real Safe-Harbor or Expert-Determination de-identification, not a one-field strip. **Row added 2026-08-07** (W3 backfill), definition sourced from the deprecated spec archive because that is the only place it was written down | — | OPEN — no implementation to fix; constrains the W8 build |
 
 ## Remediation runbook — PHI + secret history purge (human-run, irreversible)
 
