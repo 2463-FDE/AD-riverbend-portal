@@ -142,6 +142,42 @@ describe("assistant chat surface", () => {
     ).toBeInTheDocument();
   });
 
+  // NEGATIVE (docs/landmines.md §3 — an unqualified answer read as a tailored
+  // one is the harm). The gateway reports "unknown" when it could not recognise
+  // ai-assistant's health field (rolling deploy, dropped field); collapsing that
+  // into "ok" is the green-dashboard lie the tri-state exists to prevent.
+  it("marks an unreported assistant mode instead of rendering it as normal (W3-SPEC-22)", async () => {
+    apiFetch.mockResolvedValueOnce(okTurn({ assistant: "unknown" }));
+    render(<AssistantPage />);
+
+    await send("Is this patient covered?");
+
+    // The turn still succeeds — the verdict was paid for by a real payer call.
+    expect(await screen.findByText(/Coverage is active with Aetna/)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Coverage active");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    // ...but it is not presented as a normal one.
+    expect(screen.getByText(/did not report how it produced this reply/i)).toBeInTheDocument();
+    // Not the degraded wording: claiming a checklist we cannot confirm would be
+    // a false alarm on every turn of a rolling deploy (gateway app.py:1180).
+    expect(
+      screen.queryByText(/assistant is answering in a degraded mode/i)
+    ).not.toBeInTheDocument();
+  });
+
+  it("marks neither mode on a healthy turn (W3-SPEC-22)", async () => {
+    apiFetch.mockResolvedValueOnce(okTurn());
+    render(<AssistantPage />);
+
+    await send("Is this patient covered?");
+    await screen.findByText(/Coverage is active with Aetna/);
+
+    expect(screen.queryByText(/did not report how it produced this reply/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/assistant is answering in a degraded mode/i)
+    ).not.toBeInTheDocument();
+  });
+
   // NEGATIVE (docs/landmines.md §3 — authz path). The gateway is the only
   // enforcement point; the surface must state the refusal and stop asking.
   it("stops the conversation on a 403 and never retries (W3-SPEC-21)", async () => {

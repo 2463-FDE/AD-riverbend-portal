@@ -39,7 +39,11 @@ interface Turn {
   text: string;
   disclaimer?: string;
   eligibility?: EligibilityVerdict | null;
-  degraded?: boolean;
+  // Carried as the gateway's tri-state, not as a boolean. "unknown" is not a
+  // quieter "degraded" and it is certainly not "ok": it means the gateway could
+  // not recognise ai-assistant's health field at all (app.py:1180). Flattening
+  // it either way is a claim the server explicitly refused to make.
+  assistant?: VisitChatResponse["assistant"];
   stale?: boolean;
 }
 
@@ -146,7 +150,7 @@ export default function AssistantPage() {
           // Both are honest degradations riding a SUCCESSFUL turn — the clerk
           // has a real answer. Rendering them as errors would train the desk to
           // ignore the surface on the days it matters most.
-          degraded: data.assistant === "degraded",
+          assistant: data.assistant,
           stale: data.visit_memory === "stale",
         },
         ...(carriesOn ? [] : [BOUNDARY]),
@@ -198,11 +202,18 @@ export default function AssistantPage() {
                   {turn.disclaimer}
                 </p>
               )}
-              {turn.degraded && (
+              {turn.assistant === "degraded" && (
                 <div className="rb-alert rb-alert--info" style={{ marginTop: 8 }}>
                   The assistant is answering in a degraded mode — this reply is a standard
                   checklist rather than a tailored one. The coverage verdict above is
                   unaffected.
+                </div>
+              )}
+              {turn.assistant === "unknown" && (
+                <div className="rb-alert rb-alert--info" style={{ marginTop: 8 }}>
+                  The assistant did not report how it produced this reply, so treat its
+                  wording as unconfirmed — it may be a standard checklist rather than a
+                  tailored one. The coverage verdict above is unaffected.
                 </div>
               )}
               {turn.stale && (
