@@ -77,8 +77,12 @@ def test_encounter_record_ids_match_goldset_numbering():
 # --------------------------------------------------- identity resolution
 
 def test_match_key_none_mirrors_current_intake():
+    # "none" is the mode the frozen REPORT.md was measured under, and the eval
+    # keeps simulating it. Since W2 it is no longer what intake DOES — intake
+    # evaluates the ADR 0005 tier-1 key and flags candidates — but it is still
+    # what intake ACHIEVES: nothing merges, so every row is still its own chart.
     identities = rag_data.resolve_identities(PATIENTS, "none")
-    assert len(identities) == 5  # every row its own "human" — intake today
+    assert len(identities) == 5  # every row its own "human"
 
 
 def test_match_key_ssn_collapses_all_three_marias_as_candidates():
@@ -436,6 +440,61 @@ def test_embedding_ranks_matching_document_first(tmp_path, monkeypatch):
     assert r.retrieve("penicillin allergy", k=1) == [1]
     assert r.retrieve("lisinopril physical", k=1) == [2]
     assert r.retrieve("cbc lab", k=3)[0] == 3
+
+
+# ------------------------------------------------- corpus cap (W2-SPEC-11)
+
+def test_corpus_over_the_cap_refuses_before_spending_anything(tmp_path, monkeypatch):
+    # Embedding is the only thing in this repo that spends against the client's
+    # AI budget, so the guard has to fire BEFORE the first encode — and before
+    # the heavy imports, which is why an over-cap corpus costs nothing at all.
+    encode_log = _install_fake_embedding_stack(monkeypatch)
+    r = rag_retriever.EmbeddingRetriever(
+        FAKE_CORPUS, cache_dir=str(tmp_path), max_corpus_docs=2
+    )
+    with pytest.raises(rag_retriever.CorpusTooLarge) as exc_info:
+        r.retrieve("penicillin", k=1)
+    # The operator needs both numbers to decide whether to raise the cap.
+    assert "3" in str(exc_info.value) and "2" in str(exc_info.value)
+    assert encode_log == []
+    assert os.listdir(str(tmp_path)) == []
+
+
+def test_over_cap_refuses_rather_than_truncating(tmp_path, monkeypatch):
+    """The failure mode this guard exists to prevent: embedding the first N
+    documents would change every score in REPORT.md while the drift gate stayed
+    green, and a smaller corpus scoring differently is indistinguishable from a
+    retrieval regression."""
+    _install_fake_embedding_stack(monkeypatch)
+    r = rag_retriever.EmbeddingRetriever(
+        FAKE_CORPUS, cache_dir=str(tmp_path), max_corpus_docs=1
+    )
+    with pytest.raises(rag_retriever.CorpusTooLarge):
+        r.retrieve("penicillin", k=1)
+    assert r._doc_vectors is None
+
+
+def test_corpus_at_or_under_the_cap_is_unchanged(tmp_path, monkeypatch):
+    encode_log = _install_fake_embedding_stack(monkeypatch)
+    r = rag_retriever.EmbeddingRetriever(
+        FAKE_CORPUS, cache_dir=str(tmp_path), max_corpus_docs=len(FAKE_CORPUS)
+    )
+    assert r.retrieve("penicillin allergy", k=1) == [1]
+    assert encode_log == [3, 1]
+
+
+def test_cap_default_comes_from_the_environment(tmp_path, monkeypatch):
+    _install_fake_embedding_stack(monkeypatch)
+    monkeypatch.setenv("RAG_MAX_CORPUS_DOCS", "1")
+    r = rag_retriever.EmbeddingRetriever(FAKE_CORPUS, cache_dir=str(tmp_path))
+    with pytest.raises(rag_retriever.CorpusTooLarge):
+        r.retrieve("penicillin", k=1)
+
+
+def test_todays_corpus_is_far_under_the_default_cap():
+    # The cap is a guard against a corpus that grew, not a working limit: it
+    # must not be the thing that makes `make eval` go red today.
+    assert len(ENCOUNTERS) < rag_retriever.DEFAULT_MAX_CORPUS_DOCS
 
 
 def test_corpus_hash_keys_on_content_and_model():

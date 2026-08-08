@@ -112,7 +112,7 @@ def settled_corpus_fingerprint(before):
     return after
 
 
-def build_retriever(name: str, patients, encounters, cases):
+def build_retriever(name: str, patients, encounters, cases, max_corpus_docs=None):
     if name == "stub":
         return retriever_mod.StubRetriever.perfect_for(cases), "stub oracle (upper bound: answers each query with its gold citations)"
     by_id = {p.id: p for p in patients}
@@ -120,7 +120,11 @@ def build_retriever(name: str, patients, encounters, cases):
         e.record_id: retriever_mod.encounter_document(by_id[e.patient_id].name, e)
         for e in encounters
     }
-    embed = retriever_mod.EmbeddingRetriever(corpus, cache_dir=os.path.join(HERE, ".cache"))
+    embed = retriever_mod.EmbeddingRetriever(
+        corpus,
+        cache_dir=os.path.join(HERE, ".cache"),
+        max_corpus_docs=max_corpus_docs,
+    )
     return embed, f"local embeddings ({retriever_mod.DEFAULT_MODEL}, cached, cosine top-k)"
 
 
@@ -129,6 +133,13 @@ def main() -> None:
     parser.add_argument("--retriever", choices=("embed", "stub"), default="embed")
     parser.add_argument("--k", type=int, default=1, help="top-k records retrieved per query")
     parser.add_argument("--out", default=os.path.join(HERE, "REPORT.md"))
+    parser.add_argument(
+        "--max-corpus-docs", type=int, default=None,
+        help="refuse to embed a corpus larger than this (default: "
+             "RAG_MAX_CORPUS_DOCS, or 1000). The eval refuses rather than "
+             "truncating — a truncated corpus scores differently for reasons "
+             "unrelated to retrieval quality",
+    )
     parser.add_argument(
         "--write-goldset-summary", action="store_true",
         help="only regenerate eval/rag/GOLDSET.md from db/seed/goldset.json; "
@@ -163,7 +174,9 @@ def main() -> None:
                     )
                 )
 
-    engine, label = build_retriever(args.retriever, patients, encounters, cases)
+    engine, label = build_retriever(
+        args.retriever, patients, encounters, cases, max_corpus_docs=args.max_corpus_docs
+    )
     retrieved = {c.query: engine.retrieve(c.query, args.k) for c in cases}
     scores = metrics.retrieval_scores(cases, retrieved)
 
