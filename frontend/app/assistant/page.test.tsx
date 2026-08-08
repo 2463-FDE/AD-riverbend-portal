@@ -298,6 +298,12 @@ describe("assistant chat surface", () => {
     ["an unrecognised assistant state", { assistant: "hallucinating" }],
     ["a visit id of the wrong shape", { visit_id: "not-a-visit-id" }],
     ["a non-object eligibility", { eligibility: "active" }],
+    // The badge lowercases `status`; a non-string threw during render, taking
+    // the whole surface down instead of degrading to this fallback.
+    ["a non-string eligibility status", { eligibility: { status: 1 } }],
+    ["a non-string eligibility payer", { eligibility: { status: "active", payer: 7 } }],
+    ["a non-string eligibility timestamp", { eligibility: { checked_at: 1754560800 } }],
+    ["a non-boolean eligibility active flag", { eligibility: { active: "yes" } }],
   ])("falls back on a 200 with %s (W3-SPEC-22)", async (_name, over) => {
     apiFetch.mockResolvedValueOnce(okTurn(over));
     render(<AssistantPage />);
@@ -310,6 +316,20 @@ describe("assistant chat surface", () => {
       )
     ).toBeInTheDocument();
     expect(screen.queryByText(/Coverage is active with Aetna/)).not.toBeInTheDocument();
+  });
+
+  // The other half of the guard: strictness that also rejects a server the
+  // gateway is free to extend would turn every additive field into an outage.
+  it("still renders a turn whose verdict carries an unknown extra field (W3-SPEC-22)", async () => {
+    apiFetch.mockResolvedValueOnce(
+      okTurn({ eligibility: { status: "active", payer: "Aetna", plan_tier: "gold" } })
+    );
+    render(<AssistantPage />);
+
+    await send("Is this patient covered?");
+
+    expect(await screen.findByText(/Coverage is active with Aetna/)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Coverage active");
   });
 
   it("names the retry path on a 429 rather than failing the visit (W3-SPEC-22)", async () => {

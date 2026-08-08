@@ -26,7 +26,13 @@ const TONES: Record<string, Tone> = {
 };
 
 export function verdictTone(status: string | null | undefined): Tone | null {
-  if (!status) return null;
+  // The `string` in the signature is a claim about a value that crossed the
+  // network, not a fact. A malformed 200 that reaches here (version skew, a
+  // misrouted proxy body) would throw inside render on `.toLowerCase()` — a
+  // blank surface with no fallback and no verdict, which is a worse outcome
+  // than the missing badge. A non-string status is simply outside the
+  // vocabulary, and outside the vocabulary already renders nothing.
+  if (typeof status !== "string") return null;
   return TONES[status.toLowerCase().trim()] ?? null;
 }
 

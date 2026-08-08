@@ -79,4 +79,21 @@ describe("VerdictBadge", () => {
     expect(verdictTone("wibble")).toBeNull();
     expect(verdictTone(null)).toBeNull();
   });
+
+  // NEGATIVE (docs/landmines.md §3). `status` arrives over the network, so its
+  // `string` type is an assumption, not a guarantee. Before this guard a
+  // non-string threw on `.toLowerCase()` inside render — the caller's surface
+  // went blank with no verdict and no fallback, which is strictly worse than
+  // the badge this renders instead: nothing.
+  it("renders nothing, and never throws, for a non-string status (W3-SPEC-18)", () => {
+    for (const status of [1, true, {}, [], () => "active"]) {
+      const bad = status as unknown as string;
+      expect(() => verdictTone(bad)).not.toThrow();
+      expect(verdictTone(bad)).toBeNull();
+
+      const { container } = render(<VerdictBadge eligibility={{ status: bad }} />);
+      expect(container).toBeEmptyDOMElement();
+      cleanup();
+    }
+  });
 });

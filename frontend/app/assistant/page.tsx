@@ -49,6 +49,20 @@ interface Turn {
 
 const BOUNDARY: Turn = { role: "boundary", text: "" };
 
+// The verdict's own fields, checked to their declared types (app/lib/types.ts
+// EligibilityVerdict). `status` is the one the badge reads, and the other three
+// are what stamps an answer with a payer and a time. UNKNOWN EXTRA KEYS PASS on
+// purpose: the gateway adding a field must not blank the surface — only a known
+// field carrying the wrong type is a contract break.
+const VERDICT_STRINGS = ["status", "payer", "checked_at", "observed_at"] as const;
+
+function isVerdict(v: Record<string, unknown>): boolean {
+  if (v.active !== undefined && v.active !== null && typeof v.active !== "boolean") return false;
+  return VERDICT_STRINGS.every(
+    (k) => v[k] === undefined || v[k] === null || typeof v[k] === "string"
+  );
+}
+
 // The full 200 contract, not just `reply` (W3-SPEC-22). `proxy` answers 200 for
 // a body it could not parse and gateway `_post` answers 200 with {"error": …},
 // so a partial body is reachable under version skew or a misrouted response.
@@ -63,8 +77,13 @@ function isVisitChat(d: Partial<VisitChatResponse> | null): d is VisitChatRespon
     return false;
   if (d.assistant !== "ok" && d.assistant !== "degraded" && d.assistant !== "unknown")
     return false;
-  if (d.eligibility !== null && (typeof d.eligibility !== "object" || Array.isArray(d.eligibility)))
-    return false;
+  if (d.eligibility !== null) {
+    if (typeof d.eligibility !== "object" || Array.isArray(d.eligibility)) return false;
+    // A verdict of the wrong inner shape is a contract break like any other
+    // here, not a field to render around: the guard's whole job is that what it
+    // hands the render path is what the type says it is.
+    if (!isVerdict(d.eligibility as Record<string, unknown>)) return false;
+  }
   return true;
 }
 
