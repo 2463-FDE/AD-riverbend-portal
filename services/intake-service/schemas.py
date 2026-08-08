@@ -1,4 +1,5 @@
 """Pydantic v2 request/response schemas for intake-service."""
+from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
@@ -64,6 +65,89 @@ class IntakeResponse(BaseModel):
     patient_id: int
     elapsed_seconds: float
     eligibility: Optional[dict[str, Any]] = None
+
+
+class Disposition(str, Enum):
+    """Closed set of judgments a reviewer can record on a candidate pair.
+
+    Neither value merges anything: confirming a duplicate records that a human
+    agrees the two charts are one person, and the merge itself remains a manual
+    HIM procedure (ADR 0005 decision 3).
+    """
+
+    duplicate_confirmed = "duplicate_confirmed"
+    not_duplicate = "not_duplicate"
+
+
+class ReviewQueuePatient(BaseModel):
+    """The minimum a reviewer needs to judge whether two charts are one person.
+
+    Deliberately narrower than the patients row: no SSN and no address. Both
+    would help a reviewer, and neither is minimum-necessary for a front-desk
+    role that the debt log already flags for over-broad demographic access —
+    this surface does not widen it.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    dob: Optional[str] = None
+    created_via: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class ReviewQueueItem(BaseModel):
+    id: int
+    patient_a: ReviewQueuePatient
+    patient_b: ReviewQueuePatient
+    source: str
+    created_at: Optional[datetime] = None
+
+
+class ReviewQueuePage(BaseModel):
+    items: list[ReviewQueueItem]
+
+
+class DispositionRequest(BaseModel):
+    # use_enum_values so a validated disposition is a plain string, matching
+    # how models.DuplicateReviewQueue.disposition is stored.
+    model_config = ConfigDict(use_enum_values=True)
+
+    disposition: Disposition
+    decided_by: str
+
+    @field_validator("decided_by")
+    @classmethod
+    def decided_by_not_blank(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("decided_by must not be blank")
+        return v.strip()
+
+
+class DispositionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: str
+    disposition: str
+    decided_by: str
+    decided_at: Optional[datetime] = None
+
+
+def disposition_log_metadata(pair_id: int, req: DispositionRequest) -> dict[str, Any]:
+    """Allowlisted, non-PHI projection of a disposition request, for logging.
+
+    Same discipline as ``log_metadata``: only the queue row id, the
+    ``Disposition``-constrained verdict, and the staff username doing the
+    deciding. No patient identifier and no demographic value — a reviewer's
+    decision is auditable without logging who it was about.
+    """
+    return {
+        "pair_id": pair_id,
+        "disposition": req.disposition,
+        "decided_by": req.decided_by,
+    }
 
 
 def log_metadata(req: IntakeRequest) -> dict[str, Any]:
