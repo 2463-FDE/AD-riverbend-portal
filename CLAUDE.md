@@ -130,8 +130,9 @@ tracked as TODO-1. Deliberately not patched piecemeal.
 - `tests/`, pytest, one marker (`integration`). No shared package, so tests load modules by file
   path via `tests/conftest.py::load_module`. Bare sibling names (`config`) collide across services
   — pin `sys.modules` first.
-- **Baseline, measured 2026-08-08: `921 passed, 1 xfailed, 5 deselected`** (was 821 on 2026-08-06;
-  W2 added 100 and closed one deliberate gap on purpose — `docs/landmines.md` §3 records which).
+- **Baseline, measured 2026-08-08: `923 passed, 1 xfailed, 5 deselected`** (was 821 on 2026-08-06;
+  W2 added 100 and closed one deliberate gap on purpose — `docs/landmines.md` §3 records which —
+  then 2 more for the PR #63 codex round-1 regressions).
   The xfail is the HL7 AL1/RXA gap; the deselected 5 are the integration tests. These counts are
   load-bearing — a moved count means a deliberate gap moved, which is a finding to report, not a
   number to update.

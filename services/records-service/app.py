@@ -155,6 +155,15 @@ def _has_clinical_content(value: str | None) -> bool:
     return bool(value) and value.strip().lower() not in _ASSESSED_EMPTY
 
 
+def _reason_for(enc: Encounter) -> str:
+    """Why this encounter's records are worth a clinician's first attention."""
+    if _has_clinical_content(enc.allergies):
+        return "allergy"
+    if _has_clinical_content(enc.medications):
+        return "medication"
+    return "recent"
+
+
 # Rows sharing the opened patient's SSN, normalized in the WHERE clause. This is
 # a per-chart-open path, so the whole `ssn IS NOT NULL` population must never be
 # pulled into this process; the expression mirrors matching.normalize_ssn's
@@ -209,19 +218,27 @@ def get_relevant_records(patient_id: int, db: Session = Depends(get_db)):
             .all()
         )
 
+        # Rank the encounters BEFORE the scan bound is spent. Reading them in
+        # id order and ranking afterwards let a chart with more records than
+        # max_scan spend the whole budget on old routine visits before a newer
+        # allergy encounter was ever read — the panel would then omit exactly
+        # what it exists to surface. The key is the one the item sort below
+        # uses, so what is scanned is a prefix of the full ranking and the cap
+        # can only ever drop records that already ranked last. Encounter rows
+        # are already loaded in full above; this reorders that list and issues
+        # no additional query.
+        ranked = sorted(
+            ((_reason_for(enc), enc) for enc in encounters),
+            key=lambda t: (_REASON_RANK[t[0]], _sort_time(t[1]), t[1].id),
+        )
+
         scanned: list[tuple[str, Encounter, Record]] = []
         # N+1: one query per encounter (deliberate — D8; do not collapse to a
         # join). Bounded by max_scan, so a large chart costs a fixed ceiling of
         # queries rather than one per encounter forever.
-        for enc in encounters:
+        for reason, enc in ranked:
             if len(scanned) >= max_scan:
                 break
-            if _has_clinical_content(enc.allergies):
-                reason = "allergy"
-            elif _has_clinical_content(enc.medications):
-                reason = "medication"
-            else:
-                reason = "recent"
             recs = (
                 db.execute(
                     select(Record)

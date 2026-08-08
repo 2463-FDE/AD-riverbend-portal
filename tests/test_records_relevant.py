@@ -204,7 +204,7 @@ def test_returned_items_are_capped(monkeypatch):
     assert len(items) == 2
 
 
-def test_scan_is_bounded_before_ranking(monkeypatch):
+def test_scan_is_bounded(monkeypatch):
     """W2-SPEC-11 serve-side bound: the helper must not read an unbounded chart
     to rank it. The bound is on records scanned, so it also stops the N+1 loop
     early — a patient with hundreds of encounters costs a fixed number of
@@ -218,6 +218,33 @@ def test_scan_is_bounded_before_ranking(monkeypatch):
     r = _client(session).get("/patients/1042/relevant-records")
     assert r.status_code == 200
     assert session.record_queries <= 3
+
+
+def test_the_scan_bound_cannot_drop_a_higher_ranked_record(monkeypatch):
+    """The bound applies to an already-ranked encounter list, never to id
+    order. On a chart with more low-value encounters than the budget allows,
+    scanning by id would spend the whole budget on old routine visits and the
+    panel would omit the newer allergy and medication — exactly the records it
+    exists to surface (W2-SPEC-1). The scan order is the ranking order, so what
+    the cap drops always ranked below what it kept."""
+    monkeypatch.setattr(config_mod.settings, "relevant_records_max_scan", 2, raising=False)
+    session = _StubSession(
+        patients=[_patient(1042)],
+        encounters=(
+            [_encounter(i, 1042, day=1) for i in range(1, 21)]           # 20 routine visits
+            + [_encounter(21, 1042, medications="lisinopril", day=19)]
+            + [_encounter(22, 1042, allergies="penicillin", day=20)]     # last by id
+        ),
+        records=(
+            [_record(i * 10, i, 1042, title="routine note") for i in range(1, 21)]
+            + [_record(210, 21, 1042, title="med review")]
+            + [_record(220, 22, 1042, title="allergy note")]
+        ),
+    )
+    body = _client(session).get("/patients/1042/relevant-records").json()
+    assert [i["record_id"] for i in body["items"]] == [220, 210]
+    assert [i["reason"] for i in body["items"]] == ["allergy", "medication"]
+    assert session.record_queries <= 2   # the N+1 ceiling still holds
 
 
 # --------------------------------------------------------------- scoping
