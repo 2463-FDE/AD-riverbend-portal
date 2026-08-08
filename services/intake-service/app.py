@@ -41,7 +41,7 @@ from typing import Any, Optional
 import httpx
 import yaml
 from fastapi import Depends, FastAPI, HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -246,18 +246,44 @@ def disposition_review_pair(
         json.dumps(disposition_log_metadata(pair_id, req)),
     )
     try:
-        row = db.get(DuplicateReviewQueue, pair_id)
-        if row is None:
+        if db.get(DuplicateReviewQueue, pair_id) is None:
             raise HTTPException(status_code=404, detail="review pair not found")
-        if row.status != "pending":
-            # Not an error to retry — someone else already judged this pair.
+        # The status check lives IN the write, not before it. Read-check-write
+        # lets two reviewers both observe `pending` and both commit, and the
+        # later commit silently replaces the first verdict and decided_by —
+        # losing the audit trail of a human duplicate-patient judgment. One
+        # conditional UPDATE makes exactly one of them the winner; the loser
+        # matches no row and gets the same 409 a sequential retry gets.
+        updated = (
+            db.execute(
+                update(DuplicateReviewQueue)
+                .where(
+                    DuplicateReviewQueue.id == pair_id,
+                    DuplicateReviewQueue.status == "pending",
+                )
+                .values(
+                    status="dispositioned",
+                    disposition=req.disposition,
+                    decided_by=req.decided_by,
+                    decided_at=datetime.now(timezone.utc),
+                )
+                .returning(
+                    DuplicateReviewQueue.id,
+                    DuplicateReviewQueue.status,
+                    DuplicateReviewQueue.disposition,
+                    DuplicateReviewQueue.decided_by,
+                    DuplicateReviewQueue.decided_at,
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if updated is None:
+            # Not an error to retry — someone else already judged this pair,
+            # either before this request or inside it. Their decision stands.
+            db.rollback()
             raise HTTPException(status_code=409, detail="review pair already dispositioned")
-        row.status = "dispositioned"
-        row.disposition = req.disposition
-        row.decided_by = req.decided_by
-        row.decided_at = datetime.now(timezone.utc)
         db.commit()
-        db.refresh(row)
     except SQLAlchemyError as e:
         db.rollback()
         log.error(
@@ -267,7 +293,7 @@ def disposition_review_pair(
         )
         raise HTTPException(status_code=503, detail="review queue unavailable")
 
-    return DispositionResponse.model_validate(row)
+    return DispositionResponse.model_validate(dict(updated))
 
 
 # Rows sharing the new row's SSN, normalized in the WHERE clause rather than by

@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.sql.dml import Update
 
 from conftest import load_module
 
@@ -70,23 +71,38 @@ class _StubResult:
     def scalars(self):
         return self
 
+    def mappings(self):
+        return self
+
     def all(self):
         return list(self._rows)
 
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+_UPDATABLE = ("status", "disposition", "decided_by", "decided_at")
+
 
 class _StubSession:
-    def __init__(self, pairs=(), patients=(), error=None):
+    def __init__(self, pairs=(), patients=(), error=None, race_on_read=None):
         self.pairs = {p.id: p for p in pairs}
         self.patients = {p.id: p for p in patients}
         self.commits = 0
         self.rollbacks = 0
         self.added = []
         self.deleted = []
+        self.updates = 0
         self._error = error
+        # A callable run once, after the disposition handler's existence read
+        # and before its write — the window a second reviewer commits in.
+        self._race_on_read = race_on_read
 
     def execute(self, statement, params=None):
         if self._error is not None:
             raise self._error
+        if isinstance(statement, Update):
+            return _StubResult(self._apply_update(statement))
         target = str(statement).lower()
         if "duplicate_review_queue" in target:
             return _StubResult(
@@ -97,11 +113,41 @@ class _StubSession:
             )
         return _StubResult([p for p in self.patients.values()])
 
+    def _apply_update(self, statement):
+        """A conditional UPDATE, evaluated against the row as it stands NOW.
+
+        That is the whole point: the WHERE predicate is re-checked at write
+        time, not at read time, so a row another transaction dispositioned in
+        between matches nothing and the caller loses the race instead of
+        overwriting the winner.
+        """
+        self.updates += 1
+        bound = statement.compile().params
+        # SET binds keep the bare column name; WHERE binds are suffixed.
+        pair = self.pairs.get(bound["id_1"])
+        required_status = bound.get("status_1")
+        if pair is None or (required_status is not None and pair.status != required_status):
+            return []
+        for field in _UPDATABLE:
+            if field in bound:
+                setattr(pair, field, bound[field])
+        return [{field: getattr(pair, field) for field in ("id",) + _UPDATABLE}]
+
     def get(self, model, pk):
         if self._error is not None:
             raise self._error
         if model is models_mod.DuplicateReviewQueue:
-            return self.pairs.get(pk)
+            row = self.pairs.get(pk)
+            if row is not None and self._race_on_read is not None:
+                race, self._race_on_read = self._race_on_read, None
+                # What this request read is a snapshot: the competing
+                # disposition commits after the read and does not retroactively
+                # change what this transaction saw.
+                snapshot = _pair(row.id, row.patient_id_a, row.patient_id_b,
+                                 source=row.source, status=row.status)
+                race(row)
+                return snapshot
+            return row
         return self.patients.get(pk)
 
     def add(self, obj):
@@ -265,6 +311,34 @@ def test_already_dispositioned_pair_is_409():
         json={"disposition": "not_duplicate", "decided_by": "fdesk1"},
     )
     assert r.status_code == 409
+
+
+def test_a_concurrent_disposition_cannot_overwrite_the_first_one():
+    """The audit-trail negative (W2-SPEC-26). Two reviewers can both read a
+    pair as pending; only a conditional write stops the second from silently
+    replacing the first's verdict and username. A read-check-write leaves that
+    window open, and the record of who judged a duplicate-patient pair is
+    exactly the thing that must not disappear.
+    """
+    def other_reviewer_commits(row):
+        row.status = "dispositioned"
+        row.disposition = "not_duplicate"
+        row.decided_by = "fdesk1"
+        row.decided_at = datetime(2026, 8, 8, 12, tzinfo=timezone.utc)
+
+    pair = _pair(1, 1042, 1330)
+    session = _StubSession(
+        pairs=[pair], patients=[MARIA_A, MARIA_B],
+        race_on_read=other_reviewer_commits,
+    )
+    r = _client(session).post(
+        "/review-queue/1/disposition",
+        json={"disposition": "duplicate_confirmed", "decided_by": "fdesk2"},
+    )
+    assert r.status_code == 409
+    # The winner's decision stands, untouched, and the loser committed nothing.
+    assert (pair.disposition, pair.decided_by) == ("not_duplicate", "fdesk1")
+    assert session.commits == 0
 
 
 @pytest.mark.parametrize(
