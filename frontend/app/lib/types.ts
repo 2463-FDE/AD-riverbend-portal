@@ -79,6 +79,29 @@ export interface Appointment {
   status: string;
 }
 
+// The projected coverage verdict the gateway closes at its boundary
+// (services/gateway/app.py `_VisitChatVerdict`). Every field is optional there,
+// so every field is optional here; `status` is the only one the portal renders
+// a tone from, and its vocabulary is active | inactive | unknown | pending.
+export interface EligibilityVerdict {
+  active?: boolean | null;
+  status?: string | null;
+  payer?: string | null;
+  checked_at?: string | null;
+  observed_at?: string | null;
+}
+
+// One turn of POST /ai/visit-chat. `visit_memory` and `assistant` are honest
+// tri-states, not errors: "degraded"/"stale" ride on a successful turn.
+export interface VisitChatResponse {
+  visit_id: string | null;
+  visit_memory: "ok" | "stale" | "unavailable";
+  reply: string;
+  disclaimer: string;
+  eligibility: EligibilityVerdict | null;
+  assistant: "ok" | "degraded" | "unknown";
+}
+
 export interface RoiRequest {
   id: number;
   patient_id: number;

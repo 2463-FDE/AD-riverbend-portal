@@ -30,6 +30,12 @@ const NAV: NavItem[] = [
   { href: "/records", label: "Records", icon: <IconRecords className="rb-nav__icon" /> },
   { href: "/intake", label: "Intake", icon: <IconIntake className="rb-nav__icon" /> },
   { href: "/roi", label: "Release of Information", icon: <IconRoi className="rb-nav__icon" /> },
+  // Visible to every signed-in role on purpose. Authorization for the
+  // assistant is `ai.use`, enforced only at the gateway (config/roles.yaml,
+  // pinned equal to authz.py); a role list here would be an unpinned copy that
+  // goes stale silently. An unauthorized role reaches the page and is told so
+  // by the 403 handler.
+  { href: "/assistant", label: "Assistant", icon: <IconMessages className="rb-nav__icon" /> },
 ];
 
 const NAV_SOON: NavItem[] = [
