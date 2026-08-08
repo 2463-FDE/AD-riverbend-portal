@@ -108,8 +108,39 @@ Resolve manually (cancel the later row) until the booking path is fixed.
 
 ### "Allergy list differs between charts for the same patient" (RIV-160)
 Duplicate-patient problem: self-service intake created multiple charts for one
-person (no match key), and inbound HL7 AL1/RXA segments are dropped by the
-parser. Reconcile charts manually; do not assume one chart is complete.
+person, and inbound HL7 AL1/RXA segments are dropped by the parser. Since W2,
+intake evaluates the ADR 0005 tier-1 match key and *flags* candidate pairs — it
+still merges nothing, so charts stay split until someone merges them by hand.
+
+Find the pairs in the portal's **Duplicate Review** queue (front-desk role, or
+`GET /review-queue`). If the charts predate the match key, run the retroactive
+pass below first. Reconcile charts manually; do not assume one chart is
+complete. A clinician opening a flagged chart sees a disclosure banner saying so.
+
+### Retroactive duplicate-match pass
+Populates the review queue from patient rows that were created before the match
+key existed (ADR 0005 decision 4). Read-only over `patients`: it SELECTs and
+INSERTs queue rows, and never creates, modifies, or deletes a patient row.
+Safe to re-run — the queue's ordered-pair UNIQUE constraint absorbs repeats, and
+a pair someone already dispositioned is never re-queued.
+
+```bash
+docker compose exec intake-service python retro_match.py
+```
+
+Read the whole summary, not just the pair count:
+
+- `rows with no usable ssn` — the match key could not be applied to these at
+  all (tier 2 is deferred). They are unchecked, not clean.
+- `recorded match-evaluation failures` — patients whose match check failed while
+  they were being registered. Registration completed anyway, by design; this
+  pass is what picks them up. `re-evaluated by this pass` is how many the run
+  just covered, and `still unevaluated` is how many it could not (no usable SSN,
+  or the row is gone). A non-zero `still unevaluated` is worth chasing.
+
+This block is the only operator-facing view of `match_evaluation_failures`.
+Then work the queue in the portal; **dispositioning is not merging** — the merge
+itself is a Health Information Management procedure.
 
 ### Redis: "refusing to start an unauthenticated Redis" / gateway login 500s
 Redis now requires a password and is no longer published on the host

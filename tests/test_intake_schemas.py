@@ -110,6 +110,8 @@ def test_log_metadata_reports_allowlisted_structure():
     assert meta["self_service"] is True
 
 
-# NOTE (coverage gap, deliberate): nothing here asserts SSN format, that DOB is
-# a real date, or that duplicate patients are prevented — the service does none
-# of those (no input normalization, no MPI/match key). See SEEDED-DEBT.
+# NOTE (coverage gap, deliberate): nothing here asserts SSN format or that DOB
+# is a real date — the service does no input normalization. See SEEDED-DEBT.
+# Duplicate patients are no longer un-checked: intake evaluates the ADR 0005
+# tier-1 match key and flags candidate pairs (tests/test_intake_match_key.py).
+# It still PREVENTS nothing — the chart is created either way, by design.

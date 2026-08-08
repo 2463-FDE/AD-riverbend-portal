@@ -1,6 +1,6 @@
 # ADR 0005 — MPI match key for patient intake (de-duplication)
 
-**Status:** Proposed
+**Status:** Accepted (2026-08-08 — tier 1 implemented in W2; tier 2 deferred)
 **Date:** 2026-07-12
 **Author:** Riverbend engagement team
 
@@ -84,6 +84,17 @@ Introduce a match key at intake, evaluated at chart-create time:
   ship this week. Implementation lands as its own reviewed change to
   intake-service (⚠️ touches patient identity — human approval required per
   CLAUDE.md §6/§7).
+  **Landed 2026-08-08 (W2), tier 1 only.** Decisions 1, 3 and 4 are in effect:
+  the match key is evaluated at chart-create (`services/intake-service/app.py`
+  `_evaluate_match_key`), candidate pairs are queued for front-desk review
+  (`duplicate_review_queue`, migration `009`), and the retroactive pass over
+  existing rows is `services/intake-service/retro_match.py`. Nothing merges.
+  **Decision 2 (tier 2 — fuzzy name + DOB where the SSN is missing or invalid)
+  is deferred by owner decision**, so a row without a usable SSN still yields no
+  candidate, no queue entry, and no clinician-facing disclosure. The
+  0%-candidate-rate target below remains a post-merge target: W2 executes no
+  merges, so the measured baseline in `eval/rag/REPORT.md` is unchanged and
+  intentionally so.
 - SSN as primary key means SSN handling gets *more* load-bearing while it is
   still stored plaintext (debt D3). The match key should use the normalized
   hash-or-encrypted form when D3 is addressed; matching logic must not add
