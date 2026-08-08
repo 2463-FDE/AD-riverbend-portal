@@ -420,6 +420,74 @@ sentinel test, red/green proven; (2) same-mechanism sites unregistered (gateway 
 logs, ai-assistant `str(e)` on the vendor-egress path) → register rows OPEN, no code. Security
 lens skipped, judgment on record: no new route/egress/sink/authz/parser. 821/5/1 container.
 
+PR #58 r1 — 2 findings: 2 A / 0 B / 0 C · **[high] A, fixed** — on a 404 the page cleared
+`visitId` but kept the transcript, so the next send opened a fresh contextless gateway visit
+under the old coverage answers. Fixed as the class (step 3 cluster): a visible `boundary` seam
+("restate the patient and member details") appended at both context-loss sites — the flagged
+404 and the 200-with-null-`visit_id` path, which had the same failure mode unflagged. **[medium]
+A, fixed** — the "shape check" accepted any 200 carrying a string `reply`, dropping disclaimer
+and verdict silently; replaced with a full-contract type guard (`disclaimer` string, `visit_id`
+null-or-32-hex verified against gateway `security.py:649`/`app.py:711`, closed vocabularies for
+`visit_memory`/`assistant`, `eligibility` null-or-object) → FALLBACK otherwise. No state
+introduced by either fix → trivial patches, no re-gate. 9 new tests + 1 extended, all landmines
+§3 negatives on the coverage-answer surface; stash-proof vs `dc92fc5`: 10 red / green with fix.
+Frontend 29 passed, typecheck/lint/build clean; container suite at the exact pinned baseline.
+
+PR #58 r2 — 1 finding: 1 A / 0 B / 0 C · **[medium] A, fixed** — the gateway reports assistant
+health as a tri-state (`ok`/`degraded`/`unknown`, `app.py:1180`) but the page banners only
+`degraded`, so `unknown` — the state emitted when ai-assistant's health field is unrecognised
+mid-rolling-deploy — rendered as a normal tailored answer. **Labelled A after the §5 step-4
+check, and it was close to B**: r1 had just widened `isVisitChat` to accept `unknown`, which is
+what the finding anchors on, but the render predicate `degraded: data.assistant === "degraded"`
+with no third branch ships verbatim in the original push `dc92fc5` — r1 made the vocabulary
+explicit, it did not create the collapse. Fixed by carrying the tri-state onto the turn and
+giving `unknown` its own wording ("did not report how it produced this reply… treat its wording
+as unconfirmed"). Both of the reviewer's alternatives were rejected with the gateway's own
+reasoning: rejecting `unknown` in the guard would discard a verdict a payer call already paid
+for and make every deploy read as an outage, and reusing the `degraded` copy would claim a
+checklist we cannot confirm. 2 tests (`unknown` → distinct banner + turn still succeeds +
+degraded wording absent; `ok` → neither banner, so a blanket always-warn cannot pass); 1
+stash-proven red vs the r1 tip `7b5d7d2`. Frontend 31 passed, container 821/1x/5d exact.
+**Lesson, generalizable:** a closed-vocabulary check and the render map are one contract. r1
+validated three states and rendered two — pinning the members without walking each to a distinct
+treatment (or an explicit "renders as nothing, deliberately") leaves the widest member reading as
+the safest one. Same shape as #49 r2's "check the graph, not the job": the round that pins a
+contract must follow the value to where it is consumed, not stop at the boundary it hardened.
+
+PR #58 r3 — 1 finding: 1 A / 0 B / 0 C · **[medium] A, fixed** — `isVisitChat` checked that
+`eligibility` was an object and stopped there, so a skewed 200 with `eligibility: { status: 1 }`
+reached `VerdictBadge`, which lowercases `status` and threw during render: the surface went blank
+with no verdict and no fallback, the one outcome worse than a missing badge. **A after the §5
+step-4 check**: `verdictTone`'s `TONES[status.toLowerCase()…]` ships verbatim in `dc92fc5`, which
+passed `data.eligibility ?? null` to the badge with no guard at all — r1 narrowed the throw, it
+did not create it. Reproduced exactly (`TypeError: status.toLowerCase is not a function`) and
+fixed at both ends, non-redundantly: the guard now checks the verdict's own field types so a
+malformed contract never renders (consistent with r1's other eight malformed-200 cases — a
+wrong-typed field is a broken body, unlike r2's `unknown`, a valid state), and `verdictTone`
+returns null for any non-string so no body of any origin can throw inside render, for every
+caller. Unknown **extra** keys pass on purpose, pinned by a test: failing on an additive gateway
+field would make every deploy an outage (r2's reasoning, held). 6 tests; 5 stash-proven red vs
+the r2 tip `997a042`. Frontend 37 passed, container 821/1x/5d exact.
+**Lesson, generalizable:** a guard is only as deep as the field access downstream of it. r1
+validated `eligibility` to the depth its *type name* suggested (an object), not the depth its
+*consumer* reads (a string it lowercases) — check the leaf, not the container. Third round in a
+row on one shape (r2's "validated three states, rendered two", #49 r2's "check the graph, not the
+job"): **the round that hardens a boundary must walk the value to its consumer.** Standing rule
+for this loop now, not a per-round observation.
+
+PR #58 r4 — 0 findings · **dry, verdict `approve`** — "No defensible ship-blocking issue found in
+the branch diff... No material findings." Loop closed at 4 rounds (3 A-fixes, 1 dry); squash-merged
+`f69a554`. Read for what it checked (the #49 r3 discipline): it re-inspected the proxy route against
+the gateway visit-chat contract, the assistant surface, the badge, and both test files — i.e. the
+exact blast radius of r1–r3, confirming three rounds of guard-tightening did not break the contract
+they hardened. Nothing outside the branch diff was re-examined, so the accepted residuals are
+untouched by the verdict. **Loop shape for W3:** 4 rounds, 4 findings, 4 A / 0 B / 0 C — zero
+review-introduced defects across three consecutive fixes, against a baseline where B rounds came
+from improvising state mid-review. Every fix this loop was render-only or a pure predicate and
+routed as trivial-on-branch; the no-state routing rule (step 4) never had to send anything back to
+stage 3, and nothing regressed. The three lessons converge on one rule now standing for this loop:
+**the round that hardens a boundary must walk the value to its consumer.**
+
 ## 6. Pre-code gates (append one line per gate stop)
 
 > Added 2026-08-05 at the pipeline-upgrade plan's approval (`docs/plans/pipeline-upgrade.md`
