@@ -41,7 +41,9 @@ CREATE TABLE IF NOT EXISTS patients (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- NOTE: no unique match key on (name, dob, ssn) — self-service intake forks
--- one person into several rows. See intake.yaml match_key: none.
+-- one person into several rows. Matching is application-level and
+-- flag-and-review only (ADR 0005 tier 1; see intake.yaml match_key and
+-- duplicate_review_queue below): nothing here prevents or merges a duplicate.
 
 CREATE TABLE IF NOT EXISTS insurance_coverages (
     id            SERIAL PRIMARY KEY,
@@ -165,4 +167,39 @@ CREATE TABLE IF NOT EXISTS disclosures (
     disclosed_to    TEXT,
     disclosed_at    TIMESTAMPTZ NOT NULL DEFAULT now()
     -- no authorization_id, no purpose, no restriction tracking
+);
+
+-- ---------------------------------------------------------------------------
+-- Duplicate-patient review (ADR 0005 tier-1 match key)
+-- ---------------------------------------------------------------------------
+-- Candidate duplicate pairs flagged at intake or by the retroactive pass, for a
+-- human to disposition. Flag-and-review only: nothing here merges, alters, or
+-- deletes a patient row. No PHI columns — ids, enums, timestamps and a staff
+-- username — so evaluating the match key creates no new stored SSN copy.
+-- The ordered-pair CHECK plus the UNIQUE constraint are the idempotency
+-- mechanism; status is deliberately not part of the key, so a dispositioned
+-- pair is never re-queued.
+CREATE TABLE IF NOT EXISTS duplicate_review_queue (
+    id              SERIAL PRIMARY KEY,
+    patient_id_a    INTEGER NOT NULL REFERENCES patients(id),
+    patient_id_b    INTEGER NOT NULL REFERENCES patients(id),
+    source          TEXT NOT NULL,                    -- intake | retroactive
+    status          TEXT NOT NULL DEFAULT 'pending',  -- pending | dispositioned
+    disposition     TEXT,                             -- duplicate_confirmed | not_duplicate
+    decided_by      TEXT,
+    decided_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_review_pair_order CHECK (patient_id_a < patient_id_b),
+    CONSTRAINT uq_review_pair UNIQUE (patient_id_a, patient_id_b)
+);
+
+-- A match-key evaluation that failed at intake. The row still registered (match
+-- evaluation is never a registration dependency); this records the failure so
+-- the retroactive pass can pick the patient up later. Exception CLASS only —
+-- a stringified DB error embeds the bound patients row.
+CREATE TABLE IF NOT EXISTS match_evaluation_failures (
+    id              SERIAL PRIMARY KEY,
+    patient_id      INTEGER NOT NULL REFERENCES patients(id),
+    error_class     TEXT NOT NULL,                    -- exception class name, never a message
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );

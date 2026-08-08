@@ -29,6 +29,10 @@ const NAV: NavItem[] = [
   { href: "/appointments", label: "Appointments", icon: <IconCalendar className="rb-nav__icon" /> },
   { href: "/records", label: "Records", icon: <IconRecords className="rb-nav__icon" /> },
   { href: "/intake", label: "Intake", icon: <IconIntake className="rb-nav__icon" /> },
+  // Same reasoning as the assistant entry below: visible to every signed-in
+  // role, authorized only at the gateway (`patients.write`). A role list here
+  // would be an unpinned copy of config/roles.yaml.
+  { href: "/review-queue", label: "Duplicate Review", icon: <IconIntake className="rb-nav__icon" /> },
   { href: "/roi", label: "Release of Information", icon: <IconRoi className="rb-nav__icon" /> },
   // Visible to every signed-in role on purpose. Authorization for the
   // assistant is `ai.use`, enforced only at the gateway (config/roles.yaml,

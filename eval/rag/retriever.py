@@ -21,6 +21,23 @@ from typing import Dict, List, Sequence
 
 DEFAULT_MODEL = "all-MiniLM-L6-v2"
 
+# Ceiling on how many documents may be embedded in one run. The client's AI
+# budget is the constraint ("basically a Claude Pro plan"), and embedding is the
+# only place in this repo that spends against it. 1000 is far above today's
+# 5-document corpus — the cap is a guard against a corpus that grew, not a
+# working limit.
+DEFAULT_MAX_CORPUS_DOCS = 1000
+
+
+def _default_max_corpus_docs() -> int:
+    """Read at call time, not import time, so an operator export is honoured
+    without re-importing the module (and so tests can set it)."""
+    return int(os.getenv("RAG_MAX_CORPUS_DOCS", str(DEFAULT_MAX_CORPUS_DOCS)))
+
+
+class CorpusTooLarge(RuntimeError):
+    """The corpus exceeds the configured embedding cap."""
+
 
 class StubRetriever:
     """Oracle: maps each query to a fixed list of record ids."""
@@ -46,11 +63,20 @@ class EmbeddingRetriever:
     re-embeds. Queries are embedded per call (three short strings — cheap).
     """
 
-    def __init__(self, corpus: Dict[int, str], cache_dir: str, model_name: str = DEFAULT_MODEL):
+    def __init__(
+        self,
+        corpus: Dict[int, str],
+        cache_dir: str,
+        model_name: str = DEFAULT_MODEL,
+        max_corpus_docs: int = None,
+    ):
         self._record_ids = sorted(corpus)
         self._docs = [corpus[rid] for rid in self._record_ids]
         self._cache_dir = cache_dir
         self._model_name = model_name
+        self._max_corpus_docs = (
+            _default_max_corpus_docs() if max_corpus_docs is None else max_corpus_docs
+        )
         self._model = None
         self._doc_vectors = None
 
@@ -64,6 +90,19 @@ class EmbeddingRetriever:
     def _load(self):
         if self._doc_vectors is not None:
             return
+        # REFUSE, never truncate. Silently embedding the first N documents would
+        # change every score in the report while the gate stayed green — a
+        # smaller corpus scoring differently is indistinguishable from a
+        # retrieval regression. Checked before the heavy imports, so an
+        # over-cap corpus costs nothing at all.
+        if len(self._docs) > self._max_corpus_docs:
+            raise CorpusTooLarge(
+                f"corpus has {len(self._docs)} documents, over the "
+                f"{self._max_corpus_docs}-document embedding cap "
+                "(RAG_MAX_CORPUS_DOCS / --max-corpus-docs). Raise the cap "
+                "deliberately or shrink the corpus; the eval will not embed a "
+                "truncated corpus, because the scores would be silently wrong."
+            )
         try:
             import numpy as np  # noqa: F401 — heavy deps stay out of module import
             from sentence_transformers import SentenceTransformer

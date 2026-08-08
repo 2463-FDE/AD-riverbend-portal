@@ -102,6 +102,49 @@ export interface VisitChatResponse {
   assistant: "ok" | "degraded" | "unknown";
 }
 
+// One candidate-duplicate pair awaiting a human judgment
+// (services/intake-service/schemas.py ReviewQueueItem). Deliberately narrower
+// than a patients row: no SSN and no address — enough to judge a pair, no more.
+export interface ReviewQueuePatient {
+  id: number;
+  name: string;
+  dob?: string | null;
+  created_via?: string | null;
+  created_at?: string | null;
+}
+
+export interface ReviewQueueItem {
+  id: number;
+  patient_a: ReviewQueuePatient;
+  patient_b: ReviewQueuePatient;
+  source: string; // intake | retroactive
+  created_at?: string | null;
+}
+
+export interface ReviewQueueResponse {
+  items: ReviewQueueItem[];
+}
+
+export type Disposition = "duplicate_confirmed" | "not_duplicate";
+
+// The relevant-records panel shown on chart open
+// (services/records-service/schemas.py RelevantRecords). `duplicate_disclosure`
+// is a bare enum by design — the disclosure says sibling charts MAY exist and
+// never names one, so the surface cannot become a cross-chart navigation path.
+export interface RelevantRecordItem {
+  record_id: number;
+  kind?: string | null;
+  title?: string | null;
+  occurred_at?: string | null;
+  reason: "allergy" | "medication" | "recent";
+}
+
+export interface RelevantRecordsResponse {
+  patient_id: number;
+  duplicate_disclosure: "candidate" | "none";
+  items: RelevantRecordItem[];
+}
+
 export interface RoiRequest {
   id: number;
   patient_id: number;

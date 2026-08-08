@@ -100,8 +100,10 @@ fixed in this build.
 - **Compliance posture is self-asserted.** PHI columns are plaintext; "audit" is
   mutable request logging, not a tamper-evident access trail.
 - **PHI in application logs** — intake logs full request bodies at INFO.
-- **Duplicate patients** — self-service intake has no MPI/match key; one person
-  can become several charts (RIV-160).
+- **Duplicate patients** — self-service intake evaluates an ADR 0005 tier-1
+  match key at create and flags candidate pairs for review, but there is still
+  no MPI and nothing merges: one person can still become several charts
+  (RIV-160).
 - **Slow registration (RIV-088)** — the inline, no-timeout eligibility call
   blocks `/intake`; a payer outage freezes intake (RIV-141).
 - **Double-booking (RIV-175)** — booking is check-then-insert with no UNIQUE

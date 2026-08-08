@@ -43,3 +43,43 @@ class Consent(Base):
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
     kind = Column(Text)                               # npp_ack | treatment_consent | roi_consent
     signed_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DuplicateReviewQueue(Base):
+    """A candidate-duplicate pair awaiting a human disposition (ADR 0005).
+
+    No PHI columns by design: the pair is identified by patient id, and every
+    other column is an enum, a timestamp, or the deciding staff username. The
+    ordered pair (patient_id_a < patient_id_b) plus the UNIQUE constraint make
+    a repeated intake or retroactive pass idempotent.
+    """
+
+    __tablename__ = "duplicate_review_queue"
+
+    id = Column(Integer, primary_key=True)
+    patient_id_a = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    patient_id_b = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    source = Column(Text, nullable=False)             # intake | retroactive
+    status = Column(Text, nullable=False, default="pending")   # pending | dispositioned
+    disposition = Column(Text)                        # duplicate_confirmed | not_duplicate
+    decided_by = Column(Text)
+    decided_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class MatchEvaluationFailure(Base):
+    """A match-key evaluation that failed while registering a patient.
+
+    The registration itself still completed — matching is never a dependency of
+    creating a chart — so this row is what keeps the unchecked patient
+    traceable and eligible for the retroactive pass. ``error_class`` holds the
+    exception class name only: a stringified SQLAlchemy error embeds the bound
+    patients row (name, DOB, SSN).
+    """
+
+    __tablename__ = "match_evaluation_failures"
+
+    id = Column(Integer, primary_key=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    error_class = Column(Text, nullable=False)        # class name, never a message
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

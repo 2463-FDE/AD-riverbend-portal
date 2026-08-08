@@ -60,7 +60,11 @@ Sourced from `ARCHITECTURE.md` §7 and the handoff docs.
   are pinned to each other, and `tests/test_eligibility_budget_alignment.py` enforces it.
 - ⚠️ **Booking race** (`services/scheduling-service/book.py`) — check-then-insert, no UNIQUE on
   `slot_id`, no idempotency key, so concurrent requests double-book (RIV-175).
-- ⚠️ **Duplicate patients** — self-service intake has no MPI or match key (RIV-160).
+- ⚠️ **Duplicate patients** — intake now evaluates an ADR 0005 tier-1 match key at create
+  (normalized SSN + corroborating demographics) and queues candidate pairs for front-desk review;
+  it still merges nothing, and there is still no MPI. Tier 2 (fuzzy name + DOB where the SSN is
+  missing or invalid) is deferred, so duplicates without a usable SSN go undetected. Existing
+  duplicates stay split until Health Information Management merges them by hand (RIV-160).
 - ⚠️ **Brittle HL7 mapping** — only PID and PV1 are mapped; AL1 (allergies) and RXA (meds) are
   silently dropped (RIV-160).
 - ⚠️ **Secrets in git history** — `.env` was committed in the past. It is gitignored and untracked
@@ -120,8 +124,14 @@ asserted the *intended* shape.
 - **Do not "fix" the tests to hide a deliberate gap.** These are teaching defects and are meant to
   stay visible: the scheduling race is untested, IDOR prevention is an `xfail` (cross-patient
   reads currently succeed), HL7 AL1/RXA extraction is an `xfail`, there are no ROI authorization
-  tests, and no input-normalization or duplicate-patient tests (RIV-201). A push hook pins the
+  tests, and no input-normalization tests (RIV-201). A push hook pins the
   expected xfail and deselected counts; if one moves, the gap moved, and that is a finding rather
   than a number to update.
+  The **duplicate-patient half of that clause closed deliberately in W2** (ADR 0005 tier 1):
+  `tests/test_matching_parity.py`, `tests/test_intake_match_key.py` and `tests/test_retro_match.py`
+  now cover it. A moved gap is itself a reportable event, so the closure is named here, in the
+  W2 PR body, and in the `CLAUDE.md` §6 baseline note rather than absorbed into a new pass count.
+  The input-normalization half stays open: W2 adds no intake input canonicalization — the
+  matcher's `normalize_ssn`/`normalize_name` are matcher-side only and never touch what is stored.
 - Run an adversarial pass over the diff **before** opening a PR that touches auth, PHI or ROI. The
   review bot caught both PR #2 leaks only after push.

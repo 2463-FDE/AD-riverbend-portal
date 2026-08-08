@@ -3,10 +3,53 @@
 import { useState } from "react";
 import Card from "../components/Card";
 import StatusBadge, { statusVariant } from "../components/StatusBadge";
-import { IconRecords, IconLab, IconSearch, IconStethoscope } from "../components/icons";
+import { IconRecords, IconLab, IconSearch, IconStethoscope, IconHeart } from "../components/icons";
 import { apiFetch } from "../lib/session";
-import type { EncounterBlock, RecordItem } from "../lib/types";
+import type {
+  EncounterBlock,
+  RecordItem,
+  RelevantRecordItem,
+  RelevantRecordsResponse,
+} from "../lib/types";
 import { fmtDate } from "../lib/format";
+
+// Fixed, client-authored, non-PHI. Shown when the helper cannot be reached OR
+// answers something that is not its contract. It deliberately says BOTH things:
+// the panel is missing, AND duplicate status is unconfirmed — an unanswered
+// disclosure check must not read as "no duplicates", which is the fail-open
+// version of the exact defect this surface exists to disclose.
+const HELPER_UNAVAILABLE =
+  "Relevant records could not be loaded, and duplicate-chart status is not confirmed. " +
+  "Treat this record set as possibly incomplete and read the full history below.";
+
+// The disclosure itself. No sibling chart ids, no links: it says other charts
+// MAY exist, never which, so this cannot become a cross-chart navigation path
+// (ADR 0005 rejects reading across charts no human has merged).
+const DUPLICATE_DISCLOSURE =
+  "This patient may have more than one chart. Records shown here are from this chart only, " +
+  "so the set may be incomplete — check with Health Information Management before relying " +
+  "on it as a complete history. Merging charts is an HIM procedure.";
+
+const REASON_LABEL: Record<RelevantRecordItem["reason"], string> = {
+  allergy: "Allergy recorded",
+  medication: "Medication recorded",
+  recent: "Recent",
+};
+
+function isRelevantRecords(d: unknown): d is RelevantRecordsResponse {
+  if (!d || typeof d !== "object") return false;
+  const v = d as RelevantRecordsResponse;
+  if (typeof v.patient_id !== "number") return false;
+  if (v.duplicate_disclosure !== "candidate" && v.duplicate_disclosure !== "none") return false;
+  if (!Array.isArray(v.items)) return false;
+  return v.items.every(
+    (i) =>
+      i &&
+      typeof i === "object" &&
+      typeof i.record_id === "number" &&
+      (i.reason === "allergy" || i.reason === "medication" || i.reason === "recent")
+  );
+}
 
 function isResult(r: RecordItem): boolean {
   return Boolean(r.test || r.value !== undefined || r.reference_range);
@@ -22,11 +65,15 @@ export default function RecordsPage() {
   const [selected, setSelected] = useState<EncounterBlock | null>(null);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [relevant, setRelevant] = useState<RelevantRecordsResponse | null>(null);
+  const [relevantFailed, setRelevantFailed] = useState(false);
 
   async function load() {
     setBusy(true);
     setStatus("");
     setSelected(null);
+    setRelevant(null);
+    setRelevantFailed(false);
     try {
       const res = await apiFetch(`/api/records?patient_id=${encodeURIComponent(patientId)}`);
       const json = await res.json();
@@ -39,6 +86,30 @@ export default function RecordsPage() {
       setData([]);
     } finally {
       setBusy(false);
+    }
+    // Fetched SEPARATELY and awaited after the chart, so retrieval is an aid and
+    // never a gate on chart access (W2-SPEC-2): if this call fails, everything
+    // above has already been set and the chart renders regardless.
+    void loadRelevant();
+  }
+
+  async function loadRelevant() {
+    try {
+      const res = await apiFetch(
+        `/api/patients/${encodeURIComponent(patientId)}/relevant-records`
+      );
+      if (!res.ok) {
+        setRelevantFailed(true);
+        return;
+      }
+      const json: unknown = await res.json();
+      if (!isRelevantRecords(json)) {
+        setRelevantFailed(true);
+        return;
+      }
+      setRelevant(json);
+    } catch {
+      setRelevantFailed(true);
     }
   }
 
@@ -75,6 +146,43 @@ export default function RecordsPage() {
         <div className="rb-alert rb-alert--info" role="status">
           {status}
         </div>
+      )}
+
+      {relevant?.duplicate_disclosure === "candidate" && (
+        <div className="rb-alert rb-alert--warn" role="status">
+          {DUPLICATE_DISCLOSURE}
+        </div>
+      )}
+
+      {relevantFailed && (
+        <div className="rb-alert rb-alert--warn" role="status">
+          {HELPER_UNAVAILABLE}
+        </div>
+      )}
+
+      {relevant && relevant.items.length > 0 && (
+        <Card title="Most relevant records" icon={<IconHeart />}>
+          <div className="rb-list">
+            {relevant.items.map((item) => (
+              <div key={item.record_id} className="rb-listrow">
+                <div className="rb-listrow__main">
+                  <div className="rb-listrow__title">{item.title || item.kind || "Record"}</div>
+                  <div className="rb-listrow__meta">
+                    <span className="rb-badge rb-badge--neutral">
+                      {REASON_LABEL[item.reason]}
+                    </span>
+                    {item.kind && <span>{item.kind}</span>}
+                    {item.occurred_at && <span>{fmtDate(item.occurred_at)}</span>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="rb-field__hint" style={{ marginTop: 8 }}>
+            Ranked by allergy and medication entries first, then recency. The full history is
+            below — this panel narrows where to look, it does not replace it.
+          </p>
+        </Card>
       )}
 
       {data && data.length > 0 && (
