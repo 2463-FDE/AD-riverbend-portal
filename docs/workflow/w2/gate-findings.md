@@ -46,7 +46,9 @@ outside `intake-service` reads `intake.yaml` (`run.py` uses the literal
 `POST /intake` hook is the whole chart-create surface for SPEC-22.
 
 Per-SPEC verdict: none unsatisfied. Residual-named — SPEC-3/6, SPEC-6 failure path,
-SPEC-20, and the frozen `eval/rag/` artifacts (SPEC-9/10, TODO-57) — all written into
+SPEC-20, and the frozen `eval/rag/` artifacts (SPEC-9/10, TODO-58 — allocated as
+TODO-57 above, renumbered at the 2026-08-08 landing per finding 4's re-check
+instruction; the doc-drift sweep took TODO-57 in the interim) — all written into
 Landmines/risk. One candidate finding was raised and dropped: the three new env tunables
 (`RELEVANT_RECORDS_MAX_ITEMS`/`_MAX_SCAN`, `RAG_MAX_CORPUS_DOCS`) are absent from
 `.env.example`, but records-service's own `DEFAULT_PAGE_LIMIT`/`MAX_PAGE_LIMIT` are absent
