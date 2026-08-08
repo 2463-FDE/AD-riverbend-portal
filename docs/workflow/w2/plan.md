@@ -10,7 +10,10 @@
 > guarantee); **SPEC-20** (owner-decided — tier 2 deferred, so no-usable-SSN duplicates
 > yield no candidate, no disclosure, no queue entry); and the deliberately-stale
 > `eval/rag/` root-cause artifacts (SPEC-9/10 baseline), tracked as `docs/todo.md`
-> TODO-57.
+> TODO-58 (allocated as TODO-57 in this plan; renumbered at the 2026-08-08 landing per
+> §9's own re-check instruction — the doc-drift sweep took TODO-57 in the interim. All
+> bare TODO-57 cites below are repointed, dated 2026-08-08; the hedged "as of this plan"
+> allocation statements stand as written).
 >
 > Plan maturity only. The plan header never carries delivery state (IMPLEMENTED, pushed,
 > merged) — that lives in `docs/workflow/w2/pr-body.md`. The impl gate does not touch
@@ -83,7 +86,7 @@ trivial rebase if ordering changes.
 Registry upkeep (no SPEC): `intake.yaml` match_key line, ADR 0005 status flip,
 `docs/landmines.md` §1 duplicate-patients bullet and §3 coverage-gap clause, D5a
 narrowing, D11 route list, runbook retro-pass procedure, CLAUDE.md §6 baseline re-measure,
-`docs/todo.md` TODO-57 (frozen-report staleness), and the full stale-`match_key`/"no MPI"
+`docs/todo.md` TODO-58 (frozen-report staleness), and the full stale-`match_key`/"no MPI"
 sweep across code, docs and test comments (§9).
 
 ## Implementation
@@ -541,7 +544,7 @@ The sections above are grouped by subsystem, not by build order. The TDD loop
 | `tests/test_matching_parity.py`, `test_intake_match_key.py`, `test_retro_match.py`, `test_records_relevant.py` | new suites |
 | `tests/test_gateway_authz.py` | route-capability pins + denial tests (deliberate edit) |
 | `tests/test_rag_eval.py`, `tests/test_intake_schemas.py` | stale-comment amendments |
-| `adr/0005…` (Status), `docs/landmines.md` (§1 `:63`, §3 `:123`), `docs/debt-log.md` (D5a, D11), `docs/runbook.md` (`:99` + retro procedure), `ARCHITECTURE.md:103`, `docs/onboarding-seam-map.md:25`, `docs/todo.md` (new TODO-57), CLAUDE.md §6 | registry upkeep (§9) |
+| `adr/0005…` (Status), `docs/landmines.md` (§1 `:63`, §3 `:123`), `docs/debt-log.md` (D5a, D11), `docs/runbook.md` (`:99` + retro procedure), `ARCHITECTURE.md:103`, `docs/onboarding-seam-map.md:25`, `docs/todo.md` (new TODO-58), CLAUDE.md §6 | registry upkeep (§9) |
 
 ## Out of scope (from requirements §6)
 
@@ -616,7 +619,7 @@ The sections above are grouped by subsystem, not by build order. The TDD loop
     what changed, and amending them would falsify the bundle. Account for **every**
     remaining hit against §9's list — each is
     either amended or on the deliberately-not-amended list with its reason. A hit that is
-    on neither list is a missed site, not an acceptable remainder. Separately: `TODO-57`
+    on neither list is a missed site, not an acceptable remainder. Separately: `TODO-58`
     exists in `docs/todo.md` and names all three `eval/rag/` sites;
     `docs/landmines.md:123` no longer claims there are no duplicate-patient tests while
     still claiming there are no input-normalization ones; `db/schema.sql`'s two new blocks
@@ -661,7 +664,7 @@ The sections above are grouped by subsystem, not by build order. The TDD loop
     to say otherwise would move the drift-gate baseline for a reason unrelated to
     measurement, so it stays. It is true as of the measurement it reports, and false as a
     statement about `main` after this lands. The correction rides whichever change next
-    moves the baseline legitimately. **Tracked as `docs/todo.md` TODO-57 (§9)** — a
+    moves the baseline legitimately. **Tracked as `docs/todo.md` TODO-58 (§9)** — a
     residual named only in a workflow bundle is invisible to a doc-drift sweep.
   - Disclosure freshness is per chart open (live evaluation) but the *record ranking*
     reflects only the opened chart — a sibling's penicillin allergy is still invisible
