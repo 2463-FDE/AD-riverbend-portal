@@ -25,13 +25,43 @@ const BUSY = "The assistant is busy — try again in a moment.";
 // which is why there isn't one (W3-SPEC-21 is enforced gateway-side only).
 const MAX_MESSAGE_CHARS = 1000;
 
+// The id the gateway mints (services/gateway/security.py:649) and pins on the
+// way in (app.py:711). Validated on the way out too: an id of any other shape
+// cannot be echoed back successfully, so accepting one only buys a 404 later.
+const VISIT_ID = /^[0-9a-f]{32}$/;
+
+// A "boundary" carries no prose — it is the visible seam where the server lost
+// this visit's context. Without it the transcript reads as one continuous
+// conversation while the gateway has already started a second, empty one, and
+// the clerk mixes a stale payer answer with a contextless follow-up.
 interface Turn {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "boundary";
   text: string;
   disclaimer?: string;
   eligibility?: EligibilityVerdict | null;
   degraded?: boolean;
   stale?: boolean;
+}
+
+const BOUNDARY: Turn = { role: "boundary", text: "" };
+
+// The full 200 contract, not just `reply` (W3-SPEC-22). `proxy` answers 200 for
+// a body it could not parse and gateway `_post` answers 200 with {"error": …},
+// so a partial body is reachable under version skew or a misrouted response.
+// Rendering one would drop the disclaimer and the verdict — the two things that
+// separate a verified coverage answer from unqualified assistant prose.
+function isVisitChat(d: Partial<VisitChatResponse> | null): d is VisitChatResponse {
+  if (!d || typeof d !== "object") return false;
+  if (typeof d.reply !== "string" || typeof d.disclaimer !== "string") return false;
+  if (d.visit_id !== null && !(typeof d.visit_id === "string" && VISIT_ID.test(d.visit_id)))
+    return false;
+  if (d.visit_memory !== "ok" && d.visit_memory !== "stale" && d.visit_memory !== "unavailable")
+    return false;
+  if (d.assistant !== "ok" && d.assistant !== "degraded" && d.assistant !== "unknown")
+    return false;
+  if (d.eligibility !== null && (typeof d.eligibility !== "object" || Array.isArray(d.eligibility)))
+    return false;
+  return true;
 }
 
 export default function AssistantPage() {
@@ -62,8 +92,11 @@ export default function AssistantPage() {
       case 404:
         // The gateway answers 404 for both "expired" and "not yours" so that a
         // status cannot confirm someone else's visit exists. Dropping the id
-        // lets the next message open a fresh one.
+        // lets the next message open a fresh one — and the boundary keeps the
+        // clerk from reading that fresh one as a continuation of what is still
+        // on screen, since the server no longer holds any of it.
         setVisitId(null);
+        setTurns((t) => [...t, BOUNDARY]);
         return EXPIRED;
       case 429:
         return BUSY;
@@ -93,29 +126,30 @@ export default function AssistantPage() {
         return;
       }
       const data = (await res.json()) as Partial<VisitChatResponse>;
-      // Shape check before anything is rendered: `proxy` answers 200 for a
-      // gateway body it could not parse, and gateway `_post` (not this route,
-      // but the house pattern) answers 200 with an {"error": …} body.
-      if (typeof data?.reply !== "string") {
+      if (!isVisitChat(data)) {
         setNotice(FALLBACK);
         return;
       }
       // A null id means the write did not land — echoing it back would 404 the
       // next turn with no explanation, so let that turn start a fresh visit.
-      setVisitId(typeof data.visit_id === "string" ? data.visit_id : null);
+      // Same seam as the 404: the answer just given used the context that was
+      // sent, but nothing after it will, so the transcript says so.
+      const carriesOn = data.visit_id !== null;
+      setVisitId(data.visit_id);
       setTurns((t) => [
         ...t,
         {
           role: "assistant",
-          text: data.reply as string,
-          disclaimer: typeof data.disclaimer === "string" ? data.disclaimer : undefined,
-          eligibility: data.eligibility ?? null,
+          text: data.reply,
+          disclaimer: data.disclaimer,
+          eligibility: data.eligibility,
           // Both are honest degradations riding a SUCCESSFUL turn — the clerk
           // has a real answer. Rendering them as errors would train the desk to
           // ignore the surface on the days it matters most.
           degraded: data.assistant === "degraded",
           stale: data.visit_memory === "stale",
         },
+        ...(carriesOn ? [] : [BOUNDARY]),
       ]);
     } catch {
       setNotice(FALLBACK);
@@ -142,7 +176,13 @@ export default function AssistantPage() {
               conversation.
             </p>
           )}
-          {turns.map((turn, i) => (
+          {turns.map((turn, i) =>
+            turn.role === "boundary" ? (
+              <div key={i} className="rb-alert rb-alert--warn" style={{ marginBottom: 18 }}>
+                New conversation starts here. The assistant no longer has anything above this
+                line — restate the patient and member details in your next message.
+              </div>
+            ) : (
             <div key={i} style={{ marginBottom: 18 }}>
               <div className="rb-field__hint" style={{ marginBottom: 4 }}>
                 {turn.role === "user" ? "You" : "Assistant"}
@@ -172,7 +212,8 @@ export default function AssistantPage() {
                 </div>
               )}
             </div>
-          ))}
+            )
+          )}
         </div>
 
         {notice && (

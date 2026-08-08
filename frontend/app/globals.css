@@ -1026,6 +1026,11 @@ textarea:focus-visible,
   border-color: var(--rb-primary-tint-2);
   color: var(--rb-primary-darker);
 }
+.rb-alert--warn {
+  background: var(--rb-warn-bg);
+  border-color: #e4cf9a;
+  color: var(--rb-warn);
+}
 .rb-muted {
   color: var(--rb-text-muted);
 }

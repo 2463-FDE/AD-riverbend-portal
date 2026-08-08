@@ -107,6 +107,23 @@ describe("assistant chat surface", () => {
     expect(lastBody()).toEqual({ message: "Second message" });
   });
 
+  // NEGATIVE (docs/landmines.md §3 — a coverage answer read under the wrong
+  // context is the harm). The server dropped this visit; the transcript above
+  // the seam is no longer anything the next turn can build on.
+  it("marks the seam when the gateway returns no visit id (W3-SPEC-20)", async () => {
+    apiFetch.mockResolvedValueOnce(
+      okTurn({ visit_id: null, visit_memory: "unavailable" })
+    );
+    render(<AssistantPage />);
+
+    await send("Is this patient covered?");
+    await screen.findByText(/Coverage is active with Aetna/);
+
+    expect(
+      screen.getByText(/restate the patient and member details/i)
+    ).toBeInTheDocument();
+  });
+
   it("treats a degraded assistant as a successful turn, not an error (W3-SPEC-22)", async () => {
     apiFetch.mockResolvedValueOnce(
       okTurn({ assistant: "degraded", visit_memory: "stale" })
@@ -220,10 +237,43 @@ describe("assistant chat surface", () => {
       await screen.findByText("That conversation has expired — starting a new one.")
     ).toBeInTheDocument();
 
+    // The prior answer stays readable, but a seam separates it from anything
+    // the new visit says — the gateway holds none of it.
+    expect(
+      screen.getByText(/restate the patient and member details/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Coverage is active with Aetna/)).toBeInTheDocument();
+
     apiFetch.mockResolvedValueOnce(okTurn({ reply: "Fresh visit." }));
     await send("Is it still active?");
     await screen.findByText("Fresh visit.");
     expect(lastBody()).toEqual({ message: "Is it still active?" });
+  });
+
+  // NEGATIVE (docs/landmines.md §3). A 200 carrying `reply` but no disclaimer,
+  // no verdict and no memory state would render as a verified coverage answer
+  // stripped of everything that qualifies it.
+  it.each([
+    ["no disclaimer", { disclaimer: undefined }],
+    ["no visit_memory", { visit_memory: undefined }],
+    ["no assistant state", { assistant: undefined }],
+    ["no eligibility key", { eligibility: undefined }],
+    ["an unrecognised visit_memory", { visit_memory: "lost" }],
+    ["an unrecognised assistant state", { assistant: "hallucinating" }],
+    ["a visit id of the wrong shape", { visit_id: "not-a-visit-id" }],
+    ["a non-object eligibility", { eligibility: "active" }],
+  ])("falls back on a 200 with %s (W3-SPEC-22)", async (_name, over) => {
+    apiFetch.mockResolvedValueOnce(okTurn(over));
+    render(<AssistantPage />);
+
+    await send("Is this patient covered?");
+
+    expect(
+      await screen.findByText(
+        "The assistant is unavailable right now. Coverage can still be checked directly with the payer."
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Coverage is active with Aetna/)).not.toBeInTheDocument();
   });
 
   it("names the retry path on a 429 rather than failing the visit (W3-SPEC-22)", async () => {
