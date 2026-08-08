@@ -261,6 +261,36 @@ def proxy_eligibility(
 
 
 # --------------------------------------------------------------------------- #
+# duplicate review queue (ADR 0005 decisions 3-4)
+# --------------------------------------------------------------------------- #
+# Gated on the EXISTING patients.write capability — the grant front_desk, admin
+# and staff already hold, and clinician and roi_clerk already lack. Reviewing
+# candidate duplicates is registration work, so no new role and no new
+# capability is introduced for it (W2-SPEC-28).
+@app.get("/review-queue")
+def proxy_review_queue(session: dict = Depends(require_capability("patients.write"))):
+    return _get_checked("intake", "/review-queue", timeout=30.0)
+
+
+@app.post("/review-queue/{pair_id}/disposition")
+def proxy_review_disposition(
+    pair_id: int,
+    payload: dict,
+    session: dict = Depends(require_capability("patients.write"))
+):
+    # decided_by comes from the SESSION, never from the client body: this is the
+    # record of who judged two charts to be one person, and a client-supplied
+    # value would let any front-desk user file that judgment under someone
+    # else's name. Any decided_by in the payload is overwritten.
+    return _post_checked(
+        "intake",
+        f"/review-queue/{pair_id}/disposition",
+        {**payload, "decided_by": session.get("username", "")},
+        timeout=30.0,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # patients / records
 # --------------------------------------------------------------------------- #
 @app.get("/patients")
@@ -283,6 +313,17 @@ def proxy_records(patient_id: int, session: dict = Depends(require_capability("r
     # IDOR: a valid session is required, but it is never checked against
     # {patient_id}. {patient_id} is the sequential primary key.
     return _get("records", f"/patients/{patient_id}/records")
+
+
+@app.get("/patients/{patient_id}/relevant-records")
+def proxy_relevant_records(
+    patient_id: int, session: dict = Depends(require_capability("records.read"))
+):
+    # The chart-read capability, unchanged: no new capability, no new role, no
+    # unauthenticated path (W2-SPEC-18). D11 is inherited in kind — per-patient
+    # id, session-not-patient-bound, exactly like the chart read above — but the
+    # exposure set grows by one route, so docs/debt-log.md D11 lists it.
+    return _get_checked("records", f"/patients/{patient_id}/relevant-records", timeout=30.0)
 
 
 @app.get("/records/search")
@@ -1217,6 +1258,38 @@ def _get(service: str, path: str, params: Optional[dict] = None):
     except Exception as e:
         log.error("proxy GET %s%s failed: %s", service, path, e)
         return {"error": str(e)}
+
+
+def _get_checked(service: str, path: str, timeout: float, params: Optional[dict] = None):
+    """GET from a downstream service, surfacing failure as failure.
+
+    The read-side twin of ``_post_checked``, and for the same reason: the
+    inherited ``_get`` collapses every failure into a 200-OK
+    ``{"error": str(e)}`` body, so a caller cannot tell an outage from an empty
+    result, and the ``str(e)`` it logs can embed the request URL and its query
+    params. New routes use this one. The fourteen inherited ``_get``/``_post``
+    routes are deliberately NOT migrated here — that is the open half of D4 and
+    an approval-gated change of its own.
+    """
+    try:
+        r = httpx.get(f"{SERVICES[service]}{path}", params=_clean(params), timeout=timeout)
+    except httpx.TimeoutException:
+        log.error("proxy GET %s%s timed out after %.0fs", service, path, timeout)
+        raise HTTPException(status_code=504, detail=f"{service} service timed out")
+    except httpx.HTTPError as e:
+        log.error("proxy GET %s%s transport error: %s", service, path, type(e).__name__)
+        raise HTTPException(status_code=502, detail=f"{service} service unreachable")
+    try:
+        body = r.json()
+    except ValueError:
+        log.error("proxy GET %s%s returned non-JSON status=%s", service, path, r.status_code)
+        raise HTTPException(status_code=502, detail=f"{service} service returned a bad response")
+    if r.status_code >= 400:
+        detail = body.get("detail") if isinstance(body, dict) else None
+        if not isinstance(detail, str):
+            detail = f"{service} service error"
+        raise HTTPException(status_code=r.status_code, detail=detail)
+    return body
 
 
 def _post_checked(

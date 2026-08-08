@@ -106,9 +106,15 @@ EXPECTED_ROUTE_CAPABILITIES = {
     ("GET", "/me"): "profile.read",
     ("POST", "/intake"): "patients.write",
     ("GET", "/eligibility"): "eligibility.check",
+    # Duplicate review queue (W2-SPEC-28): registration work, so it rides the
+    # existing patients.write grant — no new role, no new capability.
+    ("GET", "/review-queue"): "patients.write",
+    ("POST", "/review-queue/{pair_id}/disposition"): "patients.write",
     ("GET", "/patients"): "patients.read",
     ("GET", "/patients/{patient_id}"): "patients.read",
     ("GET", "/patients/{patient_id}/records"): "records.read",
+    # The chart-open helper rides the existing chart-read capability (W2-SPEC-18).
+    ("GET", "/patients/{patient_id}/relevant-records"): "records.read",
     ("GET", "/records/search"): "records.search",
     ("GET", "/slots"): "schedule.read",
     ("GET", "/appointments"): "schedule.read",
@@ -176,20 +182,31 @@ def _forbid_fanout(monkeypatch):
     def _boom(*a, **k):
         raise AssertionError("downstream fan-out ran for a denied request")
 
+    # All four transport helpers, not just the legacy pair: routes added since
+    # the _post_checked/_get_checked split would otherwise be asserted against
+    # a helper they never call, and the "no fan-out" claim would be vacuous
+    # exactly on the newest routes.
     monkeypatch.setattr(gw, "_get", _boom)
     monkeypatch.setattr(gw, "_post", _boom)
+    monkeypatch.setattr(gw, "_get_checked", _boom)
+    monkeypatch.setattr(gw, "_post_checked", _boom)
 
 
 @pytest.mark.parametrize(
     "role,method,path",
     [
         ("front_desk", "GET", "/patients/1042/records"),  # no chart access
+        ("front_desk", "GET", "/patients/1042/relevant-records"),  # W2-SPEC-18
         ("front_desk", "GET", "/records/search?q=gonzalez"),
         ("front_desk", "GET", "/roi/requests"),
         ("clinician", "POST", "/intake"),
         ("clinician", "POST", "/appointments"),
         ("clinician", "POST", "/ai/intake-instructions"),
+        ("clinician", "GET", "/review-queue"),                       # W2-SPEC-28
+        ("clinician", "POST", "/review-queue/1/disposition"),
         ("roi_clerk", "GET", "/eligibility?insurance_id=BCBS123"),
+        ("roi_clerk", "GET", "/review-queue"),
+        ("roi_clerk", "POST", "/review-queue/1/disposition"),
         ("roi_clerk", "POST", "/hl7/ingest"),
     ],
 )
@@ -228,9 +245,18 @@ def test_unknown_or_missing_role_fails_closed_as_403(monkeypatch, session):
     assert r.status_code == 403
 
 
-def test_anonymous_caller_still_gets_401_not_403(monkeypatch):
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("GET", "/patients/1042/records"),
+        ("GET", "/patients/1042/relevant-records"),      # W2-SPEC-18
+        ("GET", "/review-queue"),                        # W2-SPEC-28
+        ("POST", "/review-queue/1/disposition"),
+    ],
+)
+def test_anonymous_caller_still_gets_401_not_403(monkeypatch, method, path):
     monkeypatch.setattr(gw, "get_session", lambda token: None)
-    r = client.get("/patients/1042/records")
+    r = client.request(method, path, json={} if method == "POST" else None)
     assert r.status_code == 401
 
 
@@ -248,9 +274,14 @@ def test_staff_keeps_every_capability():
         ("front_desk", "POST", "/intake"),
         ("front_desk", "GET", "/slots"),
         ("clinician", "GET", "/patients/1042/records"),
+        ("clinician", "GET", "/patients/1042/relevant-records"),
         ("clinician", "GET", "/records/search?q=gonzalez"),
         ("roi_clerk", "GET", "/roi/requests"),
+        ("front_desk", "GET", "/review-queue"),      # the queue's operational owner
+        ("front_desk", "POST", "/review-queue/1/disposition"),
+        ("admin", "GET", "/review-queue"),
         ("staff", "GET", "/patients/1042/records"),  # pre-RBAC rows unchanged
+        ("staff", "GET", "/review-queue"),
         ("staff", "POST", "/roi/requests"),
     ],
 )
@@ -258,6 +289,8 @@ def test_granted_role_reaches_the_downstream_proxy(monkeypatch, role, method, pa
     sentinel = {"proxied": True}
     monkeypatch.setattr(gw, "_get", lambda *a, **k: sentinel)
     monkeypatch.setattr(gw, "_post", lambda *a, **k: sentinel)
+    monkeypatch.setattr(gw, "_get_checked", lambda *a, **k: sentinel)
+    monkeypatch.setattr(gw, "_post_checked", lambda *a, **k: sentinel)
     _login_as(role)
     r = client.request(method, path, json={} if method == "POST" else None)
     assert r.status_code == 200
