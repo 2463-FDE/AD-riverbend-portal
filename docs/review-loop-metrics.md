@@ -310,6 +310,42 @@ regression the `--omit=dev` change could plausibly have caused and which no test
 Reading a dry round for what it *checked*, not only for its empty finding list, is what makes it
 evidence rather than an absence of evidence.
 
+PR #63 r1 — 2 findings: **2 A / 0 B / 0 C**, 0 refuted · both `[medium]`, both genuine defects in
+the code as pushed, both fixed on the branch with a regression each (923/1/5, baseline +2, xfail
+and deselected unmoved). **Neither triggered the design gate** — the step-4 test is *"the fix
+introduces or alters state"*, and one is a read-check-write collapsed into a conditional UPDATE
+while the other reorders an already-loaded list; no counter, TTL, lock, breaker, budget or cache
+appears in either. Worth noting against §3's first lesson: the *finding* in #2 is about a budget
+(`relevant_records_max_scan`), and the reflex is to route anything budget-shaped back to stage 3.
+The rule is about the **fix**, not the finding — the budget keeps its meaning, its default and its
+N+1 ceiling, and only the order it is spent in changes. **Lesson:** both defects live in the gap
+between a plan sentence and its only faithful reading. #1's plan line named the 409 *contract*
+("409 if already dispositioned") and no mechanism, so a non-atomic implementation satisfied it
+literally; #2's named a rank and a bound in one sentence without fixing their order, and the
+implementation picked the wrong one. Neither gate could have caught either: the plan was
+self-consistent, the code matched the plan, and every seeded chart is orders of magnitude below
+the scan bound, so no test at seed scale could fail. **Generalizes: when a plan line names a bound
+and an ordering in the same breath, the plan owes the order; when it names a status contract on a
+shared row, it owes whether the check is in the write.** Both are one clause of plan text, and
+both were paid for in a review round instead.
+
+PR #63 r2 — 0 findings · **dry, verdict `approve`** — "No ship-blocking defect found in the branch
+diff. No material findings." Loop closed at 2 rounds (2 A-fixes, 1 dry), the shortest code loop in
+this ledger. Read for what it *checked*: it re-inspected both r1 fix surfaces — the conditional
+queue UPDATE and the reordered records scan — and drew nothing, which is the B-round check the r1
+fixes needed and no test in this PR can supply. It also did not re-raise its own r1 bounded-SQL
+suggestion, so the landmine rationale for keeping the N+1 (D8) held on a second, independent read.
+Both "top things to improve" were **E**, not findings: the reviewer could not run pytest in its
+environment, and its CI-wiring worry was already closed before the round began. **Lesson: an E of
+this shape is answered with evidence, not a change** — `.github/workflows/ci.yml:91` runs
+`pytest -m "not integration" -q` from the repo root, so the whole `tests/` tree is collected and
+per-file registration cannot be forgotten; the `tests` job on the reviewed head had already
+reported 923/5/1. The cost of the round was one comment carrying three numbers (full suite
+923/5/1 local, 106 in the named slice, 923/5/1 in CI), not a commit. **Generalizes: when a reviewer
+asks for proof it could not gather itself, check whether the proof already exists upstream before
+producing it again — and post the artifact either way, because an unanswered E reads identically
+to an ignored A.**
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
