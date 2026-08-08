@@ -77,6 +77,35 @@ class PatientChart(BaseModel):
     encounters: list[EncounterWithRecords]
 
 
+class RelevantRecordItem(BaseModel):
+    """One ranked pointer into the chart below the panel.
+
+    Titles and dates, never record bodies: the panel links attention, and the
+    chart remains the record view. ``reason`` is why this record ranked, so the
+    clinician can see the ranking rather than trust it.
+    """
+
+    record_id: int
+    kind: str | None = None
+    title: str | None = None
+    occurred_at: datetime | None = None
+    reason: str          # allergy | medication | recent
+
+
+class RelevantRecords(BaseModel):
+    """The chart-open helper's response.
+
+    ``duplicate_disclosure`` is a BARE ENUM on purpose. Naming the sibling
+    charts would turn a warning into a cross-chart navigation path, and reading
+    across charts that no human has approved merging is exactly what ADR 0005
+    rejected. "candidate" says other charts may exist; it never says which.
+    """
+
+    patient_id: int
+    duplicate_disclosure: str   # candidate | none
+    items: list[RelevantRecordItem]
+
+
 class RecordSearchHit(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
