@@ -9,8 +9,14 @@
 > **When an ADR is required.** Any non-trivial design decision, not just ones that ship
 > code (project memory `document-design-decisions`). The test: if a future review round
 > could reasonably re-open this, it needs an ADR, because the ADR is what turns
-> "re-argue it" into "read it." `address-review`'s design gate stops on exactly this —
-> a fix that is a decision rather than an edit needs a decision record to point at.
+> "re-argue it" into "read it." The rule to apply: **a fix that is a decision rather than
+> an edit needs a decision record to point at** — if you are about to answer a review
+> finding by choosing between designs, write the ADR instead of arguing in the thread.
+> Until 2026-08-06 that rule was enforced by the prior engagement's `address-review`
+> design gate; that tooling is not adopted and the name is dead on `main` (`CLAUDE.md`
+> §11), so **nothing enforces this automatically today** — the review round in
+> `.claude/skills/implementation/` "Addressing a round" is where the judgment now sits,
+> and it is a human one.
 >
 > **Section discipline.** Context / Decision / Consequences are mandatory. The rest are
 > earned: include a section when this repo has been bitten by leaving it out, and delete
@@ -127,5 +133,8 @@
 > six rounds of it.
 >
 > One entry per correction: the finding, what changed, and the test that now proves it.
-> Label the round with the same A/B/C scheme `address-review` uses, so
-> `docs/review-loop-metrics.md` §4 can be appended to without re-deriving the baseline.
+> Label the round with the A/B/C scheme defined in `docs/review-loop-metrics.md` §1 and
+> applied by `.claude/skills/implementation/` "Addressing a round", so §4 of that file can
+> be appended to without re-deriving the baseline. (The scheme predates the current
+> process — it was `address-review`'s, a dead name on `main`, `CLAUDE.md` §11 — but the
+> labels and the measured baseline carry over unchanged.)

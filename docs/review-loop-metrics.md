@@ -134,7 +134,7 @@ deliberate compatibility posture — ADR 0017 §1 + tradeoff #1, `RBAC-R6`/`RBAC
 tested requirement, not an omission); the per-account UPDATE is deferred to client sign-off (spec §8
 open decision 1) and any migration is §6 approval-gated. **[high]** "role revocation does not reach
 live sessions": ADR 0017 tradeoff #7 records exactly this, spec §8 #1 makes session invalidation a
-precondition of any reassignment; root cause is D10 (no session TTL, CLAUDE.md §9), out of this PR's
+precondition of any reassignment; root cause is D10 (no session TTL, `docs/debt-log.md`), out of this PR's
 scope and §6-gated. Reviewer's own summary concedes "the ADR text acknowledges this."
 
 PR #28 r2 — 2 findings: same two as r1, restated verbatim (same anchors, same recommendations);

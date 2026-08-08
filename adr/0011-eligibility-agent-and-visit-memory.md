@@ -4,6 +4,14 @@
 below were decided with the engagement lead on 2026-07-26 — see Consequences)
 **Date:** 2026-07-26
 **Author:** Riverbend engagement team
+**Citation repoint, 2026-08-08 (`docs/todo.md` TODO-52):** this ADR cited `CLAUDE.md`
+by section number seven times. `CLAUDE.md` was rewritten 2026-08-06 and renumbered, so
+each of those pointed at the wrong section — old §5 (Testing strategy), §6 (Landmines
+and do-not-touch zones), §7 (Safety rules) and §9 (Known debt) are now
+`docs/landmines.md` §3, §1, §2 and `docs/debt-log.md`. The citations below are
+repointed to the owning documents, which is where the rules moved; **no decision,
+constraint or consequence was edited.** The pre-rewrite file is `git show
+c04806d:CLAUDE.md`.
 **Relates to:** ADR 0004 (ai-assistant service + PHI-safe LLM wrapper — the wrapper
 this endpoint reuses), ADR 0007 (AI endpoint abuse controls — the gateway control
 stack this endpoint joins), ADR 0009 (Bedrock provider — the paid inference path),
@@ -30,8 +38,8 @@ job is to surface that verdict conversationally without ever converting an
 
 Four constraints shape every decision below.
 
-1. **The vendor boundary is not cleared for PHI.** Debt **D13 / #5** (CLAUDE.md
-   §9, `docs/specs-deprecated/w8.md`): Bedrock is used on standard SaaS terms with **no BAA**.
+1. **The vendor boundary is not cleared for PHI.** Debt **D13 / #5**
+   (`docs/debt-log.md`, `docs/specs-deprecated/w8.md`): Bedrock is used on standard SaaS terms with **no BAA**.
    ADR 0004 kept `/intake-instructions` safe by construction — its request is
    closed vocabulary (enum/bool only), so nothing PHI-shaped can reach the prompt.
    A free-text chat box is the obvious way to break that invariant, and W8 — the
@@ -45,11 +53,11 @@ Four constraints shape every decision below.
    and a role. Visit memory would put an **insurance/member id** there — a
    different exposure class.
 3. **The gateway is a load-bearing wall.** `services/gateway/app.py` owns auth for
-   the entire portal (CLAUDE.md §6). Domain orchestration does not belong in it;
+   the entire portal (`docs/landmines.md` §1). Domain orchestration does not belong in it;
    new behavior should land at a seam — a new endpoint in a service, wired in one
    place.
-4. **Ungrounded model output is already known debt.** CLAUDE.md §9 "AI output
-   guardrail": an LLM summary elsewhere in the estate hallucinated clinical
+4. **Ungrounded model output is already known debt.** `docs/landmines.md` §1, "AI
+   output guardrail": an LLM summary elsewhere in the estate hallucinated clinical
    content ("continue metformin" for a no-meds patient). A coverage verdict is a
    financial and access-to-care fact; a model must not be the thing that asserts
    it.
@@ -697,7 +705,7 @@ as round 4's: an expensive call on the path a common input makes the default.
    That is not merely wasteful, it is the cheapest waste in the feature to
    provoke. The turns with no freedom are exactly the turns that need no member
    id — "can you check this patient's coverage?" repeated — so one clerk, or one
-   never-expiring session (CLAUDE.md §6, D10), walks the *global* counter to its
+   never-expiring session (`docs/debt-log.md` D10), walks the *global* counter to its
    cap and the visible symptom is everyone else's AI features going dark. The
    per-user chat quota bounds the rate, not the direction.
 
@@ -1049,7 +1057,7 @@ introduced by the fix**, which is the reason that pass exists:
   intent derivation, the selection gate falling back, error-status mapping,
   post-egress degradation to 200), `test_visit_memory.py` (round-trip, atomic
   set+TTL, sliding refresh, turn eviction, owner binding → 404, load-fault →
-  fresh visit), `test_visit_chat_phi.py` (**adversarial**, per CLAUDE.md §5:
+  fresh visit), `test_visit_chat_phi.py` (**adversarial**, per `docs/landmines.md` §3:
   member id / name / SSN planted in free text → nothing raw in any log, no PHI in
   the prompt sent to the wrapper, opaque key, error string never persisted,
   no cross-visit read), `test_gateway_ai_chat_controls.py` (rate limit before
@@ -1057,19 +1065,23 @@ introduced by the fix**, which is the reason that pass exists:
   consulted, per-visit lock serialization, fail-closed on counter faults),
   `test_ai_eligibility_client.py` (timeout bound, breaker opens, degrades to
   `unknown`, no id and no `str(e)` in logs).
-- **Human approval (CLAUDE.md §6/§7).** Decided with the engagement lead on
+- **Human approval (`docs/landmines.md` §1/§2).** Decided with the engagement lead on
   2026-07-26: (a) **PHI at rest in Redis is approved** for `facts.insurance_id`
   under the §3 mitigations — the no-store fallback in Alternatives is not taken;
   (b) the Redis hardening is **flagged, not bundled** (gap 2 / debt-log D3b) —
   **superseded 2026-07-27**: after adversarial round 1 named the unauthenticated
   host-published store the blocker, the lead approved bundling the hardening into
   this PR (no host port, `requirepass`, scoped credential, gateway-side
-  fail-closed guard). This is a §6 change to the session store, taken with
+  fail-closed guard). This is a do-not-touch-zone change to the session store, taken with
   explicit approval; no other auth behaviour moved;
   (c) replies stay **catalog-rendered** — no free text to the vendor while D13 is
   open. Still to confirm at the PR approval gate: the new API contract, the
   `docs/phi-logging-policy.md` edit, ai-assistant's new PHI-bearing outbound
   dependency, and the additive namespace parameter on the shared
   `check_ai_rate_limit`. **No auth change is proposed.**
-- **`/security-review` gate applies** (PHI paths) before the PR is opened, per the
-  `pr-open` skill.
+- **A security review of the PHI paths applies before the PR is opened.** As decided
+  2026-07-26 this cited the prior engagement's `pr-open` skill; that is a dead name on
+  `main` (`CLAUDE.md` §11) and nothing in the repo can execute it. The live equivalent
+  for work landing now is the pre-push gate in `.claude/skills/impl-gate/`, run against
+  the plan and spec before push (`docs/workflow/README.md`). Repointed 2026-08-08; the
+  gate this ADR required is unchanged.
