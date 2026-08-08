@@ -139,8 +139,10 @@ tracked as TODO-1. Deliberately not patched piecemeal.
 
 ## 7. Docs are current, with known exceptions
 
-Trust the docs, but five files carry claims the code has outgrown — the drift is enumerated once,
-in `docs/todo.md` TODO-52, and fixing it is unscheduled work rather than background knowledge.
+Trust the docs; the five files that had outgrown their claims were corrected 2026-08-08, dated in
+place (`docs/todo.md` TODO-52, closed). One drift is left and it is citation-level: **a
+`CLAUDE.md §n` reference written before the 2026-08-06 rewrite points at the wrong section — check
+it against the headings above before acting on it.** Counts and the old→new mapping: TODO-57.
 
 The one piece of vocabulary worth holding in your head: ADRs 0012–0015 are `Superseded` (the
 SvelteKit rebuild was descoped 2026-08-05). Read them as decisions-as-taken, never as current plan.
@@ -205,10 +207,10 @@ Decision 2026-08-06: process and tooling here get **built from scratch** rather 
 that branch is a historical record, not a source to copy from. Any in-repo reference to
 `address-review`, `spec-lens`, `/dashboard`, `feature-start`, `diff-reviewer`, `verify-stack`,
 `doc-drift`, `pr-open`, `render-pdf`, `regression-proof` or `memory-lint` is a **dead name on
-`main`** — nothing there can execute it. Seventeen docs still invoke them, including both
-`_template.md` files and every weekly spec; that is registered as `docs/todo.md` TODO-53. Treat such
-an instruction as unexecutable and say so rather than improvising a substitute or reviving the
-branch.
+`main`** — nothing there can execute it. Treat such an instruction as unexecutable and say so
+rather than improvising a substitute or reviving the branch. Live docs were reconciled 2026-08-08
+(`docs/todo.md` TODO-53, closed); a dead name surviving in an archived or `Superseded` file is a
+record of what happened, not an instruction.
 
 When tooling does get written, it lands in `.claude/` and is committed, so every clone and worktree
 inherits the same thing and changes get PR review. Keep machine-local state out — credentials,

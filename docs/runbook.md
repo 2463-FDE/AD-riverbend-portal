@@ -73,15 +73,27 @@ or (b) bad DB creds in `.env`. Check `make logs`.
 ## Common incidents
 
 ### "Registration spins for 4–5 seconds" (RIV-088)
-Expected with the current build: intake verifies eligibility **inline** with a
-synchronous, no-timeout payer call. Not a fix target for ops — it's an
-architectural issue (see ARCHITECTURE §7).
+Intake verifies eligibility **inline** on the request thread, so a slow payer is
+still felt at the front desk. **Corrected 2026-08-08:** the call is no longer
+unbounded — ADR 0010 put an 8s `ELIGIBILITY_TIMEOUT_SECONDS` on intake's call to
+eligibility-service and a 1s connect / 2s read timeout on the payer call itself
+(`services/intake-service/config.py`, `services/eligibility-service/config.py`).
+Worst case is now bounded seconds, not indefinite. Still not an ops fix target:
+the inline placement is architectural (see ARCHITECTURE §7, D4).
 
 ### "Whole intake screen froze ~20 min" (RIV-141)
-The payer/clearinghouse was degraded. Because the eligibility call has no
-timeout/circuit breaker and sits on the intake request path, a payer outage
-stalls intake. Mitigation today: wait for the payer to recover. Real fix:
-make eligibility async + add timeout/breaker.
+The payer/clearinghouse was degraded. **Corrected 2026-08-08 — the mechanism
+described here was fixed by ADR 0010 (Accepted 2026-07-23) and this section had
+not caught up.** A payer outage no longer stalls intake: the payer call is
+timeout-bounded, eligibility-service opens its own breaker after
+`PAYER_BREAKER_FAIL_THRESHOLD` (5) failures, and intake opens a second one after
+`ELIGIBILITY_BREAKER_FAIL_THRESHOLD` (3), returning `{"active": null, "status":
+"unknown"}` rather than holding the request. The two budgets are pinned to each
+other and the pinning is test-enforced
+(`tests/test_eligibility_budget_alignment.py`) — **do not retune one value alone.**
+What remains open is the async decoupling half of D4: verification is still on the
+request path, just bounded. If intake genuinely stalls now, that is a new
+incident, not this one.
 
 ### "Two confirmations / two people for one slot" (RIV-175)
 Double-booking from the check-then-insert race (no UNIQUE on `appointments.slot_id`,
@@ -177,7 +189,14 @@ the host. Removing PHI from logs is an open remediation item.
 `.github/workflows/ci.yml`: frontend build + JS gates (`typecheck`, `lint`,
 `npm test`) and a `frontend-boot` job that runs the production image and polls
 `/healthz` (ADR 0018, `e1`), per-service import smoke, unit tests
-(`pytest -m "not integration"`), then `docker compose build`. `docker-build` is
-the terminal fan-in job and `needs` `frontend-boot`, so a boot-broken frontend
-image cannot show green there. There is no
-secret-scan, dependency-vuln-scan, or image-scan step — another known gap.
+(`pytest -m "not integration"`), the RIV-160 retrieval-eval drift gate (`eval`),
+and a `secret-scan` job, then `docker compose build`. `docker-build` is the
+terminal fan-in job and `needs` all of them, so neither a boot-broken frontend
+image nor a committed secret can show green there.
+
+**Corrected 2026-08-08:** this section claimed there was no secret scan. There has
+been one since PR #2 (`8858097`) — a pinned gitleaks `v8.18.4` job scanning the
+tracked tree with `--no-git`, the recurrence guard for D9. It does **not** scan
+git history, where the original exposure lives; that scan is step 4 of the
+`docs/debt-log.md` remediation runbook and is only meaningful after the history
+rewrite. Still genuinely absent: dependency-vuln scanning and image scanning.
