@@ -365,6 +365,30 @@ def test_degrade_log_carries_no_exception_message(rig, monkeypatch, caplog):
     assert "egressed=" in formatted
 
 
+def test_degrade_log_carries_the_provider_request_id(rig, monkeypatch, caplog):
+    # Codex PR #69 round 1 (medium), W1-SPEC-12. The degrade branch is the other
+    # class-name-only LLM-path site, and it swallows the failure into a 200 — so
+    # the log line is the ONLY record a response-format incident leaves here.
+    # The structured request id survives; the message, PHI-planted, does not.
+    marker = f"{NAME} member {MEMBER_ID} LEAK-SENTINEL-4471"
+
+    def _raise(*a, **k):
+        raise ai_app.llm_client.LLMResponseError(marker, request_id="req_drift_88")
+
+    monkeypatch.setattr(ai_app.llm_client, "complete_structured", _raise)
+    with caplog.at_level("DEBUG"):
+        r = _chat(ADVERSARIAL_MESSAGE)
+
+    assert r.status_code == 200
+    formatted = "\n".join(logging.Formatter().format(rec) for rec in caplog.records)
+    assert "req_drift_88" in formatted
+    assert "LLMResponseError" in formatted
+    assert "LEAK-SENTINEL-4471" not in formatted
+    for phi in PHI_STRINGS + (MEMBER_ID,):
+        assert phi not in formatted, f"{phi!r} reached a log record"
+    assert "req_drift_88" not in r.text
+
+
 # --- the response -----------------------------------------------------------
 def test_no_phi_in_the_http_response(rig):
     r = _chat(ADVERSARIAL_MESSAGE)

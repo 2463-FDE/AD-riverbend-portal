@@ -703,6 +703,52 @@ def test_missing_usage_raises_through_adapter(monkeypatch):
         llm_mod.complete("hello")
 
 
+def test_response_error_carries_request_id_attribute(monkeypatch):
+    # Codex PR #69 round 1 (medium), W1-SPEC-12. Stripping str(e) from the
+    # LLM-path log sites (W1-SPEC-13) also stripped the provider request id,
+    # which lived ONLY inside that message: a schema-drifted 200 is post-egress
+    # (already billable) and the id is the operator's one handle for correlating
+    # it against Bedrock's own logs. It is now a STRUCTURED attribute, readable
+    # by a caller that must never log the message. Both pre-success raise sites
+    # are covered — neither reaches the success log that used to emit the id.
+    _stub_runtime_returning(
+        monkeypatch, {"usage": {"input_tokens": 10, "output_tokens": 5}}
+    )
+    with pytest.raises(llm_mod.LLMResponseError) as excinfo:
+        llm_mod.complete("hello")
+    assert excinfo.value.request_id == "req_stub_ok"
+
+
+def test_missing_usage_error_carries_request_id_attribute(monkeypatch):
+    # The second pre-success raise site (W1-SPEC-12, same round).
+    _stub_runtime_returning(
+        monkeypatch, {"content": [{"type": "text", "text": "hi"}]}
+    )
+    with pytest.raises(llm_mod.LLMResponseError) as excinfo:
+        llm_mod.complete("hello")
+    assert excinfo.value.request_id == "req_stub_ok"
+
+
+def test_structured_validation_error_carries_request_id_attribute(monkeypatch):
+    # The third LLMResponseError raise site (W1-SPEC-12, same round). This one
+    # fires AFTER _result_from_response succeeded, so the success log already
+    # emitted the id — but a caller correlating the FAILURE should not have to
+    # join two log lines to find it.
+    _patch_client(monkeypatch, _FakeMessages(response=_response(text="not json at all")))
+    with pytest.raises(llm_mod.LLMResponseError) as excinfo:
+        llm_mod.complete_structured("summarize", SampleOutput)
+    assert excinfo.value.request_id == "req_test_123"
+
+
+def test_request_id_defaults_to_none_when_the_raiser_has_no_response(monkeypatch):
+    # Every pre-egress refusal, and any failure raised before a response was
+    # parsed, has no id to carry. The attribute must be None there rather than
+    # absent, so a catcher reads it unconditionally (the egressed idiom).
+    assert llm_mod.LLMUnavailable("provider down").request_id is None
+    assert llm_mod.LLMBudgetExceeded("cap").request_id is None
+    assert llm_mod.LLMResponseError("no id available").request_id is None
+
+
 def test_malformed_response_error_carries_no_prompt(monkeypatch):
     # Adversarial (CLAUDE.md §5): the new raise path is an exception-message
     # path, so it must carry neither the prompt nor any PHI.

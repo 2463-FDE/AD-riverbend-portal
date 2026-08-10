@@ -661,6 +661,34 @@ def test_llm_error_log_carries_no_exception_message(monkeypatch, caplog, exc):
     assert "LEAK-SENTINEL-8814" not in r.text
 
 
+def test_bad_response_log_carries_request_id_and_not_the_message(monkeypatch, caplog):
+    # Codex PR #69 round 1 (medium). W1-SPEC-12 allows allowlisted non-PHI
+    # metadata; W1-SPEC-13 bans the stringified message. Both at once: the
+    # provider request id must survive as a STRUCTURED field on a schema-drift
+    # incident (the egress already happened and is billable, so an operator
+    # needs the correlation handle), while the message — PHI-planted here —
+    # must not. Red against the class-name-only-and-nothing-else log line.
+    marker = "Jane Doe SSN 123-45-6789 LEAK-SENTINEL-9021"
+
+    def _raise(*a, **k):
+        raise app_mod.llm_client.LLMResponseError(marker, request_id="req_drift_77")
+
+    monkeypatch.setattr(app_mod.llm_client, "complete_structured", _raise)
+    with caplog.at_level("DEBUG"):
+        r = client.post("/intake-instructions", json={"has_insurance": True})
+
+    assert r.status_code == 502
+    formatted = "\n".join(logging.Formatter().format(rec) for rec in caplog.records)
+    assert "req_drift_77" in formatted
+    assert "LLMResponseError" in formatted
+    assert "LEAK-SENTINEL-9021" not in formatted
+    assert "Jane Doe" not in formatted
+    assert "123-45-6789" not in formatted
+    # The id is an internal correlation handle — the caller still gets the
+    # generic detail, not the provider's identifiers.
+    assert "req_drift_77" not in r.text
+
+
 # Statuses the gateway treats as "no paid Bedrock call happened" and REFUNDS the
 # aggregate spend slot for (gateway app.py _NON_PAID_DOWNSTREAM_STATUS). Mirrored
 # here — like PlanType ↔ the portal select — so this service's error mapping and

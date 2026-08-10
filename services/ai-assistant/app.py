@@ -251,7 +251,18 @@ def intake_instructions(req: InstructionsRequest):
         log.error("intake-instructions provider unavailable (%s)", type(e).__name__)
         raise HTTPException(status_code=502, detail="assistant is temporarily unavailable")
     except llm_client.LLMResponseError as e:
-        log.error("intake-instructions bad model response (%s)", type(e).__name__)
+        # Class name PLUS the structured request id — never str(e) (W1-SPEC-13).
+        # A schema-drifted 200 is the one failure an operator must correlate
+        # against the provider's own logs, and the paid egress already happened;
+        # the id is the same non-PHI field the success log emits
+        # (llm_client._result_from_response), so logging it here is an
+        # allowlisted field under W1-SPEC-12, not a widening. None when the
+        # raiser had no id. Codex PR #69 round 1.
+        log.error(
+            "intake-instructions bad model response (%s, request_id=%s)",
+            type(e).__name__,
+            e.request_id,
+        )
         raise HTTPException(status_code=502, detail="assistant returned an unusable response")
     except llm_client.LLMBudgetExceeded as e:
         # PRE-egress: llm_client enforces the token / char / cost caps LOCALLY,
@@ -791,10 +802,16 @@ def _reply_items(intent: VisitIntent, status: str, turn_count: int) -> _ReplyPla
         )
     except llm_client.LLMError as e:
         egressed = getattr(e, "egressed", True)
+        # request_id read the same defensive way as egressed — an attribute set
+        # by the raiser, None on every branch that has no provider response to
+        # name. Structured, so the class-name-only rule (W1-SPEC-13) costs the
+        # operator no correlation handle on a response-format incident.
+        # Codex PR #69 round 1.
         log.error(
-            "visit-chat degrading to deterministic reply (%s, egressed=%s)",
+            "visit-chat degrading to deterministic reply (%s, egressed=%s, request_id=%s)",
             type(e).__name__,
             egressed,
+            getattr(e, "request_id", None),
         )
         return _ReplyPlan(visit_templates.render(required), egressed, True)
     return _ReplyPlan(_select_reply_items(status, result.parsed.template_ids), True, False)
