@@ -538,6 +538,23 @@ rows, the seam-map cite, `CLAUDE.md` §6 / `todo.md`). On a PR that is half regi
 and 8, produced by the impl gate, and nothing in the review loop duplicates it. Loop closed at 2
 rounds, 1 A-fix.
 
+PR #72 r1 — 1 finding: **1 A / 0 B / 0 C**, 0 refuted · **[high] A, declined as a pre-disclosed
+accepted residual, no code change** — a registration that commits and then loses its response can
+be retried into a second `patients` row, because `POST /intake` carries no idempotency key. Premise
+accepted in full and one part corrected: `main` had the same commit-then-work-then-respond window,
+so the branch does not open it — it makes it *reachable*, because portal registration worked nowhere
+before. Declined here because the fix persists state (idempotency key + request/result store), which
+is the §3.1 design-gate trigger; the reviewer's cheaper alternative ("UI says status unknown")
+contradicts frozen E4-SPEC-7; and the test it asked for would have to be an `xfail`, moving a pinned
+count. Routed to `e5`'s requirements stage as the register-first half of D4. **Lesson, and the
+reason this round cost one comment rather than a commit: an accepted residual disclosed in the PR
+body is not disclosed to this reviewer** — it reads the diff, not the prose around it, and it will
+independently rediscover every residual the plan accepted. That is not noise; a residual a cold
+adversarial read finds unprompted is evidence the acceptance was worth recording. The cost is one
+round per residual per PR, and the only thing that reduces it is accepting fewer of them, not
+writing the disclosure differently. Worth watching whether r2 re-raises it after the disposition —
+PR #69 r2 did honour a declined recommendation, which is the behaviour this relies on.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
