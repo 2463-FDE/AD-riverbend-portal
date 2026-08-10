@@ -20,11 +20,11 @@ function jsonResponse(status: number, body: unknown): Response {
   } as Response;
 }
 
-// The visit-prep checklist is gated behind a submitted intake (page.tsx's
-// `result?.ok` branch), and the three required fields, the two required
-// consents and the submit button live on three different wizard steps — so
-// reaching it is field entry plus three Continue clicks, not one form fill.
-async function submitIntake() {
+// Fill the wizard up to (not including) the submit click. The three required
+// fields, the two required consents and the submit button live on three
+// different steps, so reaching Review is field entry plus three Continue
+// clicks, not one form fill.
+async function fillWizard() {
   // step 0 — Demographics
   fireEvent.change(screen.getByLabelText(/first name/i), { target: { value: "Ada" } });
   fireEvent.change(screen.getByLabelText(/last name/i), { target: { value: "Lovelace" } });
@@ -50,14 +50,28 @@ async function submitIntake() {
 
   // step 2 — Consents: the two required ones.
   fireEvent.click(screen.getByLabelText(/consent to treatment/i));
-  fireEvent.click(screen.getByLabelText(/notice of privacy practices/i));
+  // (HIPAA) disambiguates from the optional ROI consent, whose body also cites
+  // the Notice of Privacy Practices.
+  fireEvent.click(screen.getByLabelText(/notice of privacy practices \(hipaa\)/i));
   fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+}
 
-  // step 3 — Review & Submit. apiFetch is mocked, so the 200 here is NOT an
-  // assertion that registration works: it neither exercises nor masks the
-  // intake contract break (docs/debt-log.md, TODO-1), which is backend-side.
-  apiFetch.mockResolvedValueOnce(jsonResponse(200, { message: "Intake received" }));
+// Fill, then submit against a given response, and wait for the page to settle.
+async function submitWith(status: number, body: unknown) {
+  await fillWizard();
+  apiFetch.mockResolvedValueOnce(jsonResponse(status, body));
   fireEvent.click(screen.getByRole("button", { name: /submit intake/i }));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: /submit intake/i })?.hasAttribute("disabled")).not
+      .toBe(true),
+  );
+}
+
+// The visit-prep checklist is gated behind a CONFIRMED registration, so the
+// mocked 200 has to carry a patient_id — a success status that confirms no
+// record is no longer a success (E4-SPEC-5).
+async function submitIntake() {
+  await submitWith(201, { patient_id: 5001, elapsed_seconds: 0.4 });
   await screen.findByRole("button", { name: /get visit prep instructions/i });
 }
 
@@ -115,5 +129,113 @@ describe("intake visit-prep checklist surface", () => {
     expect(alert.textContent).toContain("Could not reach the portal.");
     expect(document.body.textContent).not.toContain("NetworkError");
     expect(document.body.textContent).not.toContain("portal.internal");
+  });
+});
+
+describe("registration outcome (E4)", () => {
+  it("confirms a registration only when the response carries a patient id (E4-SPEC-5)", async () => {
+    render(<IntakePage />);
+    await submitWith(201, { patient_id: 5001, elapsed_seconds: 0.4 });
+
+    const status = await screen.findByRole("status");
+    expect(status.textContent).toContain("5001");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("treats a success status that confirms no record as a failure (E4-SPEC-5)", async () => {
+    // The defect's own shape one layer up: the gateway used to answer 200 for a
+    // registration that created nothing, and the page printed a fallback
+    // success string. A 2xx with no patient_id is a system failure now.
+    render(<IntakePage />);
+    await submitWith(200, { message: "Intake received" });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("was not saved");
+    expect(alert.textContent).toContain("system could not complete it");
+    expect(document.body.textContent).not.toContain("Intake submitted");
+  });
+
+  it("tells the operator a rejected submission is correctable at the desk (E4-SPEC-6)", async () => {
+    render(<IntakePage />);
+    await submitWith(422, { detail: "demographics.name: Field required" });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("was not saved");
+    expect(alert.textContent).toContain("correct them at the desk");
+    // The downstream detail is never relayed: it can carry the submitted
+    // values that were rejected.
+    expect(document.body.textContent).not.toContain("Field required");
+  });
+
+  it("tells the operator a failed submission is a system failure, not a form problem (E4-SPEC-7)", async () => {
+    render(<IntakePage />);
+    await submitWith(502, { detail: "intake service unreachable" });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("system could not complete it");
+    expect(alert.textContent).not.toContain("correct them at the desk");
+    expect(document.body.textContent).not.toContain("intake service unreachable");
+  });
+
+  it("keeps a 400 on the correctable side of the split (E4-SPEC-6, E4-SPEC-14)", async () => {
+    render(<IntakePage />);
+    await submitWith(400, { detail: "bad request" });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("correct them at the desk");
+  });
+
+  it("renders the payer verdict on the confirmation (E4-SPEC-24)", async () => {
+    render(<IntakePage />);
+    await submitWith(201, {
+      patient_id: 5001,
+      eligibility: { active: true, status: "active" },
+    });
+
+    expect(await screen.findByText("Coverage active")).toBeTruthy();
+  });
+
+  it("renders a degraded verdict as not-a-denial, never as absent (E4-SPEC-24)", async () => {
+    render(<IntakePage />);
+    await submitWith(201, {
+      patient_id: 5001,
+      eligibility: { active: null, status: "unknown", reason: "eligibility check failed" },
+    });
+
+    expect(await screen.findByText("Unverified — not a denial")).toBeTruthy();
+  });
+
+  it("says so explicitly when there is no verdict at all (E4-SPEC-25)", async () => {
+    render(<IntakePage />);
+    await submitWith(201, { patient_id: 5001, eligibility: null });
+
+    expect(await screen.findByText(/eligibility was not checked/i)).toBeTruthy();
+  });
+
+  it("shows the not-checked line for a verdict outside the vocabulary (E4-SPEC-25)", async () => {
+    // The accepted residual, pinned rather than left to drift: VerdictBadge
+    // renders only active|inactive|unknown|pending, so anything else falls into
+    // the not-checked line rather than rendering nothing at all.
+    render(<IntakePage />);
+    await submitWith(201, {
+      patient_id: 5001,
+      eligibility: { active: null, status: "degraded_but_answering" },
+    });
+
+    expect(await screen.findByText(/eligibility was not checked/i)).toBeTruthy();
+  });
+
+  it("sends the service's payload shape, not the form's (E4-SPEC-1, E4-SPEC-3)", async () => {
+    render(<IntakePage />);
+    await submitWith(201, { patient_id: 5001 });
+
+    const call = apiFetch.mock.calls[0];
+    expect(call[0]).toBe("/api/intake");
+    const body = JSON.parse((call[1] as { body: string }).body);
+    expect(body.demographics.name).toBe("Ada Lovelace");
+    expect(body.demographics.first_name).toBeUndefined();
+    expect(body.consents).toEqual(["treatment_consent", "npp_ack"]);
+    expect(body.insurance).toBeNull();
+    expect(JSON.stringify(body)).not.toContain("policy_holder");
   });
 });

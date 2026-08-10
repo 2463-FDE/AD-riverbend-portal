@@ -93,8 +93,13 @@ class _StubSession:
     def rollback(self):
         self.rollbacks += 1
 
-    def refresh(self, obj):
-        obj.id = NEW_ID
+    def flush(self):
+        # _create_registration flushes (no arguments) to assign the PK inside
+        # the transaction; the coverage and consent rows are added after it, so
+        # only the patient is pending here.
+        for obj in self.added:
+            if getattr(obj, "id", None) is None:
+                obj.id = NEW_ID
 
     def execute(self, statement, params=None):
         self.executed.append((statement, params))
@@ -331,14 +336,25 @@ def test_normalized_ssn_is_bound_as_a_parameter_and_never_stored():
 # ------------------------------------------------------- ordering guarantee
 
 def test_match_evaluation_runs_after_the_patient_row_is_committed():
-    """The hook sits after _create_patient by design: a matcher that ran first,
-    or inside the same transaction, could take registration down with it."""
+    """The hook sits after _create_registration by design: a matcher that ran
+    first, or inside the same transaction, could take registration down with
+    it.
+
+    The marker is keyed on the FIRST commit, not on flush() and not on every
+    commit. flush() fires inside the registration transaction, so keying it
+    there would weaken the assertion to "after the row is flushed", which is
+    not the ADR 0005 property; and _evaluate_match_key commits on its own
+    success path (app.py), so an unguarded marker would fire twice.
+    """
     order = []
 
     class _OrderedSession(_StubSession):
-        def refresh(self, obj):
-            order.append("patient-committed")
-            super().refresh(obj)
+        def commit(self):
+            # Only the first commit is the registration boundary ADR 0005
+            # orders the hook against.
+            if "patient-committed" not in order:
+                order.append("patient-committed")
+            super().commit()
 
         def execute(self, statement, params=None):
             if isinstance(statement, TextClause):

@@ -62,10 +62,40 @@ def test_consents_reject_unknown_identifier():
 def test_all_known_consent_kinds_accepted():
     req = schemas.IntakeRequest(
         demographics={"name": "Jane Roe"},
-        consents=["npp_ack", "treatment_consent", "roi_consent"],
+        consents=[
+            "npp_ack",
+            "treatment_consent",
+            "roi_consent",
+            "financial_responsibility_ack",
+            "communications_opt_in",
+        ],
     )
     # use_enum_values → plain strings after validation
-    assert req.consents == ["npp_ack", "treatment_consent", "roi_consent"]
+    assert req.consents == [
+        "npp_ack",
+        "treatment_consent",
+        "roi_consent",
+        "financial_responsibility_ack",
+        "communications_opt_in",
+    ]
+
+
+def test_consent_kind_members_are_pinned_to_five_literals():
+    """E4-SPEC-9: the accepted vocabulary is a closed five, named here.
+
+    The enum is a PHI control, not a convenience type (see its docstring), and
+    the intake form now offers exactly these five. Pinning the members as
+    literals is what makes a silent sixth member — or a widening back to a bare
+    ``str`` — a failing test rather than an invisible loosening of the boundary
+    that keeps free-text PHI out of the log and the database.
+    """
+    assert {k.value for k in schemas.ConsentKind} == {
+        "npp_ack",
+        "treatment_consent",
+        "roi_consent",
+        "financial_responsibility_ack",
+        "communications_opt_in",
+    }
 
 
 # --- log_metadata emits only allowlisted, non-PHI facts (the D1 log fix) --------

@@ -373,6 +373,36 @@ def test_no_scoped_env_template_can_skew_the_catalog():
         )
 
 
+# --- the registration bound must reach the gateway from ONE place (E4-SPEC-17) -
+# tests/test_eligibility_budget_alignment.py pins the value at its two sources of
+# truth: the config.py default and .env.example. Neither of those can see a
+# per-service `environment:` entry, and neither can see a scoped env template the
+# gateway loads AFTER .env (compose lets a later env_file beat an earlier one).
+# Either would set INTAKE_TIMEOUT_SECONDS below intake's own budget with the
+# whole suite green, and the gateway would abort a registration intake is still
+# legitimately processing.
+BOUND_KEY = "INTAKE_TIMEOUT_SECONDS"
+
+
+def test_the_registration_bound_is_never_set_per_service():
+    for name, svc in _all_services().items():
+        assert BOUND_KEY not in _environment_keys(svc), (
+            f"{name} must not pin {BOUND_KEY} in its own `environment:` block: the "
+            "invariant against intake's eligibility budget is enforced from "
+            ".env.example and the code default, and a per-service override defeats "
+            "it invisibly"
+        )
+
+
+def test_no_scoped_env_template_can_override_the_registration_bound():
+    for template in COMPOSE.parent.glob(".env.*.example"):
+        assert not re.search(rf"^\s*{BOUND_KEY}\s*=", template.read_text(), re.MULTILINE), (
+            f"{template.name} must not set {BOUND_KEY}: the gateway loads its scoped "
+            "templates after the shared .env, so a value here silently wins over the "
+            "one the budget invariant checks"
+        )
+
+
 # --- every domain service is network-internal (ADR 0016, debt-log D15) --------
 # Codex PR #26 r3/r4: GET /schedule answered a clinic day of appointments —
 # patient names + MRNs — on host port 8074 with no login. Not that route's bug:

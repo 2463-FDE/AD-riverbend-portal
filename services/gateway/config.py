@@ -61,6 +61,18 @@ class Settings:
     # `openssl rand -hex 32` and set the same value for both services.
     ai_proxy_shared_secret = os.getenv("AI_PROXY_SHARED_SECRET", "")
 
+    # Bound on the registration fan-out (E4-SPEC-17/18). The same 30s the
+    # inherited _post hardcoded, so the bound does not move — but it is now
+    # configured and PINNED: it must never be shorter than intake's own budget
+    # for the registration path (ELIGIBILITY_TIMEOUT_SECONDS, 8s), or the
+    # gateway aborts a registration intake is still legitimately processing and
+    # the desk is told the system failed while a patient row is being written.
+    # tests/test_eligibility_budget_alignment.py enforces the invariant against
+    # both this default and .env.example; tests/test_compose_topology.py closes
+    # the per-service and scoped-template override vectors neither of those can
+    # see.
+    intake_timeout_seconds = float(os.getenv("INTAKE_TIMEOUT_SECONDS", "30"))
+
     # LLM calls are seconds-slow by nature; this bounds the /ai fan-out
     # explicitly (never unbounded — that is the D4/RIV-088 pattern) while
     # allowing more headroom than the 30s default used for the CRUD services.

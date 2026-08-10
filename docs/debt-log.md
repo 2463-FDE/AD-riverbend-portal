@@ -109,9 +109,13 @@
   A cross-service **PHI leak** found on the same path was
   also closed: `eligibility-service/app.py` no longer logs/returns `str(e)`
   (the payer request URL embeds `member_id`). **Remaining (follow-up):** full
-  register-first / out-of-band re-verification (instant 201 + async verify),
-  and moving the gateway `proxy_intake` path off the legacy error-swallowing
-  `_post` onto `_post_checked`.
+  register-first / out-of-band re-verification (instant 201 + async verify).
+  The gateway half was delivered 2026-08-10 (`e4`): `proxy_intake` is off the
+  error-swallowing `_post` and on `_post_checked` with a configured,
+  test-pinned timeout, so a downstream 422 reaches the portal as a 422 instead
+  of a 200 carrying an `{"error": ...}` body. The other **thirteen**
+  `_post`/`_get` call sites are unchanged and deferred to `e5` — they inherit
+  `e4`'s error contract and carry no further decisions.
 - **Three residuals measured 2026-08-07** (W3 backfill verification against
   `docs/workflow/w3/spec.md`; none is new breakage, and none is scheduled):
   1. **"Bounded" means each network phase, not total wall time.** The timeouts
@@ -123,26 +127,30 @@
      budget, not a hard ceiling. Self-documented at
      `adr/0010-eligibility-resilience.md:246-251`; recorded here because D4's
      status above otherwise reads as a total-time guarantee.
-  2. **An unexpected exception in verification still fails the registration,
-     after the patient row is committed.** `_verify_eligibility`
-     (`services/intake-service/app.py:205-213`) wraps its call in `try/finally`
-     with no `except`, so anything the shaping helper does not catch propagates
-     out of `POST /intake` as a 500 — and `create_intake` commits the patient
-     (`:96`) and the coverage row (`:98`) *before* calling it at `:109` and
-     records consents at `:111` *after*. The failure window therefore leaves a
-     patient with no consent rows and a 500 at the desk. The `try/finally` is
-     deliberate and test-pinned for what it does guarantee — the breaker always
-     settles, `tests/test_intake_breaker.py:469` — so this is reported, not
-     fixed; closing it means deciding what `POST /intake` owes a caller when a
-     non-eligibility fault lands mid-sequence, which is register-first's
-     territory.
-  3. **The verdict is never persisted.** `_create_coverage` writes
+  2. **CLOSED 2026-08-10 (`e4`, E4-SPEC-4).** *An unexpected exception in
+     verification still fails the registration, after the patient row is
+     committed.* `_verify_eligibility` wraps its call in `try/finally` with no
+     `except`, so anything the shaping helper does not catch propagated out of
+     `POST /intake` as a 500 — and `create_intake` committed the patient and the
+     coverage row *before* calling it and recorded consents *after*, so the
+     failure window left a patient with no consent rows and a 500 at the desk.
+     What closed it was deciding what `POST /intake` owes a caller when a fault
+     lands mid-sequence: nothing survives a failed registration. Patient,
+     coverage and consents are now one transaction (`_create_registration`),
+     verification runs after the commit behind a call-site guard, and the
+     `try/finally` is untouched — it is still test-pinned for what it does
+     guarantee (the breaker always settles, `tests/test_intake_breaker.py`).
+     **Residual on the residual:** atomicity is per-request, not cross-service.
+     A registration that commits and then loses its response in transit leaves a
+     row the operator never sees confirmed; that needs an idempotency key on
+     `POST /intake`, which is register-first's territory.
+  3. **The verdict is never persisted.** `_create_registration` writes
      `payer_name`/`member_id`/`group_number`/`plan_type` only, so
      `insurance_coverages.status` keeps its schema default `'unknown'`
      (`db/schema.sql:53`) and `verified_at` stays NULL for every registration,
-     whatever the payer returned. The verdict exists only as a field in the
-     `POST /intake` response (`schemas.IntakeResponse.eligibility`), which no
-     front-desk surface renders (see TODO-56). Noted in
+     whatever the payer returned. Still open. The verdict now at least reaches
+     a screen — the intake confirmation renders it (`e4`, E4-SPEC-24) — but it
+     still reaches no column. Noted in
      `adr/0010-eligibility-resilience.md:153-157`; the consequence worth having
      here is that no stored record distinguishes "verified active" from "never
      checked", so nothing can be reported on or re-verified from the database.
@@ -310,12 +318,20 @@ live PHI and credentials.
 | Sessions never expire, single role, no MFA | Any leaked cookie is a permanent all-access credential | OPEN (approval-gated). The single-role part narrowed by ADR 0017: four real roles + per-route capability enforcement at the gateway — but every pre-RBAC `users` row keeps the full-capability `staff` role, so on an existing database a leaked token is still all-access; TTL and MFA unchanged. The idle-logoff mitigation that ADR 0014 specified is **gone with the frontend rebuild** (descoped 2026-08-05, branch `alt/sveltekit-portal`), so nothing logs an idle operator off anywhere today. `create_session` still sets no TTL: a session abandoned by closing the browser is never invalidated and a captured token stays valid forever. Only a gateway-side TTL closes it — approval-gated under `docs/landmines.md` §1 (auth), unscheduled. ADR 0014 gap #1 |
 | Session token in browser `localStorage` (portal) | `frontend/app/lib/session.ts:29-30` stores the bearer token — and the `PortalUser` incl. role — in `localStorage`, so any XSS on the origin exfiltrates a credential that never expires and, via D11, reads every chart in the network. It also persists in plaintext in the browser profile across reboot on shared front-desk workstations. This is the pattern OWASP's Authentication Cheat Sheet and SMART on FHIR browser-app guidance both name explicitly as the thing not to do; automatic logoff (45 CFR 164.312(a)(2)(iii), *addressable*) is absent entirely. Inherited from the handoff | OPEN, and now **unscheduled**. The fix was a rebuilt portal holding the token BFF-side behind an `httpOnly` cookie (ADR 0014); the rebuild is descoped (branch `alt/sveltekit-portal`) and the Next.js portal, which is the only frontend, is deliberately not patched. Retrofitting the cookie into it is real work nobody has costed |
 | No dependency/image scanning in CI | Vulnerable deps and base images ship silently | OPEN, **narrowed 2026-08-08** — the secret-scanning half closed with PR #2 (`8858097`): a pinned gitleaks `v8.18.4` job scans the tracked tree on every push and `docker-build` needs it. That guard is tracked-tree only; the full-history scan is remediation-runbook step 4 and stays open. Dependency and image scanning are still absent |
-| Intake payload contract break — registration is non-functional and reports success | See **Intake contract break** below | OPEN and **unscheduled** — the fix was folded into the frontend rebuild, which is descoped (2026-08-05). The defect is backend-side and outlived its plan; it needs a home in a curriculum week. Tracked as TODO-1 |
+| Intake payload contract break — registration is non-functional and reports success | See **Intake contract break** below | **DELIVERED 2026-08-10 (`e4`)** — all four layers fixed, and the *class* is now guarded by one shared payload declaration (`contracts/intake-registration.json`) asserted from both CI jobs. TODO-1 closed. The account below is kept as the record of what was wrong |
 
 ### Intake contract break (no D-number)
 
 > Filed here rather than as a new `D15`: the seeded markers are the client's taxonomy, and D1b is
 > the precedent for recording a defect that has no marker of its own.
+>
+> **DELIVERED 2026-08-10 (`e4`).** Everything below describes the defect as it stood, and is kept
+> because the account — the four layers, the payload table, the consent-enum decision — is what
+> the fix was sized against. What changed: the portal sends the schema's shape and confirms a
+> registration only on a numeric `patient_id`; the gateway route is on `_post_checked`, so a
+> downstream 422 arrives as a 422; patient, coverage and consents are one transaction; and the
+> two sides of the payload are asserted against one shared declaration from both CI jobs, which
+> is the artifact that makes the class impossible rather than this instance fixed.
 
 Patient registration through the portal is **completely non-functional on `main`** and the UI
 displays a green "Intake submitted successfully." No patient row is created. Verified by driving
@@ -330,9 +346,11 @@ surfaces when the patient arrives with no chart. Nothing in the stack alerts on 
 payload against one shared fixture; each side is internally consistent and tested, and the
 mismatch lives only in the space between them. The artifact that would make this *class*
 impossible is one intake payload fixture asserted by both a pytest test and a JS test, both in CI.
-That was scoped as part of the frontend rebuild and is descoped with it (branch
-`alt/sveltekit-portal`), and there is no JavaScript test harness in this repository, so **the
-class is currently unguarded** — only this instance is known.
+**Landed 2026-08-10 (`e4`, E4-SPEC-19..21):** `contracts/intake-registration.json`, asserted by
+`tests/test_intake_payload_contract.py` and `frontend/app/intake/payload.contract.test.ts`. Both
+jobs already gate `docker-build`, so either side drifting reddens CI on its own. (The claim that
+stood here until then — no JavaScript test harness exists, so the class is unguarded — was
+already stale: Vitest + RTL landed with `e1`, ADR 0018, and CI runs `npm test`.)
 
 **The four layers — the reason it presents as success.** Reading only the last layer misdiagnoses
 this as a UI bug:
@@ -362,13 +380,18 @@ clearing the 422 frontend-side alone would discard a legal financial attestation
 widened by `financial_responsibility_ack` and `communications_opt_in` — no migration
 (`consents.kind` is plain `TEXT`, `db/schema.sql:121`, no `CHECK`), but it is a deliberate touch
 to a **documented PHI control**, so whichever week ships it re-proves the consent-storage
-behaviour rather than assuming the widening is inert.
+behaviour rather than assuming the widening is inert. **Shipped 2026-08-10 (`e4`)**, with the
+widening re-proved rather than assumed and the members pinned as five literals. The form gained a
+fifth consent (release of information) so the two vocabularies are equal on both sides; that row
+is an intake acknowledgement and **not** a 45 CFR 164.508 authorization — D12 is untouched
+(`docs/todo.md` TODO-61).
 
 **`policy_holder` resolved 2026-07-31 (user): the form drops the free-text field** and
 collects a "Policy holder is the patient" checkbox instead. The AI checklist consumes only
-`policy_holder_is_self`, a boolean derived from the field's emptiness at
-`frontend/app/intake/page.tsx:147` — the name string reaches nothing but the Review display — so
-the checkbox supplies everything downstream uses. The measurement behind that call is on branch
+`policy_holder_is_self`, a boolean that was derived from the field's emptiness — the name string
+reached nothing but the Review display — so the checkbox supplies everything downstream uses.
+**Shipped 2026-08-10 (`e4`, E4-SPEC-3):** the field is gone and the checkbox is the source of
+`policy_holder_is_self`. The measurement behind that call is on branch
 `alt/sveltekit-portal` (`docs/specs-deprecated/frontend-rebuild.md` §8.1); the decision stands on its own and
 is not restated here.
 
@@ -376,11 +399,10 @@ is not restated here.
 system captures no policy-holder identity at all. If a policy holder who is not the patient must
 ever be named — a coordination-of-benefits or billing requirement — it needs a new
 `InsuranceCoverage` column plus the hand-synced migration, not just a form field. Until then the
-absence is deliberate, not an oversight. The Next.js portal keeps collecting and dropping the
-field, and is not patched.
+absence is deliberate, not an oversight — and it is now the *only* thing about the policy holder
+that is still true: the portal no longer collects the name at all.
 
-**No requirements own this defect any more.** The `FE-R*` requirements that specified the fix, and
-the enum analysis behind it, went to branch `alt/sveltekit-portal` with the frontend rebuild on
-2026-08-05. Everything needed to fix it is above — the four layers, the payload table, and the
-consent-enum decision. It needs a curriculum week; until it has one, TODO-1 is the only thing
-holding it.
+**Delivered by `e4` (2026-08-10).** The `FE-R*` requirements that specified the fix went to branch
+`alt/sveltekit-portal` with the frontend rebuild on 2026-08-05, and the defect outlived them; the
+account above — the four layers, the payload table, the consent-enum decision — is what `e4` was
+sized against. Requirements, spec and plan: `docs/workflow/e4/`. TODO-1 closed.

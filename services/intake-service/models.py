@@ -41,7 +41,9 @@ class Consent(Base):
 
     id = Column(Integer, primary_key=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
-    kind = Column(Text)                               # npp_ack | treatment_consent | roi_consent
+    # npp_ack | treatment_consent | roi_consent | financial_responsibility_ack
+    # | communications_opt_in  (the closed set schemas.ConsentKind enforces)
+    kind = Column(Text)
     signed_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

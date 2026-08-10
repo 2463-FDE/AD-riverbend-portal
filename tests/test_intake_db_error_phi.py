@@ -1,8 +1,8 @@
 """
-Adversarial PHI test for the intake DB-write failure paths (app.py).
+Adversarial PHI test for the intake DB-write failure path (app.py).
 
-phi-logging-policy register (PR #33): _create_patient / _create_coverage log
-str(e) on SQLAlchemyError, and a statement-level DBAPIError stringifies with
+phi-logging-policy register (PR #33): the intake write helpers logged str(e) on
+SQLAlchemyError, and a statement-level DBAPIError stringifies with
 ``[SQL: ...] [parameters: (...)]`` — the full bound row — unless the engine
 set hide_parameters=True (before this fix, none did). So a DataError on the
 patients INSERT (e.g. an oversized field) wrote name/DOB/SSN into the intake
@@ -11,6 +11,13 @@ exactly as SQLAlchemy embeds them and asserts none survive into any log record
 or the raised HTTP error. It FAILS against the pre-fix code, which logged
 str(e). Same shape as tests/test_intake_eligibility_phi.py (the 2026-07-08
 fix this one mirrors) and the landmines §3 negative-test rule.
+
+The three writes are now one transaction in ``_create_registration``
+(E4-SPEC-4), so the three failure points are exercised through that one helper:
+the patients INSERT fails at the explicit ``flush()``, the coverage and consent
+INSERTs at the single ``commit()``. The consent case additionally proves the
+inherited swallow is gone — that failure is now a 503, not a silent partial
+registration.
 """
 import logging
 import sys
@@ -51,26 +58,52 @@ GROUP = "GRP-77812"
 PHI = (NAME, DOB, SSN, MEMBER_ID, GROUP)
 
 
-class _FailingSession:
-    """Session double whose commit raises the statement-level error an
-    un-hidden engine produces: DBAPIError.__str__ appends
-    ``[SQL: ...] [parameters: (...)]`` with every bound value."""
+NEW_ID = 4242
 
-    def __init__(self, statement: str, params: tuple, orig_message: str | None = None):
+
+class _FailingSession:
+    """Session double whose flush or commit raises the statement-level error an
+    un-hidden engine produces: DBAPIError.__str__ appends
+    ``[SQL: ...] [parameters: (...)]`` with every bound value.
+
+    ``fail_on`` picks which of the two the registration transaction dies in:
+    ``flush`` is the patients INSERT (the PK assignment), ``commit`` is the
+    coverage and consent INSERTs, which are only sent when the one transaction
+    commits.
+    """
+
+    def __init__(
+        self,
+        statement: str,
+        params: tuple,
+        orig_message: str | None = None,
+        fail_on: str = "commit",
+    ):
         self._exc = DataError(
             statement,
             params,
             Exception(orig_message or "value too long for type character varying(11)"),
         )
+        self._fail_on = fail_on
+        self.added = []
+        self.rollbacks = 0
 
     def add(self, obj):
-        pass
+        self.added.append(obj)
+
+    def flush(self):
+        if self._fail_on == "flush":
+            raise self._exc
+        for obj in self.added:
+            if getattr(obj, "id", None) is None:
+                obj.id = NEW_ID
 
     def commit(self):
-        raise self._exc
+        if self._fail_on == "commit":
+            raise self._exc
 
     def rollback(self):
-        pass
+        self.rollbacks += 1
 
 
 def _assert_no_phi(caplog, exc_info):
@@ -86,21 +119,29 @@ def _assert_no_phi(caplog, exc_info):
             assert value not in record.getMessage()
 
 
+def _request(**kwargs):
+    payload = {
+        "demographics": {"name": NAME, "dob": DOB, "ssn": SSN},
+        "consents": ["npp_ack"],
+    }
+    payload.update(kwargs)
+    return schemas_mod.IntakeRequest(**payload)
+
+
 def test_patient_insert_failure_does_not_leak_row(caplog):
-    demo = schemas_mod.Demographics(name=NAME, dob=DOB, ssn=SSN)
     db = _FailingSession(
         "INSERT INTO patients (name, dob, ssn) VALUES (%s, %s, %s)",
         (NAME, DOB, SSN),
+        fail_on="flush",
     )
     with caplog.at_level(logging.ERROR):
         with pytest.raises(app_mod.HTTPException) as exc_info:
-            app_mod._create_patient(db, demo)
+            app_mod._create_registration(db, _request())
     assert exc_info.value.status_code == 503
     _assert_no_phi(caplog, exc_info)
 
 
 def test_coverage_insert_failure_does_not_leak_member_id(caplog):
-    ins = schemas_mod.Insurance(member_id=MEMBER_ID, group_number=GROUP)
     db = _FailingSession(
         "INSERT INTO insurance_coverages (patient_id, member_id, group_number) "
         "VALUES (%s, %s, %s)",
@@ -108,17 +149,18 @@ def test_coverage_insert_failure_does_not_leak_member_id(caplog):
     )
     with caplog.at_level(logging.ERROR):
         with pytest.raises(app_mod.HTTPException) as exc_info:
-            app_mod._create_coverage(db, 1, ins)
+            app_mod._create_registration(
+                db, _request(insurance={"member_id": MEMBER_ID, "group_number": GROUP})
+            )
     assert exc_info.value.status_code == 503
     _assert_no_phi(caplog, exc_info)
 
 
 def test_consent_insert_failure_logs_class_only(caplog):
-    """_record_consents swallows the error (no HTTPException — pre-existing
-    behavior), so the only observable is the log line. The consent kind and
-    patient_id are allowlisted there by design; what must not appear is any
-    part of str(e) — proven with a sentinel planted in the driver's own
-    message, which is where a real DBAPIError carries free text."""
+    """The consent kind and patient_id were allowlisted in the old per-consent
+    log line; what must never appear is any part of str(e) — proven with a
+    sentinel planted in the driver's own message, which is where a real
+    DBAPIError carries free text."""
     sentinel = "DRIVER-MSG-SENTINEL-9988"
     db = _FailingSession(
         "INSERT INTO consents (patient_id, kind) VALUES (%s, %s)",
@@ -126,10 +168,27 @@ def test_consent_insert_failure_logs_class_only(caplog):
         orig_message=f"insert failed: {sentinel}",
     )
     with caplog.at_level(logging.ERROR):
-        app_mod._record_consents(db, 1, ["npp_ack"])
+        with pytest.raises(app_mod.HTTPException):
+            app_mod._create_registration(db, _request())
     errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
     assert errors, "consent failure must log an ERROR record"
     for msg in errors:
         assert sentinel not in msg
         assert "[SQL" not in msg and "[parameters" not in msg
         assert "DataError" in msg  # the class name is the diagnostic that remains
+
+
+def test_consent_insert_failure_is_no_longer_swallowed(caplog):
+    """E4-SPEC-4. The consent write used to catch its own SQLAlchemyError and
+    return, so a failure there left a committed patient with no consent rows
+    and a 201 at the desk. The single transaction rolls back and the caller
+    gets a 503 instead — nothing survives a failed registration."""
+    db = _FailingSession(
+        "INSERT INTO consents (patient_id, kind) VALUES (%s, %s)",
+        (1, "npp_ack"),
+    )
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(app_mod.HTTPException) as exc_info:
+            app_mod._create_registration(db, _request())
+    assert exc_info.value.status_code == 503
+    assert db.rollbacks == 1
