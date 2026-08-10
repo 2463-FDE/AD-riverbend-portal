@@ -231,9 +231,11 @@ def intake_instructions(req: InstructionsRequest):
             system=_SYSTEM_PROMPT,
         )
     except llm_client.LLMConfigError as e:
-        # llm_client error messages are metadata-only by contract (ADR 0004) —
-        # safe to log; the client still gets a generic detail.
-        log.error("intake-instructions config error: %s", e)
+        # Class name only, never str(e) — W1-SPEC-13's flat rule
+        # (docs/phi-logging-policy.md rule 3). llm_client's messages are
+        # metadata-only by contract today (ADR 0004), but the rule is flat so
+        # that a future raise site cannot quietly widen what a caller logs.
+        log.error("intake-instructions config error (%s)", type(e).__name__)
         raise HTTPException(status_code=503, detail="assistant is not configured")
     except llm_client.LLMUnavailable as e:
         # POST-egress failure: throttle / upstream 5xx / connection error raised
@@ -246,10 +248,10 @@ def intake_instructions(req: InstructionsRequest):
         # the outage would be refunded and the tenant ceiling would stop bounding
         # vendor fan-out (a retry storm would keep reaching Bedrock unmetered) —
         # Codex PR #7 round 9. See gateway _NON_PAID_DOWNSTREAM_STATUS, ADR 0007.
-        log.error("intake-instructions provider unavailable: %s", e)
+        log.error("intake-instructions provider unavailable (%s)", type(e).__name__)
         raise HTTPException(status_code=502, detail="assistant is temporarily unavailable")
     except llm_client.LLMResponseError as e:
-        log.error("intake-instructions bad model response: %s", e)
+        log.error("intake-instructions bad model response (%s)", type(e).__name__)
         raise HTTPException(status_code=502, detail="assistant returned an unusable response")
     except llm_client.LLMBudgetExceeded as e:
         # PRE-egress: llm_client enforces the token / char / cost caps LOCALLY,
@@ -263,12 +265,12 @@ def intake_instructions(req: InstructionsRequest):
         # Bedrock and 429 all users (Codex PR #7 round 10). Must precede the
         # LLMError catch — LLMBudgetExceeded subclasses it. See gateway
         # _NON_PAID_DOWNSTREAM_STATUS and ADR 0007.
-        log.error("intake-instructions local budget refusal: %s", e)
+        log.error("intake-instructions local budget refusal (%s)", type(e).__name__)
         raise HTTPException(status_code=503, detail="assistant is not configured")
     except llm_client.LLMError as e:
         # Any other unexpected LLM error. 500 keeps the charge: this branch is not
         # a proven pre-egress refusal, so the gateway must not refund the slot.
-        log.error("intake-instructions llm error (%s): %s", type(e).__name__, e)
+        log.error("intake-instructions llm error (%s)", type(e).__name__)
         raise HTTPException(status_code=500, detail="assistant request failed")
     items = _select_items(req, result.parsed.items)
     return InstructionsResponse(items=items, disclaimer=_DISCLAIMER)
@@ -790,10 +792,9 @@ def _reply_items(intent: VisitIntent, status: str, turn_count: int) -> _ReplyPla
     except llm_client.LLMError as e:
         egressed = getattr(e, "egressed", True)
         log.error(
-            "visit-chat degrading to deterministic reply (%s, egressed=%s): %s",
+            "visit-chat degrading to deterministic reply (%s, egressed=%s)",
             type(e).__name__,
             egressed,
-            e,
         )
         return _ReplyPlan(visit_templates.render(required), egressed, True)
     return _ReplyPlan(_select_reply_items(status, result.parsed.template_ids), True, False)

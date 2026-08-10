@@ -15,10 +15,12 @@ from types import SimpleNamespace
 import pytest
 from botocore.exceptions import (
     ClientError,
+    ConnectTimeoutError,
     CredentialRetrievalError,
     EndpointConnectionError,
     NoCredentialsError,
     PartialCredentialsError,
+    ReadTimeoutError,
 )
 from pydantic import BaseModel, Field
 
@@ -432,8 +434,68 @@ def test_connection_error_maps_to_unavailable(monkeypatch):
         endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com"
     )
     _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
-    with pytest.raises(llm_mod.LLMUnavailable):
+    with pytest.raises(llm_mod.LLMUnavailable) as excinfo:
         llm_mod.complete("hello")
+    # The timeout split below must not OVER-capture: a plain endpoint
+    # connection failure is not a timeout (W1-SPEC-2).
+    assert not isinstance(excinfo.value, llm_mod.LLMTimeout)
+
+
+# --- W1-SPEC-2: a timeout is separable from a throttle or a 5xx --------------
+
+
+def test_read_timeout_maps_to_llm_timeout(monkeypatch):
+    # W1-SPEC-2: the configured read bound firing must reach the caller as a
+    # typed timeout, not as the generic "provider did not answer".
+    exc = ReadTimeoutError(
+        endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com"
+    )
+    _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
+    with pytest.raises(llm_mod.LLMTimeout):
+        llm_mod.complete("hello")
+
+
+def test_connect_timeout_maps_to_llm_timeout(monkeypatch):
+    # W1-SPEC-2, the connect half of the same bound.
+    exc = ConnectTimeoutError(
+        endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com"
+    )
+    _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
+    with pytest.raises(llm_mod.LLMTimeout):
+        llm_mod.complete("hello")
+
+
+def test_llm_timeout_subclasses_unavailable(monkeypatch):
+    # Non-regression: LLMTimeout is additive. Every inherited
+    # `except LLMUnavailable` caller — ai-assistant app.py's 502 branch, and
+    # through it the gateway's ADR 0007 keep-charge rule — must keep catching
+    # it, and it stays post-egress (the request was attempted, so it may bill).
+    assert issubclass(llm_mod.LLMTimeout, llm_mod.LLMUnavailable)
+    exc = ReadTimeoutError(
+        endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com"
+    )
+    _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
+    with pytest.raises(llm_mod.LLMUnavailable) as excinfo:
+        llm_mod.complete("hello")
+    assert isinstance(excinfo.value, llm_mod.LLMTimeout)
+    assert excinfo.value.egressed is True
+
+
+def test_timeout_error_carries_no_prompt(monkeypatch):
+    # Negative test (docs/landmines.md §3): the adversarial input is PHI in the
+    # prompt, and the new raise site must carry the exception CLASS only — no
+    # prompt text, no endpoint URL.
+    exc = ReadTimeoutError(
+        endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com"
+    )
+    _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
+    with pytest.raises(llm_mod.LLMTimeout) as excinfo:
+        llm_mod.complete(PHI_PROMPT)
+    message = str(excinfo.value)
+    assert "Jane Doe" not in message
+    assert "123-45-6789" not in message
+    assert "bedrock-runtime" not in message
+    assert "ReadTimeoutError" in message
 
 
 # --- bearer key is mandatory: no ambient-credential fallback (Codex, r3) -----

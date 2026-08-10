@@ -20,6 +20,7 @@ the boundary holds. Both are required (the `consents` leak in PR #2 shipped gree
 because only the first kind existed).
 """
 import json
+import logging
 import sys
 from types import SimpleNamespace
 
@@ -334,6 +335,34 @@ def test_a_degraded_error_string_is_never_persisted(rig, monkeypatch):
     assert "payer rejected" not in stored
     assert NAME not in stored
     assert "error" not in json.loads(stored)["facts"].get("last_eligibility", {})
+
+
+def test_degrade_log_carries_no_exception_message(rig, monkeypatch, caplog):
+    # W1-SPEC-12 / W1-SPEC-13, negative test (docs/landmines.md §3). The
+    # visit-chat degrade branch is the sixth LLM-path site that stringified its
+    # exception; the adversarial input is PHI planted inside the exception
+    # message, scanned over the FORMATTED record so exc_info text counts too.
+    marker = f"{NAME} member {MEMBER_ID} LEAK-SENTINEL-3390"
+
+    def _raise(*a, **k):
+        raise ai_app.llm_client.LLMUnavailable(marker)
+
+    monkeypatch.setattr(ai_app.llm_client, "complete_structured", _raise)
+    with caplog.at_level("DEBUG"):
+        r = _chat(ADVERSARIAL_MESSAGE)
+
+    # The reply still degrades deterministically — this is a log fix, not a
+    # behaviour change.
+    assert r.status_code == 200
+    assert r.json()["reply"]
+
+    formatted = "\n".join(logging.Formatter().format(rec) for rec in caplog.records)
+    assert "LEAK-SENTINEL-3390" not in formatted
+    for phi in PHI_STRINGS + (MEMBER_ID,):
+        assert phi not in formatted, f"{phi!r} reached a log record"
+    # The degrade is still diagnosable: class name and egress flag survive.
+    assert "LLMUnavailable" in formatted
+    assert "egressed=" in formatted
 
 
 # --- the response -----------------------------------------------------------

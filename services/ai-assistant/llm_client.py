@@ -42,9 +42,11 @@ from botocore.config import Config
 from botocore.exceptions import (
     BotoCoreError,
     ClientError,
+    ConnectTimeoutError,
     CredentialRetrievalError,
     NoCredentialsError,
     PartialCredentialsError,
+    ReadTimeoutError,
 )
 from pydantic import BaseModel, ValidationError
 
@@ -136,6 +138,16 @@ class LLMUnavailable(LLMError):
     Always post-egress (or indistinguishable from it): a throttle is a response,
     and a connect/read timeout means the request was attempted.
     """
+
+
+class LLMTimeout(LLMUnavailable):
+    """Connect or read timeout after botocore's retries — the time bound in
+    ADR 0004 fired. A subclass of LLMUnavailable on purpose: callers that only
+    care "the provider did not answer" keep working unchanged (ai-assistant
+    app.py's 502 branch, and through it the gateway's ADR 0007 keep-charge
+    rule), while a caller that needs to distinguish a timeout from a throttle
+    now can. Post-egress like its parent: a timeout means the request was
+    attempted and may be billable, so the inherited egressed=True stands."""
 
 
 class LLMConfigError(LLMError):
@@ -517,6 +529,15 @@ def _call(
         ) from None
     except BotoCoreError as exc:
         # Connect/read timeout or endpoint connection failure, after retries.
+        # Narrowed INSIDE this branch rather than as its own except clause: the
+        # credential branch above already owns one ordering constraint (all
+        # three credential classes subclass BotoCoreError), and a separate
+        # `except (ConnectTimeoutError, ReadTimeoutError)` would have to sit
+        # above BotoCoreError too, adding a second. W1-SPEC-2.
+        if isinstance(exc, (ConnectTimeoutError, ReadTimeoutError)):
+            raise LLMTimeout(
+                "timed out after retries (%s)" % type(exc).__name__
+            ) from None
         raise LLMUnavailable(
             "connection error after retries (%s)" % type(exc).__name__
         ) from None
