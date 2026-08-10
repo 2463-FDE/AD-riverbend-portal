@@ -1,6 +1,6 @@
 # W1 Spec (EARS)
 
-> Status: DRAFT
+> Status: AGREED 2026-08-09 (frozen)
 > Source: docs/workflow/w1/requirements.md (AGREED 2026-08-06)
 >
 > Backfill of record: these statements are derived from the requirements alone. Whether
@@ -37,7 +37,7 @@
 |----|-----------|-------|
 | W1-SPEC-8 | When a request is prepared, the LLM client shall enforce a configured cap on input size and refuse an over-cap request before any provider call is made | |
 | W1-SPEC-9 | The LLM client shall bound response generation with a configured maximum output token limit on every call | |
-| W1-SPEC-10 | When a call completes, the LLM client shall make actual token usage available to the caller for accounting | |
+| W1-SPEC-10 | When a call completes, the LLM client shall make actual token usage available to the caller for accounting | Accounting only — the spend bound is enforced pre-call by the input cap and in-call by the output ceiling, not retrospectively |
 
 ### W1-REQ-5 — no PHI in LLM-path logs
 
@@ -71,8 +71,8 @@
 
 | ID | Statement | Notes |
 |----|-----------|-------|
-| W1-SPEC-19 | When a portal user requests patient-friendly intake instructions, the portal shall display instructions produced through the safe LLM client path (W1-SPEC-1..13) | ⚠ human-gate adjacency: vendor-egress path |
-| W1-SPEC-20 | If the LLM path fails or is unavailable, then the surface shall present a deterministic non-PHI fallback rather than a raw error | |
+| W1-SPEC-19 | When a portal user requests patient-friendly intake instructions, the portal shall display instructions produced through the LLM client path | ⚠ human-gate adjacency: vendor-egress path |
+| W1-SPEC-20 | If the LLM path fails or is unavailable, then the portal shall present a deterministic non-PHI fallback rather than a raw error | |
 
 ## 2. Traceability
 
