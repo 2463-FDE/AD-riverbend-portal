@@ -246,7 +246,9 @@ assertion is `re.search(r">\s*db/seed/seed\.sql")`, not an exact substring — t
 legitimately says `commit db/seed/seed.sql`, so the pin is redirection-onto-the-path. Proven red
 against the r4 string, green with the fix. Residual, named not closed: the test pins only
 check_drift's stderr; a future doc can reintroduce the command untested.
-Pre-push adversarial pass skipped this round, on the verify-stack §6 When-rule: the diff is a
+Pre-push adversarial pass skipped this round, on the then-current pre-push When-rule (the rule
+lived in `verify-stack`, a dead name on `main`; the live owner of this judgment is
+`.claude/skills/impl-gate/`): the diff is a
 message constant, two doc/docstring lines and one test — no logic, contract, concurrency,
 cross-layer or budget change, and the test's discrimination is step-4-proven. Security lens: no
 new surface. Fix commit `5bb54d7`.
@@ -278,88 +280,6 @@ review time, so a `commit -am` close would have dropped it and broken the eval j
 exit-2 (process fix: explicit `git add`, verified `A` in the round's stage); this ledger entry
 did not exist yet at review time (this is it). Sound-list covered mask/seed/derivation/exit
 contract/CI wiring; pass verified 3.8+3.12 green first-hand. Fix commit `fb0e3a1`.
-
-PR #49 r1 — 1 finding: 1 A / 0 B / 0 C · **[medium] A, fixed** — dev/test toolchain (Vitest, Vite,
-jsdom, Testing Library, ESLint) shipped in the production frontend image: the Dockerfile ran plain
-`npm install` and never pruned dev deps. Fixed by splitting `frontend/Dockerfile` into `build`
-(full install + `next build`) and `runtime` (`npm ci --omit=dev`, copies `.next` + `next.config.mjs`)
-stages, plus a `frontend-boot` CI guard that fails if `node_modules/vitest` survives in the built
-image. No state introduced → trivial patch, no re-gate. Runtime-verified: image builds, vitest
-absent + next/react present, `/healthz` 200. Note vs PR #25 r2: the near-identical "empty runtime
-deps" refutation there was SvelteKit adapter-node (rollup-bundled, needs no runtime `node_modules`);
-this Next portal runs `next start` and genuinely needs prod deps, so `--omit=dev` is the correct
-prune here, not an over-prune.
-
-PR #49 r2 — 1 finding: 1 A / 0 B / 0 C · **[medium] A, fixed** — `frontend-boot` was not in
-`docker-build.needs`, so the terminal fan-in job branch protection reads could go green while the
-boot probe went red. Fixed by adding the edge; stale `docker-build` NOTE comment corrected, and the
-runbook/TODO-45 closure claims made precise about the wiring. **Lesson (both gates missed it):**
-E1-SPEC-17 says the pipeline "shall report an overall failure", and the drift gate and impl gate
-both accepted "a job exists that polls `/healthz`" as conformance. A CI clause about *pipeline*
-outcome is only satisfied by an edge into whatever job is terminal — check the graph, not the job.
-Generalizes: for any spec clause naming a system-level outcome, verify the wiring that carries the
-signal, not just the component that produces it. Zero-cost to check (`needs` closure over the parsed
-workflow), and it was the second consecutive round where a correct component sat behind missing
-packaging/wiring (r1 was the Dockerfile).
-
-PR #49 r3 — 0 findings · **dry, verdict `approve`** — "No defensible ship-blocking issue found in
-the branch diff. No material findings." Loop closed at 3 rounds (2 A-fixes, 1 dry); squash-merged
-`efe6f32`. The dry round did useful confirming work rather than just going quiet: it verified the
-r1 fix did not over-prune (runtime image still ships every file the app needs), which is the
-regression the `--omit=dev` change could plausibly have caused and which no test in this PR covers.
-Reading a dry round for what it *checked*, not only for its empty finding list, is what makes it
-evidence rather than an absence of evidence.
-
-PR #63 r1 — 2 findings: **2 A / 0 B / 0 C**, 0 refuted · both `[medium]`, both genuine defects in
-the code as pushed, both fixed on the branch with a regression each (923/1/5, baseline +2, xfail
-and deselected unmoved). **Neither triggered the design gate** — the step-4 test is *"the fix
-introduces or alters state"*, and one is a read-check-write collapsed into a conditional UPDATE
-while the other reorders an already-loaded list; no counter, TTL, lock, breaker, budget or cache
-appears in either. Worth noting against §3's first lesson: the *finding* in #2 is about a budget
-(`relevant_records_max_scan`), and the reflex is to route anything budget-shaped back to stage 3.
-The rule is about the **fix**, not the finding — the budget keeps its meaning, its default and its
-N+1 ceiling, and only the order it is spent in changes. **Lesson:** both defects live in the gap
-between a plan sentence and its only faithful reading. #1's plan line named the 409 *contract*
-("409 if already dispositioned") and no mechanism, so a non-atomic implementation satisfied it
-literally; #2's named a rank and a bound in one sentence without fixing their order, and the
-implementation picked the wrong one. Neither gate could have caught either: the plan was
-self-consistent, the code matched the plan, and every seeded chart is orders of magnitude below
-the scan bound, so no test at seed scale could fail. **Generalizes: when a plan line names a bound
-and an ordering in the same breath, the plan owes the order; when it names a status contract on a
-shared row, it owes whether the check is in the write.** Both are one clause of plan text, and
-both were paid for in a review round instead.
-
-PR #63 r2 — 0 findings · **dry, verdict `approve`** — "No ship-blocking defect found in the branch
-diff. No material findings." Loop closed at 2 rounds (2 A-fixes, 1 dry), the shortest code loop in
-this ledger. Read for what it *checked*: it re-inspected both r1 fix surfaces — the conditional
-queue UPDATE and the reordered records scan — and drew nothing, which is the B-round check the r1
-fixes needed and no test in this PR can supply. It also did not re-raise its own r1 bounded-SQL
-suggestion, so the landmine rationale for keeping the N+1 (D8) held on a second, independent read.
-Both "top things to improve" were **E**, not findings: the reviewer could not run pytest in its
-environment, and its CI-wiring worry was already closed before the round began. **Lesson: an E of
-this shape is answered with evidence, not a change** — `.github/workflows/ci.yml:91` runs
-`pytest -m "not integration" -q` from the repo root, so the whole `tests/` tree is collected and
-per-file registration cannot be forgotten; the `tests` job on the reviewed head had already
-reported 923/5/1. The cost of the round was one comment carrying three numbers (full suite
-923/5/1 local, 106 in the named slice, 923/5/1 in CI), not a commit. **Generalizes: when a reviewer
-asks for proof it could not gather itself, check whether the proof already exists upstream before
-producing it again — and post the artifact either way, because an unanswered E reads identically
-to an ignored A.**
-
-## 5. How to reproduce
-
-1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
-   — real rounds are the ones containing `# Codex Adversarial Review`; the rest are the
-   bot's "no new commits" no-ops.
-2. Findings are the `- [severity] Title (path:lines)` lines inside the `<details>` block.
-3. `gh pr view <N> --json commits` gives the branch's commits in order; the commit
-   subjects (`fix(...): … (codex rN)`) map rounds onto commits.
-4. Label B by checking whether the flagged mechanism existed in the branch's original
-   push — compare symbol occurrences in `git show <first-commit>:<path>` against the
-   tip. File existence alone is too coarse: on a feature PR nearly every file lands in
-   the first commit, and it is the *mechanism* that post-dates it.
-5. Churn: sum `git show --numstat` insertions per non-merge commit, split at the last
-   commit of the original push.
 
 PR #29 r7 — 1 finding: 0 A / **1 B** / 0 C · **[medium] fixed** — r6's `--write-fingerprint`
 was a standalone sidecar writer: edit an input, refresh the fingerprint, skip the embed report,
@@ -456,6 +376,37 @@ sentinel test, red/green proven; (2) same-mechanism sites unregistered (gateway 
 logs, ai-assistant `str(e)` on the vendor-egress path) → register rows OPEN, no code. Security
 lens skipped, judgment on record: no new route/egress/sink/authz/parser. 821/5/1 container.
 
+PR #49 r1 — 1 finding: 1 A / 0 B / 0 C · **[medium] A, fixed** — dev/test toolchain (Vitest, Vite,
+jsdom, Testing Library, ESLint) shipped in the production frontend image: the Dockerfile ran plain
+`npm install` and never pruned dev deps. Fixed by splitting `frontend/Dockerfile` into `build`
+(full install + `next build`) and `runtime` (`npm ci --omit=dev`, copies `.next` + `next.config.mjs`)
+stages, plus a `frontend-boot` CI guard that fails if `node_modules/vitest` survives in the built
+image. No state introduced → trivial patch, no re-gate. Runtime-verified: image builds, vitest
+absent + next/react present, `/healthz` 200. Note vs PR #25 r2: the near-identical "empty runtime
+deps" refutation there was SvelteKit adapter-node (rollup-bundled, needs no runtime `node_modules`);
+this Next portal runs `next start` and genuinely needs prod deps, so `--omit=dev` is the correct
+prune here, not an over-prune.
+
+PR #49 r2 — 1 finding: 1 A / 0 B / 0 C · **[medium] A, fixed** — `frontend-boot` was not in
+`docker-build.needs`, so the terminal fan-in job branch protection reads could go green while the
+boot probe went red. Fixed by adding the edge; stale `docker-build` NOTE comment corrected, and the
+runbook/TODO-45 closure claims made precise about the wiring. **Lesson (both gates missed it):**
+E1-SPEC-17 says the pipeline "shall report an overall failure", and the drift gate and impl gate
+both accepted "a job exists that polls `/healthz`" as conformance. A CI clause about *pipeline*
+outcome is only satisfied by an edge into whatever job is terminal — check the graph, not the job.
+Generalizes: for any spec clause naming a system-level outcome, verify the wiring that carries the
+signal, not just the component that produces it. Zero-cost to check (`needs` closure over the parsed
+workflow), and it was the second consecutive round where a correct component sat behind missing
+packaging/wiring (r1 was the Dockerfile).
+
+PR #49 r3 — 0 findings · **dry, verdict `approve`** — "No defensible ship-blocking issue found in
+the branch diff. No material findings." Loop closed at 3 rounds (2 A-fixes, 1 dry); squash-merged
+`efe6f32`. The dry round did useful confirming work rather than just going quiet: it verified the
+r1 fix did not over-prune (runtime image still ships every file the app needs), which is the
+regression the `--omit=dev` change could plausibly have caused and which no test in this PR covers.
+Reading a dry round for what it *checked*, not only for its empty finding list, is what makes it
+evidence rather than an absence of evidence.
+
 PR #58 r1 — 2 findings: 2 A / 0 B / 0 C · **[high] A, fixed** — on a 404 the page cleared
 `visitId` but kept the transcript, so the next send opened a fresh contextless gateway visit
 under the old coverage answers. Fixed as the class (step 3 cluster): a visible `boundary` seam
@@ -524,17 +475,76 @@ routed as trivial-on-branch; the no-state routing rule (step 4) never had to sen
 stage 3, and nothing regressed. The three lessons converge on one rule now standing for this loop:
 **the round that hardens a boundary must walk the value to its consumer.**
 
+PR #63 r1 — 2 findings: **2 A / 0 B / 0 C**, 0 refuted · both `[medium]`, both genuine defects in
+the code as pushed, both fixed on the branch with a regression each (923/1/5, baseline +2, xfail
+and deselected unmoved). **Neither triggered the design gate** — the step-4 test is *"the fix
+introduces or alters state"*, and one is a read-check-write collapsed into a conditional UPDATE
+while the other reorders an already-loaded list; no counter, TTL, lock, breaker, budget or cache
+appears in either. Worth noting against §3's first lesson: the *finding* in #2 is about a budget
+(`relevant_records_max_scan`), and the reflex is to route anything budget-shaped back to stage 3.
+The rule is about the **fix**, not the finding — the budget keeps its meaning, its default and its
+N+1 ceiling, and only the order it is spent in changes. **Lesson:** both defects live in the gap
+between a plan sentence and its only faithful reading. #1's plan line named the 409 *contract*
+("409 if already dispositioned") and no mechanism, so a non-atomic implementation satisfied it
+literally; #2's named a rank and a bound in one sentence without fixing their order, and the
+implementation picked the wrong one. Neither gate could have caught either: the plan was
+self-consistent, the code matched the plan, and every seeded chart is orders of magnitude below
+the scan bound, so no test at seed scale could fail. **Generalizes: when a plan line names a bound
+and an ordering in the same breath, the plan owes the order; when it names a status contract on a
+shared row, it owes whether the check is in the write.** Both are one clause of plan text, and
+both were paid for in a review round instead.
+
+PR #63 r2 — 0 findings · **dry, verdict `approve`** — "No ship-blocking defect found in the branch
+diff. No material findings." Loop closed at 2 rounds (2 A-fixes, 1 dry), the shortest code loop in
+this ledger. Read for what it *checked*: it re-inspected both r1 fix surfaces — the conditional
+queue UPDATE and the reordered records scan — and drew nothing, which is the B-round check the r1
+fixes needed and no test in this PR can supply. It also did not re-raise its own r1 bounded-SQL
+suggestion, so the landmine rationale for keeping the N+1 (D8) held on a second, independent read.
+Both "top things to improve" were **E**, not findings: the reviewer could not run pytest in its
+environment, and its CI-wiring worry was already closed before the round began. **Lesson: an E of
+this shape is answered with evidence, not a change** — `.github/workflows/ci.yml:91` runs
+`pytest -m "not integration" -q` from the repo root, so the whole `tests/` tree is collected and
+per-file registration cannot be forgotten; the `tests` job on the reviewed head had already
+reported 923/5/1. The cost of the round was one comment carrying three numbers (full suite
+923/5/1 local, 106 in the named slice, 923/5/1 in CI), not a commit. **Generalizes: when a reviewer
+asks for proof it could not gather itself, check whether the proof already exists upstream before
+producing it again — and post the artifact either way, because an unanswered E reads identically
+to an ignored A.**
+
+## 5. How to reproduce
+
+1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
+   — real rounds are the ones containing `# Codex Adversarial Review`; the rest are the
+   bot's "no new commits" no-ops.
+2. Findings are the `- [severity] Title (path:lines)` lines inside the `<details>` block.
+3. `gh pr view <N> --json commits` gives the branch's commits in order; the commit
+   subjects (`fix(...): … (codex rN)`) map rounds onto commits.
+4. Label B by checking whether the flagged mechanism existed in the branch's original
+   push — compare symbol occurrences in `git show <first-commit>:<path>` against the
+   tip. File existence alone is too coarse: on a feature PR nearly every file lands in
+   the first commit, and it is the *mechanism* that post-dates it.
+5. Churn: sum `git show --numstat` insertions per non-merge commit, split at the last
+   commit of the original push.
+
 ## 6. Pre-code gates (append one line per gate stop)
 
-> Added 2026-08-05 at the pipeline-upgrade plan's approval (`docs/plans/pipeline-upgrade.md`
-> §1; OD-3 sited the ledger here — same append-only discipline as §4, extended to the gates
-> that stop work *before* code exists). One line per PG-n stop:
+> Added 2026-08-05 at the pipeline-upgrade plan's approval (that plan's §1; OD-3 sited the
+> ledger here — same append-only discipline as §4, extended to the gates that stop work
+> *before* code exists). The plan itself was superseded 2026-08-06 and deleted 2026-08-09;
+> read it at `git show 22e62f8:docs/plans/pipeline-upgrade.md` if the provenance matters.
+> **This section outlives it** — the discipline is not tied to that plan's stage vocabulary,
+> which is dead (`docs/todo.md`, Dead vocabulary). One line per pre-code gate stop:
 > `date · gate · subject · outcome — note`. Outcomes: **passed-unchanged** (the stop changed
 > nothing), **amended** (the human changed the artifact), **redirected** (the stage was
 > re-run), **aborted** (the work stopped). Dry-run stops carry a `dry-run` tag and are
 > excluded from effectiveness counts. The test this section exists to run: a gate whose lines
 > are ~all passed-unchanged is a stop on taste and gets removed or merged — the same standard
 > §3 applies to the post-code design gate.
+
+**The one entry below is era-1 record, in dead `PG-n` vocabulary** — its subject plan was
+superseded 2026-08-06 and deleted 2026-08-09, and no gate named `PG-n` can be reached from `main`.
+The stop happened, so the line stays; the next entry here will use whatever the live gate is called
+(today: the `.claude/skills/drift-gate/` plan/spec stop).
 
 2026-08-05 · PG-0 · plan:pipeline-upgrade · amended — approved with 3 amendments (a1
 riverbend-demo loses all rules after parent rename → rebase-or-retire required; a2 `brief`
