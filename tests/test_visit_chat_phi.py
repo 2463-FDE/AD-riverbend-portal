@@ -20,6 +20,7 @@ the boundary holds. Both are required (the `consents` leak in PR #2 shipped gree
 because only the first kind existed).
 """
 import json
+import logging
 import sys
 from types import SimpleNamespace
 
@@ -334,6 +335,58 @@ def test_a_degraded_error_string_is_never_persisted(rig, monkeypatch):
     assert "payer rejected" not in stored
     assert NAME not in stored
     assert "error" not in json.loads(stored)["facts"].get("last_eligibility", {})
+
+
+def test_degrade_log_carries_no_exception_message(rig, monkeypatch, caplog):
+    # W1-SPEC-12 / W1-SPEC-13, negative test (docs/landmines.md §3). The
+    # visit-chat degrade branch is the sixth LLM-path site that stringified its
+    # exception; the adversarial input is PHI planted inside the exception
+    # message, scanned over the FORMATTED record so exc_info text counts too.
+    marker = f"{NAME} member {MEMBER_ID} LEAK-SENTINEL-3390"
+
+    def _raise(*a, **k):
+        raise ai_app.llm_client.LLMUnavailable(marker)
+
+    monkeypatch.setattr(ai_app.llm_client, "complete_structured", _raise)
+    with caplog.at_level("DEBUG"):
+        r = _chat(ADVERSARIAL_MESSAGE)
+
+    # The reply still degrades deterministically — this is a log fix, not a
+    # behaviour change.
+    assert r.status_code == 200
+    assert r.json()["reply"]
+
+    formatted = "\n".join(logging.Formatter().format(rec) for rec in caplog.records)
+    assert "LEAK-SENTINEL-3390" not in formatted
+    for phi in PHI_STRINGS + (MEMBER_ID,):
+        assert phi not in formatted, f"{phi!r} reached a log record"
+    # The degrade is still diagnosable: class name and egress flag survive.
+    assert "LLMUnavailable" in formatted
+    assert "egressed=" in formatted
+
+
+def test_degrade_log_carries_the_provider_request_id(rig, monkeypatch, caplog):
+    # Codex PR #69 round 1 (medium), W1-SPEC-12. The degrade branch is the other
+    # class-name-only LLM-path site, and it swallows the failure into a 200 — so
+    # the log line is the ONLY record a response-format incident leaves here.
+    # The structured request id survives; the message, PHI-planted, does not.
+    marker = f"{NAME} member {MEMBER_ID} LEAK-SENTINEL-4471"
+
+    def _raise(*a, **k):
+        raise ai_app.llm_client.LLMResponseError(marker, request_id="req_drift_88")
+
+    monkeypatch.setattr(ai_app.llm_client, "complete_structured", _raise)
+    with caplog.at_level("DEBUG"):
+        r = _chat(ADVERSARIAL_MESSAGE)
+
+    assert r.status_code == 200
+    formatted = "\n".join(logging.Formatter().format(rec) for rec in caplog.records)
+    assert "req_drift_88" in formatted
+    assert "LLMResponseError" in formatted
+    assert "LEAK-SENTINEL-4471" not in formatted
+    for phi in PHI_STRINGS + (MEMBER_ID,):
+        assert phi not in formatted, f"{phi!r} reached a log record"
+    assert "req_drift_88" not in r.text
 
 
 # --- the response -----------------------------------------------------------

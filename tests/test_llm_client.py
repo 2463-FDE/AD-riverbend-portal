@@ -15,10 +15,12 @@ from types import SimpleNamespace
 import pytest
 from botocore.exceptions import (
     ClientError,
+    ConnectTimeoutError,
     CredentialRetrievalError,
     EndpointConnectionError,
     NoCredentialsError,
     PartialCredentialsError,
+    ReadTimeoutError,
 )
 from pydantic import BaseModel, Field
 
@@ -432,8 +434,68 @@ def test_connection_error_maps_to_unavailable(monkeypatch):
         endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com"
     )
     _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
-    with pytest.raises(llm_mod.LLMUnavailable):
+    with pytest.raises(llm_mod.LLMUnavailable) as excinfo:
         llm_mod.complete("hello")
+    # The timeout split below must not OVER-capture: a plain endpoint
+    # connection failure is not a timeout (W1-SPEC-2).
+    assert not isinstance(excinfo.value, llm_mod.LLMTimeout)
+
+
+# --- W1-SPEC-2: a timeout is separable from a throttle or a 5xx --------------
+
+
+def test_read_timeout_maps_to_llm_timeout(monkeypatch):
+    # W1-SPEC-2: the configured read bound firing must reach the caller as a
+    # typed timeout, not as the generic "provider did not answer".
+    exc = ReadTimeoutError(
+        endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com"
+    )
+    _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
+    with pytest.raises(llm_mod.LLMTimeout):
+        llm_mod.complete("hello")
+
+
+def test_connect_timeout_maps_to_llm_timeout(monkeypatch):
+    # W1-SPEC-2, the connect half of the same bound.
+    exc = ConnectTimeoutError(
+        endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com"
+    )
+    _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
+    with pytest.raises(llm_mod.LLMTimeout):
+        llm_mod.complete("hello")
+
+
+def test_llm_timeout_subclasses_unavailable(monkeypatch):
+    # Non-regression: LLMTimeout is additive. Every inherited
+    # `except LLMUnavailable` caller — ai-assistant app.py's 502 branch, and
+    # through it the gateway's ADR 0007 keep-charge rule — must keep catching
+    # it, and it stays post-egress (the request was attempted, so it may bill).
+    assert issubclass(llm_mod.LLMTimeout, llm_mod.LLMUnavailable)
+    exc = ReadTimeoutError(
+        endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com"
+    )
+    _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
+    with pytest.raises(llm_mod.LLMUnavailable) as excinfo:
+        llm_mod.complete("hello")
+    assert isinstance(excinfo.value, llm_mod.LLMTimeout)
+    assert excinfo.value.egressed is True
+
+
+def test_timeout_error_carries_no_prompt(monkeypatch):
+    # Negative test (docs/landmines.md §3): the adversarial input is PHI in the
+    # prompt, and the new raise site must carry the exception CLASS only — no
+    # prompt text, no endpoint URL.
+    exc = ReadTimeoutError(
+        endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com"
+    )
+    _patch_client(monkeypatch, _FakeMessages(create_exc=exc))
+    with pytest.raises(llm_mod.LLMTimeout) as excinfo:
+        llm_mod.complete(PHI_PROMPT)
+    message = str(excinfo.value)
+    assert "Jane Doe" not in message
+    assert "123-45-6789" not in message
+    assert "bedrock-runtime" not in message
+    assert "ReadTimeoutError" in message
 
 
 # --- bearer key is mandatory: no ambient-credential fallback (Codex, r3) -----
@@ -639,6 +701,52 @@ def test_missing_usage_raises_through_adapter(monkeypatch):
     )
     with pytest.raises(llm_mod.LLMResponseError):
         llm_mod.complete("hello")
+
+
+def test_response_error_carries_request_id_attribute(monkeypatch):
+    # Codex PR #69 round 1 (medium), W1-SPEC-12. Stripping str(e) from the
+    # LLM-path log sites (W1-SPEC-13) also stripped the provider request id,
+    # which lived ONLY inside that message: a schema-drifted 200 is post-egress
+    # (already billable) and the id is the operator's one handle for correlating
+    # it against Bedrock's own logs. It is now a STRUCTURED attribute, readable
+    # by a caller that must never log the message. Both pre-success raise sites
+    # are covered — neither reaches the success log that used to emit the id.
+    _stub_runtime_returning(
+        monkeypatch, {"usage": {"input_tokens": 10, "output_tokens": 5}}
+    )
+    with pytest.raises(llm_mod.LLMResponseError) as excinfo:
+        llm_mod.complete("hello")
+    assert excinfo.value.request_id == "req_stub_ok"
+
+
+def test_missing_usage_error_carries_request_id_attribute(monkeypatch):
+    # The second pre-success raise site (W1-SPEC-12, same round).
+    _stub_runtime_returning(
+        monkeypatch, {"content": [{"type": "text", "text": "hi"}]}
+    )
+    with pytest.raises(llm_mod.LLMResponseError) as excinfo:
+        llm_mod.complete("hello")
+    assert excinfo.value.request_id == "req_stub_ok"
+
+
+def test_structured_validation_error_carries_request_id_attribute(monkeypatch):
+    # The third LLMResponseError raise site (W1-SPEC-12, same round). This one
+    # fires AFTER _result_from_response succeeded, so the success log already
+    # emitted the id — but a caller correlating the FAILURE should not have to
+    # join two log lines to find it.
+    _patch_client(monkeypatch, _FakeMessages(response=_response(text="not json at all")))
+    with pytest.raises(llm_mod.LLMResponseError) as excinfo:
+        llm_mod.complete_structured("summarize", SampleOutput)
+    assert excinfo.value.request_id == "req_test_123"
+
+
+def test_request_id_defaults_to_none_when_the_raiser_has_no_response(monkeypatch):
+    # Every pre-egress refusal, and any failure raised before a response was
+    # parsed, has no id to carry. The attribute must be None there rather than
+    # absent, so a catcher reads it unconditionally (the egressed idiom).
+    assert llm_mod.LLMUnavailable("provider down").request_id is None
+    assert llm_mod.LLMBudgetExceeded("cap").request_id is None
+    assert llm_mod.LLMResponseError("no id available").request_id is None
 
 
 def test_malformed_response_error_carries_no_prompt(monkeypatch):

@@ -19,6 +19,7 @@ The fake mirrors the real seam's parse step (model_validate_json →
 LLMResponseError) so count/shape behavior is tested faithfully.
 """
 import json
+import logging
 import re
 import sys
 from types import SimpleNamespace
@@ -607,6 +608,10 @@ def test_wire_model_accepts_any_count():
     [
         ("LLMConfigError", 503),
         ("LLMUnavailable", 502),
+        # W1-SPEC-2. A timeout is post-egress — the request was attempted and
+        # may bill — so it must land on the same kept-charged 502 as its
+        # LLMUnavailable parent, never on a _GATEWAY_REFUNDED_STATUSES code.
+        ("LLMTimeout", 502),
         ("LLMResponseError", 502),
         ("LLMBudgetExceeded", 503),
     ],
@@ -620,6 +625,68 @@ def test_llm_errors_map_to_typed_statuses(monkeypatch, exc, status):
     assert r.status_code == status
     # Generic detail only — internal error text stays in the service log.
     assert "code=X" not in r.text
+
+
+@pytest.mark.parametrize(
+    "exc",
+    ["LLMConfigError", "LLMUnavailable", "LLMResponseError", "LLMBudgetExceeded", "LLMError"],
+)
+def test_llm_error_log_carries_no_exception_message(monkeypatch, caplog, exc):
+    # W1-SPEC-12 / W1-SPEC-13, negative test (docs/landmines.md §3). The
+    # adversarial input is PHI where the code does not expect it: inside the
+    # exception message itself. Every one of the five intake error branches
+    # must log the exception CLASS only — a stringified message is neither
+    # class-name-only (SPEC-13) nor an allowlisted field (SPEC-12).
+    #
+    # The scan runs over the FORMATTED record, not the call arguments, so a
+    # branch that reaches PHI through exc_info or a traceback fails too
+    # (the tests/test_scheduling_booking_db_error_phi.py idiom).
+    marker = "Jane Doe SSN 123-45-6789 LEAK-SENTINEL-8814"
+
+    def _raise(*a, **k):
+        raise getattr(app_mod.llm_client, exc)(marker)
+
+    monkeypatch.setattr(app_mod.llm_client, "complete_structured", _raise)
+    with caplog.at_level("DEBUG"):
+        r = client.post("/intake-instructions", json={"has_insurance": True})
+
+    assert r.status_code in (500, 502, 503)
+    formatted = "\n".join(logging.Formatter().format(rec) for rec in caplog.records)
+    assert "LEAK-SENTINEL-8814" not in formatted
+    assert "Jane Doe" not in formatted
+    assert "123-45-6789" not in formatted
+    # The class name is what survives — the log must still be diagnosable.
+    assert exc in formatted
+    # And the response body stays generic either way.
+    assert "LEAK-SENTINEL-8814" not in r.text
+
+
+def test_bad_response_log_carries_request_id_and_not_the_message(monkeypatch, caplog):
+    # Codex PR #69 round 1 (medium). W1-SPEC-12 allows allowlisted non-PHI
+    # metadata; W1-SPEC-13 bans the stringified message. Both at once: the
+    # provider request id must survive as a STRUCTURED field on a schema-drift
+    # incident (the egress already happened and is billable, so an operator
+    # needs the correlation handle), while the message — PHI-planted here —
+    # must not. Red against the class-name-only-and-nothing-else log line.
+    marker = "Jane Doe SSN 123-45-6789 LEAK-SENTINEL-9021"
+
+    def _raise(*a, **k):
+        raise app_mod.llm_client.LLMResponseError(marker, request_id="req_drift_77")
+
+    monkeypatch.setattr(app_mod.llm_client, "complete_structured", _raise)
+    with caplog.at_level("DEBUG"):
+        r = client.post("/intake-instructions", json={"has_insurance": True})
+
+    assert r.status_code == 502
+    formatted = "\n".join(logging.Formatter().format(rec) for rec in caplog.records)
+    assert "req_drift_77" in formatted
+    assert "LLMResponseError" in formatted
+    assert "LEAK-SENTINEL-9021" not in formatted
+    assert "Jane Doe" not in formatted
+    assert "123-45-6789" not in formatted
+    # The id is an internal correlation handle — the caller still gets the
+    # generic detail, not the provider's identifiers.
+    assert "req_drift_77" not in r.text
 
 
 # Statuses the gateway treats as "no paid Bedrock call happened" and REFUNDS the

@@ -42,9 +42,11 @@ from botocore.config import Config
 from botocore.exceptions import (
     BotoCoreError,
     ClientError,
+    ConnectTimeoutError,
     CredentialRetrievalError,
     NoCredentialsError,
     PartialCredentialsError,
+    ReadTimeoutError,
 )
 from pydantic import BaseModel, ValidationError
 
@@ -110,14 +112,26 @@ class LLMError(Exception):
     Default **True** on purpose: a new subclass, or a raise site that forgets to
     say, is treated as billable. That over-counts toward the ceiling, which is
     the safe direction; the unsafe direction refunds real spend.
+
+    ``request_id`` is the same provider correlation id the success log emits
+    (``_result_from_response``), carried as a STRUCTURED attribute so a caller
+    bound by W1-SPEC-13 (class name only, never the stringified message) can
+    still log it. Before this attribute existed the id lived only inside the
+    exception text, so a class-name-only catcher lost the one handle an operator
+    has for a provider-side response incident (Codex PR #69 round 1). ``None``
+    when the raise site has no id — every pre-egress refusal, and any post-egress
+    failure raised before a response was parsed.
     """
 
     egressed = True
+    request_id: Optional[str] = None
 
-    def __init__(self, *args, egressed: bool | None = None):
+    def __init__(self, *args, egressed: bool | None = None, request_id: Optional[str] = None):
         super().__init__(*args)
         if egressed is not None:
             self.egressed = egressed
+        if request_id is not None:
+            self.request_id = request_id
 
 
 class LLMBudgetExceeded(LLMError):
@@ -136,6 +150,16 @@ class LLMUnavailable(LLMError):
     Always post-egress (or indistinguishable from it): a throttle is a response,
     and a connect/read timeout means the request was attempted.
     """
+
+
+class LLMTimeout(LLMUnavailable):
+    """Connect or read timeout after botocore's retries — the time bound in
+    ADR 0004 fired. A subclass of LLMUnavailable on purpose: callers that only
+    care "the provider did not answer" keep working unchanged (ai-assistant
+    app.py's 502 branch, and through it the gateway's ADR 0007 keep-charge
+    rule), while a caller that needs to distinguish a timeout from a throttle
+    now can. Post-egress like its parent: a timeout means the request was
+    attempted and may be billable, so the inherited egressed=True stands."""
 
 
 class LLMConfigError(LLMError):
@@ -517,6 +541,15 @@ def _call(
         ) from None
     except BotoCoreError as exc:
         # Connect/read timeout or endpoint connection failure, after retries.
+        # Narrowed INSIDE this branch rather than as its own except clause: the
+        # credential branch above already owns one ordering constraint (all
+        # three credential classes subclass BotoCoreError), and a separate
+        # `except (ConnectTimeoutError, ReadTimeoutError)` would have to sit
+        # above BotoCoreError too, adding a second. W1-SPEC-2.
+        if isinstance(exc, (ConnectTimeoutError, ReadTimeoutError)):
+            raise LLMTimeout(
+                "timed out after retries (%s)" % type(exc).__name__
+            ) from None
         raise LLMUnavailable(
             "connection error after retries (%s)" % type(exc).__name__
         ) from None
@@ -544,7 +577,10 @@ def _result_from_response(response: Any, started: float) -> LLMResult:
     # complete_structured() flow through here, so the guard lives here once.
     # Messages carry the request id only — never the prompt or response bytes.
     if not text:
-        raise LLMResponseError("no text block in response (request_id=%s)" % request_id)
+        raise LLMResponseError(
+            "no text block in response (request_id=%s)" % request_id,
+            request_id=request_id,
+        )
     usage = getattr(response, "usage", None)
     input_tokens = getattr(usage, "input_tokens", None)
     output_tokens = getattr(usage, "output_tokens", None)
@@ -553,7 +589,10 @@ def _result_from_response(response: Any, started: float) -> LLMResult:
     # clean $0 call for a real PHI vendor egress, under-reporting what crossed
     # the boundary. Require explicit integer counts; fail closed otherwise.
     if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
-        raise LLMResponseError("response missing token usage (request_id=%s)" % request_id)
+        raise LLMResponseError(
+            "response missing token usage (request_id=%s)" % request_id,
+            request_id=request_id,
+        )
     result = LLMResult(
         text=text,
         input_tokens=input_tokens,
@@ -670,7 +709,8 @@ def complete_structured(
         # Deliberately does not include the model output in the message.
         raise LLMResponseError(
             "response failed %s validation (request_id=%s)"
-            % (output_model.__name__, result.request_id)
+            % (output_model.__name__, result.request_id),
+            request_id=result.request_id,
         ) from None
     return result
 
