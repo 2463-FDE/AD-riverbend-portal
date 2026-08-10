@@ -15,13 +15,13 @@
 > `test_records_relevant` · `test_retro_match` · `test_review_queue`) **106 passed**, and
 > the matching CI run. The round re-inspected both r1 fix surfaces — the conditional queue
 > UPDATE and the reordered records scan — and drew nothing, which is the B-round check
-> those fixes needed. Round log in `review-findings.md`, ledger line in
+> those fixes needed. Round log in `findings.md` §Review, ledger line in
 > `docs/review-loop-metrics.md` §4. Squash-merged with owner approval 2026-08-08 as
 > `e86e11d`; `main` fast-forwarded `6a86a98..e86e11d`, branch deleted.
 >
 > **Codex round 1 — 2026-08-08, 2 findings, both `[medium]`, both fixed on the branch.**
 > Labelled **A/A** (defects in the code as pushed); round log and evidence in
-> `review-findings.md`, ledger line in `docs/review-loop-metrics.md` §4. (1) The
+> `findings.md` §Review, ledger line in `docs/review-loop-metrics.md` §4. (1) The
 > disposition handler was read-check-write, so two concurrent reviewers could both see
 > `pending` and the later commit would silently replace the first verdict and
 > `decided_by` — the audit trail of a human duplicate-patient judgment. Now one
@@ -46,7 +46,7 @@
 > merits: `docs/onboarding-seam-map.md`'s walls table keeps **both** `main`'s corrected D4
 > row and this branch's new patient-identity row; and `docs/todo.md` carried a genuine **id
 > collision** — #60 took TODO-57, so this branch's frozen-`eval/rag/` entry renumbered to
-> **TODO-58** per `gate-findings.md` finding 4's own re-check instruction. Suite re-run at
+> **TODO-58** per `findings.md` §Gate round 1 finding 4's own re-check instruction. Suite re-run at
 > the rebased tip from a clean `git archive` extract: **921 passed, 1 xfailed, 5
 > deselected** — exact baseline, xfail and deselected unmoved. Pushed 2026-08-08 with owner
 > approval; PR #63 opened, all **14 CI checks green**, `MERGEABLE / CLEAN`.

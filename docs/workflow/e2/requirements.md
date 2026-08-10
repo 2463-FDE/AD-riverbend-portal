@@ -69,7 +69,7 @@ Three tracked documents say otherwise:
 - `docs/todo.md` TODO-45 (closed by e1): "wired into the terminal `docker-build` fan-in via
   `needs` (codex r2) — a boot-broken image now goes red, not green, **on the job branch
   protection reads**."
-- `docs/workflow/e1/review-findings.md` row 1: "Anything reading `docker-build` as the terminal
+- `docs/workflow/e1/findings.md` §Review round 1 row 1: "Anything reading `docker-build` as the terminal
   signal (branch protection, merge queue, deploy automation) can go green while the boot probe
   fails."
 - `docs/runbook.md` CI section.
@@ -135,7 +135,7 @@ only — which is the same path set `noncode-merge` already calls non-code.
 - `docs/debt-log.md:312` (cross-cutting): "No secret/dependency/image scanning in CI — OPEN",
   contradicting `:285` four rows up, which records the secret half **DONE** in PR #2
   (`8858097`). Two rows, same file, opposite claims.
-- TODO-45 / `e1/review-findings.md` / `runbook.md` per §3.2.
+- TODO-45 / `e1/findings.md` §Review / `runbook.md` per §3.2.
 
 None appear in TODO-52's doc-drift file list, so all are new.
 
@@ -194,7 +194,7 @@ section). The value is enforcement and new-gap coverage, not register burn-down.
 | E2-REQ-3 | Every change landing on `main` is checked for SSN-shaped content in the documentation surface, and a finding blocks the merge. | ⚠ human-gate — PHI, `docs/landmines.md` §1. **No such check exists.** Scope per D-2′; §3.4 is why. Applies to all PRs, not only fast-path ones (§7 defect 2). A block on a legitimate future quote is intended behavior — redact-then-quote, per D-10. No allowlist. |
 | E2-REQ-9 | The guarantee holds for content already on `main`: existing unmanaged SSN-shaped content is redacted as part of e2. | ⚠ human-gate — editing a PHI-carrying tracked artifact is itself a §1 touch. `w1/requirements.md:14`; `w2/requirements.md:13,45`. Fidelity cost acknowledged in §4.3. |
 | E2-REQ-11 | The requirement-synthesis stage can quote an owner ask verbatim without importing PHI into a tracked artifact. | Per D-4. Without it the skill mandates exactly what E2-REQ-3 blocks. |
-| E2-REQ-13 | Every claim in the registries about what CI enforces matches what CI enforces. | TODO-45 text, `e1/review-findings.md` row 1, `runbook.md` CI section, `ci.yml:113`'s D9, `debt-log.md:312`. `CLAUDE.md` §10's failure mode: the confident stale copy wins. |
+| E2-REQ-13 | Every claim in the registries about what CI enforces matches what CI enforces. | TODO-45 text, `e1/findings.md` §Review round 1 row 1, `runbook.md` CI section, `ci.yml:113`'s D9, `debt-log.md:312`. `CLAUDE.md` §10's failure mode: the confident stale copy wins. |
 | E2-REQ-2 | Every change landing on `main` is scanned for committed secrets before merge, with no reduction in coverage or blocking strength relative to today's `secret-scan`. | Recurrence guard, `docs/debt-log.md:285`, PR #2. The live risk is the detector work weakening it — see §4.3. |
 | E2-REQ-4′ | No change is verified *less* than it is today. | **Revised** (§7 defect 3). The first draft said a code PR's pipeline must be "byte-identical", which E2-REQ-12 contradicts by design — it makes code PRs block on checks they previously did not. Verified-no-less is the real floor. |
 | E2-REQ-6 | No change to the merge path may leave a PR unmergeable by a required check that never reports. | Acceptance condition on adding required contexts; also covers the switchover (§4.6). |

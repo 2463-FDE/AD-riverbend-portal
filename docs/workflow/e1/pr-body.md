@@ -13,12 +13,12 @@
 >
 > Codex rounds: r1 (1 A, fixed `f1f3be5` — dev deps in the shipped image), r2 (1 A, fixed
 > `43aca20` — `frontend-boot` outside the terminal fan-in), r3 dry (verdict `approve`, no
-> material findings). Both fixes trivial, no re-gate. See `review-findings.md`.
+> material findings). Both fixes trivial, no re-gate. See `findings.md` §Review.
 >
 > Working-tree delivery artifact for branch `feat/noref-e1-frontend-js-gates` (deleted on
 > merge), landed on `main` via noncode-merge (not committed on the code branch). The content
 > below the rule is the PR body as merged in PR #49. All three codex rounds are logged in
-> `review-findings.md`.
+> `findings.md` §Review.
 > Title: `feat(frontend): add JS gates, Vitest harness, truthful /healthz`
 
 ---

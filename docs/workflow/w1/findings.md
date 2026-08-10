@@ -1,9 +1,15 @@
-# w1 gate findings
+# w1 findings
 
-> Round log for the drift gate (see `.claude/skills/drift-gate/`). Gate sessions append
-> rounds; the stage-3 revision session fills dispositions. Plan status lives in plan.md.
+> Round log for this item's three gated stages: the drift gate
+> (`.claude/skills/drift-gate/`), the impl gate (`.claude/skills/impl-gate/`), and the
+> `@codex-review` loop (owned by `.claude/skills/implementation/`). Each stage appends
+> rounds under its own heading, created on that stage's first finding; the next-stage
+> session fills the dispositions. Findings only — plan maturity lives in `plan.md`,
+> delivery status in `pr-body.md`.
 
-## Round 1 — 2026-08-09
+## Gate
+
+### Round 1 — 2026-08-09
 
 8 findings, no stamp.
 
@@ -29,7 +35,7 @@ line cites, TODO-58 as the highest id, and `git ls-files .claude` = nine `SKILL.
 | 7 | — (guard sections) | No `## Files touched` section — required by the plan-authoring template and present in `e1`, `w2` and `w3` plans; and Landmines names the §1 PHI-handling zone as touched without recording the human approval the spec's ⚠ human-gate flags demand (cf. `w2/plan.md:636` "this plan's owner review is the planning approval"). | **Both fixed.** A `## Files touched` section now sits before Out of scope — eleven rows, with ⚠ marking the four landmine-zone files. Landmines gains a **Human approval record** bullet on the `w2` precedent: this plan's owner review is the planning approval for the named PHI-handling edits, the code change still rides impl gate → codex review → merge, and the egress-adjacent statements get tests only. |
 | 8 | W1-SPEC-19, 20 | §5's stated preconditions ("That needs three fields and two consents") are incomplete: the surface is a four-step wizard (`page.tsx:34,75-80`) whose demographics, consents and submit live on different steps, so each case also needs the step navigation — an omission at odds with the section's own level of detail (it specifies the DateField popover mechanics). | **Fixed — full wizard navigation written out.** §5's setup is now a `submitIntake()` helper the three cases share, walking all four steps: step 0 demographics (three fields, Continue gated on `demoOk`, `page.tsx:73,387`), step 1 insurance left blank on purpose (which also pins the `fetchInstructions` payload shape, `:135-139`), step 2 the two required consents (`:72`, Consent label/input at `:526,533`), step 3 "Submit intake" (`:401`) with `apiFetch` mocked 200 once. Field and Consent label wiring cited so `getByLabelText` is a checked claim, not an assumption. |
 
-## Round 2 — 2026-08-09
+### Round 2 — 2026-08-09
 
 3 findings, no stamp.
 
@@ -64,7 +70,7 @@ id, and `make eval`'s corpus is `db/seed/*` only, so "untouched" is right.
 | 2 | W1-SPEC-12, 13 | Wrong fact in the accepted residual: it cites the still-OPEN Redis-fault sites as `services/gateway/app.py:175,200,203,1022,1054`, but `:1022` is `raise HTTPException(status_code=502, …)` and `:1054` is blank. Only `:175,200,203` are real; the visit-memory/lock sites are `:1063` and `:1095`, plus a fifth at `:1106` (`log.warning(… (%s) …, e)`) the list omits. The numbers were inherited from the register row rather than measured. | **Accepted and fixed — residual re-measured.** All six numbers confirmed this session: `:1022` is `raise HTTPException(status_code=502, detail="assistant returned an unusable response")`, `:1054` is blank, and the real sites are `:175` (`session store refused`, arg `exc`), `:200`, `:203` (healthz), `:1063` (`visit memory unavailable`), `:1095` (`visit lock unavailable`) and the omitted `:1106` (`log.warning("visit lock unavailable on a first turn (%s); proceeding unlocked", e)`). The Landmines residual now reads `:175, 200, 203, 1063, 1095, 1106` and says outright that this corrects an inherited register claim. |
 | 3 | W1-SPEC-15 | The scope map row reads "§3 — register row corrected", and §3 rules the neighbouring OPEN rows stay "with their current text" — but finding 2 shows one of those rows (Redis-fault log sites) points at a `raise` statement and a blank line. A register whose locations no longer resolve is not the "live register" SPEC-15 requires, and the plan closes SPEC-15 with no residual naming what stays stale. Either the row's locations are corrected alongside `:94`, or the residual is written down. | **Fixed — the row's locations are corrected, taking the finding's first branch.** The second branch (write the residual, leave the row stale) buys a smaller diff at the cost of shipping a SPEC-15 closure over a register with a known-dead location, which the next sweep re-opens; the standing rule is to take the complete fix rather than the one that needs reversing. §3 now re-measures the Redis-fault row (`:93`) to its six real sites, cited by handler + exception shape like the `:94` row so the numbers cannot re-stale, with **status unchanged at OPEN** — this PR changes no gateway code, so a flip to FIXED would be the lie in the other direction. Scope map and Files-touched rows updated; the SPEC-12/13 scope-boundary residual still names the six sites as OPEN. Verification step 7 gained the check, with its grep measured on the clean tree (eight lines: the row's six plus `:1250`/`:1259`, which belong to the `_post`/`_get` row). Also re-measured every other cited location in the register so this class of finding does not recur: `interop-service/app.py:54` and the `:94` row's `:236,249,252,271` all still resolve; §3 records that. |
 
-## Round 3 — 2026-08-09
+### Round 3 — 2026-08-09
 
 2 findings, no stamp. **Round-3 escalation applies** (`.claude/skills/drift-gate/`): both are
 open, so the loop stops here and the owner decides each — accept as a named residual,
@@ -114,7 +120,7 @@ names none of the gaps this plan closes.
 | 1 | W1-SPEC-2 | §1 adds a fifth typed error and re-splits the botocore→typed mapping, but the plan names no downstream cite sweep for it. Two ADRs state the old shape as current: `adr/0004:38-39` enumerates the typed failures as exactly `LLMBudgetExceeded / LLMUnavailable / LLMConfigError / LLMResponseError`, and `adr/0009:78-80` (Status **Accepted**, the live provider decision) states the mapping as `LLMUnavailable` (throttling/5xx/**connection after retries**) — the branch §1 splits. Neither is amended nor listed as deliberately-not-amended. The `w2` precedent (`w2/plan.md:483`) makes that sweep the convention, and this plan already applies the decisions-as-taken reasoning to `adr/0006:63`/`adr/0008:128` for the D9 cites (§4, step 8) — so the doc half of the change got the sweep and the code half did not. | **Owner decision 2026-08-09 — overruled as a plan finding, logged as a TODO.** Not a plan amendment: the ADR drift is doc-registry upkeep of the same class the plan already files (§6), not a design gap, and the code change stands as written. Filed at landing as **TODO-60** (next free id after the plan's reserved 59; re-check both at landing per the standing id rule and renumber if taken): `adr/0004:38-39` and `adr/0009:78-80` enumerate the typed failures / botocore mapping without `LLMTimeout`. Carried in the plan's gate record so implementation inherits it without re-deriving it. |
 | 2 | — (registry upkeep) | §6 files TODO-59 for `docs/landmines.md` §3's claim that "a push hook pins the expected xfail and deselected counts", on the measured fact that no such hook exists. `docs/todo.md` — the file the new entry lands in — carries the same false claim in an open entry: TODO-42 states `.claude/hooks/xfail-invariant.sh` "runs the full suite on every push (13.7s warm baseline)" and its whole cost/benefit rests on that hook existing. It is also a dead `.claude/hooks/` name under `CLAUDE.md` §11. Filing the finding against one file while leaving it standing in the destination file is the "confident stale copy wins" failure the sweep exists to prevent — TODO-59 should name TODO-42 as the second instance, or §6 should state why it stays. | **Owner decision 2026-08-09 — overruled as a plan finding, logged as a TODO.** Same call as finding 1: registry upkeep, not design. No new id — **TODO-59 widens at landing** to name `docs/todo.md` TODO-42's `.claude/hooks/xfail-invariant.sh` claim as the second instance of the same dead-hook class alongside `docs/landmines.md:127`. Carried in the plan's gate record. |
 
-## Round 4 — 2026-08-09
+### Round 4 — 2026-08-09
 
 Clean — stamped.
 

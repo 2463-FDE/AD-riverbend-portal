@@ -66,7 +66,7 @@ Deviation handling, per the pipeline:
   (`CONTRIBUTING.md:53`).
 - **Impl gate before push:** the finished branch is checked against plan and spec by
   `.claude/skills/impl-gate/` in a fresh session that did not write the code. Findings
-  come back here as a round in `impl-findings.md`; the stamp on `pr-body.md`
+  come back here as a round in `findings.md` §Impl gate; the stamp on `pr-body.md`
   (`Status: IMPLEMENTED`) is what makes the branch push-ready. The plan header stays
   `GATED` — delivery state lives on `pr-body.md`.
 - **Ask before pushing.** Push is human-gated.
@@ -86,7 +86,7 @@ The procedure for responding to a codex round. The label definitions and the mea
 reasoning behind these steps live in `docs/review-loop-metrics.md` (§1 labels, §3 the
 baseline analysis) — that file is the why, this section is the how.
 
-1. Append the round to `review-findings.md` (template below), one row per finding.
+1. Append the round to `findings.md` §Review (template below), one row per finding.
 2. **Label** each finding A/B/C/E per `docs/review-loop-metrics.md` §1. A finding
    believed wrong is refuted with runtime evidence (build it, run it, hit the endpoint —
    never inference from static config) and closed with an anchored comment, no code
@@ -107,27 +107,46 @@ baseline analysis) — that file is the why, this section is the how.
    comment carrying the labels, append one ledger line to
    `docs/review-loop-metrics.md` §4, re-tag `@codex-review`.
 
-## Review round log (`review-findings.md`)
+## Review round log (`findings.md` §Review)
 
-Created on the first codex finding; rounds appended as review returns, dispositions filled
-by this fix session. Round number is the last in the file plus one (1 for a new file).
-Mirrors `gate-findings.md` / `impl-findings.md` exactly — header, round numbering,
+One `findings.md` per item holds all three stages' rounds, one `## ` section each; this
+skill owns `## Review` and writes nothing else in the file. The section is created on the
+first codex finding; rounds are appended as review returns, dispositions filled by this
+fix session. Round number is the last **in this section** plus one (1 for a new section) —
+never count a gate round. Mirrors `## Gate` / `## Impl gate` exactly — round numbering,
 disposition column, and the round-3 owner-escalation rule. Delivery status lives in
 `pr-body.md`, not here. The review-stage state decode table is in `docs/workflow/README.md`
 ("State decode tables").
 
+File template, used only when `findings.md` does not exist yet (rare at this stage — the
+two gates usually create it first):
+
 ```markdown
-# <item> codex review findings
+# <item> findings
 
-> Round log for the @codex-review loop. Rounds appended as review returns; dispositions
-> filled by the stage-4 fix session. Delivery status lives in pr-body.md.
+> Round log for this item's three gated stages: the drift gate
+> (`.claude/skills/drift-gate/`), the impl gate (`.claude/skills/impl-gate/`), and the
+> `@codex-review` loop (owned by `.claude/skills/implementation/`). Each stage appends
+> rounds under its own heading, created on that stage's first finding; the next-stage
+> session fills the dispositions. Findings only — plan maturity lives in `plan.md`,
+> delivery status in `pr-body.md`.
+```
 
-## Round 1 — <date>
+Section template, appended on the first codex finding. Sections stay in pipeline order —
+`## Gate`, `## Impl gate`, `## Review`. The PR number and reviewer go on the section's
+lead line once, not on every round:
+
+```markdown
+## Review
+
+> PR #<n>, `@codex-review` by <reviewer>.
+
+### Round 1 — <date>
 
 <n> findings.
 
-| # | SPEC | Finding | Disposition (r1: A/B/C/E) |
-|---|------|---------|---------------------------|
+| # | SPEC | Finding | Disposition (A/B/C/E) |
+|---|------|---------|-----------------------|
 | 1 | <id or —> | <one line> | |
 ```
 

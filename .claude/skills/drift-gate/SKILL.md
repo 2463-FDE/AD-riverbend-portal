@@ -8,7 +8,7 @@ description: Gate stage of the delivery workflow (docs/workflow/README.md) — f
 Input: `docs/workflow/<item>/spec.md` with `Status: AGREED` (frozen) and
 `docs/workflow/<item>/plan.md` with `Status: DRAFT`.
 Output: either the plan stamped `Status: GATED <date>`, or a findings round appended to
-`docs/workflow/<item>/gate-findings.md` and the plan back to stage 3 (spec unchanged,
+the `## Gate` section of `docs/workflow/<item>/findings.md` and the plan back to stage 3 (spec unchanged,
 per the pipeline). The round log — not chat history or session memory — is what carries
 findings between sessions; workflow state must always be derivable from the docs alone.
 
@@ -51,33 +51,47 @@ context is the mechanism, not a nicety.
 
 ## Outcome
 
-- **Any finding → no stamp.** Append a round to `docs/workflow/<item>/gate-findings.md`
-  (create the file on the first-ever finding; template below), findings SPEC-cited, one
-  line each. Plan returns to stage 3; spec unchanged. Re-gate is a full re-run, fresh
-  session.
+- **Any finding → no stamp.** Append a round to the `## Gate` section of
+  `docs/workflow/<item>/findings.md` (create the section on the first-ever gate finding,
+  and the file too if this is the item's first finding of any stage; templates below),
+  findings SPEC-cited, one line each. Plan returns to stage 3; spec unchanged. Re-gate is
+  a full re-run, fresh session.
 - **Clean → stamp.** Set the plan header to `Status: GATED <date>` and append a short
   gate record under it: date, "gated fresh-context", and the residual-named SPECs (so
   implementation and review inherit the accepted residuals without re-deriving them).
-  If `gate-findings.md` exists, close it with a final `## Round N — <date>` reading
+  If a `## Gate` section exists, close it with a final `### Round N — <date>` reading
   `Clean — stamped.` so the round log agrees with the plan header.
   The stamp is what `.claude/skills/implementation/` checks at entry.
 
-## Round log (`gate-findings.md`)
+## Round log (`findings.md` §Gate)
 
-Gate sessions append rounds; the stage-3 revision session fills dispositions. The round
-number is the last round in the file plus one (1 for a new file). The gate-stage state
-decode table lives in `docs/workflow/README.md` ("State decode tables"), next to the
-files it decodes.
+One `findings.md` per item holds all three stages' rounds, one `## ` section each; this
+skill owns `## Gate` and writes nothing else in the file. Gate sessions append rounds;
+the stage-3 revision session fills dispositions. The round number is the last round
+**in this section** plus one (1 for a new section) — never count a neighbouring stage's
+rounds. The gate-stage state decode table lives in `docs/workflow/README.md` ("State
+decode tables"), next to the files it decodes.
 
-Template:
+File template, used only when `findings.md` does not exist yet:
 
 ```markdown
-# <item> gate findings
+# <item> findings
 
-> Round log for the drift gate (see `.claude/skills/drift-gate/`). Gate sessions append
-> rounds; the stage-3 revision session fills dispositions. Plan status lives in plan.md.
+> Round log for this item's three gated stages: the drift gate
+> (`.claude/skills/drift-gate/`), the impl gate (`.claude/skills/impl-gate/`), and the
+> `@codex-review` loop (owned by `.claude/skills/implementation/`). Each stage appends
+> rounds under its own heading, created on that stage's first finding; the next-stage
+> session fills the dispositions. Findings only — plan maturity lives in `plan.md`,
+> delivery status in `pr-body.md`.
+```
 
-## Round 1 — <date>
+Section template, appended on the first-ever gate finding. Sections stay in pipeline
+order — `## Gate`, `## Impl gate`, `## Review`:
+
+```markdown
+## Gate
+
+### Round 1 — <date>
 
 <n> findings, no stamp.
 

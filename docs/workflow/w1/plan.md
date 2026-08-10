@@ -11,7 +11,7 @@
 ## Gate record
 
 **Gated 2026-08-09, fresh-context** (`.claude/skills/drift-gate/`), after four rounds —
-`docs/workflow/w1/gate-findings.md` is the log. Round 3 hit the round-3 escalation rule; the
+`docs/workflow/w1/findings.md` §Gate is the log. Round 3 hit the round-3 escalation rule; the
 owner overruled both findings as plan findings and logged them as TODO carries, recorded in
 their disposition cells. Implementation and review inherit the following without re-deriving
 them:
@@ -388,7 +388,7 @@ Frontend (`cd frontend && npm test`): the three cases in §5.
 | `tests/test_ai_intake_instructions.py` | `("LLMTimeout", 502)` added to the `:608-624` parametrize; new `test_llm_error_log_carries_no_exception_message` over the five intake branches |
 | `tests/test_visit_chat_phi.py` | new `test_degrade_log_carries_no_exception_message` for the `:792` branch |
 | `CLAUDE.md` §6, `docs/todo.md` (new TODO-59) | registry upkeep (§6) — baseline re-measured under `make test-docker`, never carried from this plan |
-| `docs/workflow/w1/plan.md`, `gate-findings.md`, `pr-body.md` (new) | workflow artifacts |
+| `docs/workflow/w1/plan.md`, `findings.md`, `pr-body.md` (new) | workflow artifacts |
 
 ⚠ = touches a `docs/landmines.md` §1 zone (PHI handling / the vendor-egress path). See
 Landmines below for the approval record.
@@ -463,7 +463,7 @@ Landmines below for the approval record.
    | `docs/specs-deprecated/w1.md:7` | archive; records the brief as received |
    | `docs/workflow/e2/requirements.md:132,133,197` | another item's artifact, at DRAFT |
    | `docs/workflow/w1/requirements.md:31,41,68,75`, `spec.md:68` | W1's own frozen inputs |
-   | `docs/workflow/w1/plan.md`, `gate-findings.md`, `pr-body.md` | this plan, its round log, and the PR body written at implementation — all three describe the change, so all three name the token |
+   | `docs/workflow/w1/plan.md`, `findings.md`, `pr-body.md` | this plan, its round log, and the PR body written at implementation — all three describe the change, so all three name the token |
    | `adr/0006:63`, `adr/0008:128` | decisions-as-taken; the doc-archive rule keeps them |
 
    The step passes when the output matches that table with no unlisted line. Listing the

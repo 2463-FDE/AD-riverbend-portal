@@ -83,8 +83,8 @@ Non-code branches (docs, `.claude/`) need steps 1–3 only.
 ## Ordering against an open code PR
 
 The trap this repo hits: workflow artifacts for a work item (`docs/workflow/<item>/plan.md`,
-`impl-findings.md`, `pr-body.md` — which carries the delivery `Status:` — and
-`review-findings.md`) are non-code and qualify for this fast path, so they land on `main`
+`findings.md` — the round log for all three gated stages — and `pr-body.md`, which carries
+the delivery `Status:`) are non-code and qualify for this fast path, so they land on `main`
 while the item's code PR is still open. Result: `main` documents an
 implementation that has not merged, and the code branch does not contain its own
 paperwork.

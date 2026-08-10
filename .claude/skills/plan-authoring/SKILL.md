@@ -35,8 +35,9 @@ decisions and per-SPEC changes. Items with no UI surface skip this entirely.
 
 ## Revision after a gate round
 
-When the gate returns the plan, the findings are the latest round in
-`docs/workflow/wN/gate-findings.md` — the round log is the handoff, not chat history or
+When the gate returns the plan, the findings are the latest round in the `## Gate`
+section of `docs/workflow/wN/findings.md` (other sections belong to other stages — do not
+count their rounds) — the round log is the handoff, not chat history or
 session memory. Address every finding and fill its disposition cell (what changed, or
 the recorded owner decision where one overruled a finding or accepted it as residual),
 re-run the three checks, and leave the plan at `Status: DRAFT` for a full fresh-session

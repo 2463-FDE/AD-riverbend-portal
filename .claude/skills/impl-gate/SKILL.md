@@ -10,7 +10,8 @@ Input: `docs/workflow/<item>/spec.md` with `Status: AGREED` (frozen),
 branch (unpushed or pushed but pre-review).
 Output: either `docs/workflow/<item>/pr-body.md` stamped `Status: IMPLEMENTED <date>`
 (the delivery artifact carries delivery state — the plan header is not touched by this
-gate), or a findings round appended to `docs/workflow/<item>/impl-findings.md` and the
+gate), or a findings round appended to the `## Impl gate` section of
+`docs/workflow/<item>/findings.md` and the
 branch back to stage 4 (spec and plan unchanged). The round log — not chat history or
 session memory — carries findings between sessions; workflow state must always be
 derivable from the docs alone.
@@ -27,8 +28,9 @@ own drift (same lesson as `.claude/skills/drift-gate/`).
    gate in a new session.
 2. **The gate session never edits code, plan, or spec.** It reports findings; fixes
    happen in stage 4 (`.claude/skills/implementation/`), and the fixed branch gets a
-   full fresh gate run. The round log (`impl-findings.md`) and the `pr-body.md` stamp
-   are the only files a gate session writes. **The impl gate never touches `plan.md`** —
+   full fresh gate run. The `## Impl gate` section of `findings.md` and the `pr-body.md`
+   stamp are the only things a gate session writes — never another stage's section.
+   **The impl gate never touches `plan.md`** —
    plan maturity is stage-3 state; delivery state lives on `pr-body.md`.
 
 ## Process
@@ -73,34 +75,48 @@ own drift (same lesson as `.claude/skills/drift-gate/`).
 
 ## Outcome
 
-- **Any finding → no stamp.** Append a round to `docs/workflow/<item>/impl-findings.md`
-  (create on first-ever finding; template below), findings SPEC-cited where applicable,
-  one line each. Branch returns to stage 4; plan and spec unchanged. Re-gate is a full
-  re-run, fresh session.
+- **Any finding → no stamp.** Append a round to the `## Impl gate` section of
+  `docs/workflow/<item>/findings.md` (create the section on the first-ever impl-gate
+  finding, and the file too if this is the item's first finding of any stage; templates
+  below), findings SPEC-cited where applicable, one line each. Branch returns to stage 4;
+  plan and spec unchanged. Re-gate is a full re-run, fresh session.
 - **Clean → stamp.** On `pr-body.md` (not the plan), set `Status: IMPLEMENTED <date>`
   and append a short impl-gate record beneath it: date, "impl-gated fresh-context",
   branch name and HEAD commit, baseline counts observed, and any residuals accepted at
   this gate. The plan header is left exactly as the drift gate set it (`GATED`). If
-  `impl-findings.md` exists, close it with a final `## Round N — <date>` reading
+  a `## Impl gate` section exists, close it with a final `### Round N — <date>` reading
   `Clean — stamped.` The stamp means push-ready; **push itself stays human-gated** per
   `.claude/skills/implementation/`.
 
-## Round log (`impl-findings.md`)
+## Round log (`findings.md` §Impl gate)
 
-Gate sessions append rounds; the stage-4 fix session fills dispositions. Round number is
-the last in the file plus one (1 for a new file). The impl-gate-stage state decode table
-lives in `docs/workflow/README.md` ("State decode tables"), next to the files it decodes.
+One `findings.md` per item holds all three stages' rounds, one `## ` section each; this
+skill owns `## Impl gate` and writes nothing else in the file. Gate sessions append
+rounds; the stage-4 fix session fills dispositions. Round number is the last **in this
+section** plus one (1 for a new section) — never count a neighbouring stage's rounds. The
+impl-gate-stage state decode table lives in `docs/workflow/README.md` ("State decode
+tables"), next to the files it decodes.
 
-Template:
+File template, used only when `findings.md` does not exist yet:
 
 ```markdown
-# <item> impl-gate findings
+# <item> findings
 
-> Round log for the implementation gate (see `.claude/skills/impl-gate/`). Gate sessions
-> append rounds; the stage-4 fix session fills dispositions. Delivery status lives in
-> pr-body.md; plan maturity in plan.md.
+> Round log for this item's three gated stages: the drift gate
+> (`.claude/skills/drift-gate/`), the impl gate (`.claude/skills/impl-gate/`), and the
+> `@codex-review` loop (owned by `.claude/skills/implementation/`). Each stage appends
+> rounds under its own heading, created on that stage's first finding; the next-stage
+> session fills the dispositions. Findings only — plan maturity lives in `plan.md`,
+> delivery status in `pr-body.md`.
+```
 
-## Round 1 — <date>
+Section template, appended on the first-ever impl-gate finding. Sections stay in pipeline
+order — `## Gate`, `## Impl gate`, `## Review`:
+
+```markdown
+## Impl gate
+
+### Round 1 — <date>
 
 <n> findings, no stamp.
 
@@ -117,8 +133,8 @@ cell; the next gate run honors recorded owner decisions rather than re-flagging 
 ## Never
 
 - Never gate a branch this session helped write.
-- Never edit code, plan, or spec from the gate session — the `impl-findings.md` round log
-  and the `pr-body.md` stamp are the only files it writes. The plan header is never touched.
+- Never edit code, plan, or spec from the gate session — `findings.md` §Impl gate and the
+  `pr-body.md` stamp are the only things it writes. The plan header is never touched.
 - Never stamp with an open finding, however minor — minor goes back to stage 4 cheaply.
 - Never fix a finding in-line "while you're there" — analyze-and-amend in one motion
   leaves the final state never checked as a whole.
