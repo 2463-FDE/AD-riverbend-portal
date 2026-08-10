@@ -14,8 +14,12 @@ a route body short enough to be the spec of itself).
 
 ## Process
 
-1. **Read the spec and the requirements** — especially requirements §6: out-of-scope is
-   carried into the plan verbatim, not rediscovered.
+1. **Read the spec and the requirements** — especially the requirements' **out-of-scope
+   section**: it is carried into the plan verbatim, not rediscovered. Find that section by
+   its heading, never by a section number: `.claude/skills/requirement-synthesis/` owns the
+   requirements document's numbering and it moves per item (an item that adds a deferrals
+   or decisions section pushes out-of-scope down — it is §7 in `docs/workflow/e4/`, §6 in
+   `w1`–`w3`, `e1` and `e2`). Cite the number you actually found in the heading below.
 2. **Verify every factual claim in-repo before writing it.** Every file path, line
    reference, exported symbol, port, version, and config value in the plan is read from
    the working tree this session — never from memory or convention. A plan whose facts
@@ -107,9 +111,10 @@ Run these against the finished draft; each has caught a real gap.
 | File | Change |
 |------|--------|
 
-## Out of scope (from requirements §6)
+## Out of scope (from requirements §<n>)
 
-<carried verbatim>
+<carried verbatim. §<n> is the number the out-of-scope heading actually carries in THIS
+item's requirements — read it, do not assume 6.>
 
 ## Verification (end-to-end)
 
