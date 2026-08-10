@@ -151,3 +151,30 @@ Clean — stamped. Not a fresh-context round: the round-4 findings were fixed an
 the round-4 session by owner direction (see the outcome note above), and this entry exists so the
 round log agrees with the `Status: GATED` header rather than to claim a cold re-read that did not
 happen.
+
+## Review
+
+> PR #72, `@codex-review` by JesterCharles (automated adversarial review).
+
+### Round 1 — 2026-08-10
+
+1 finding, verdict `needs-attention` (no-ship). Head `e40d4b0`.
+
+| # | SPEC | Finding | Disposition (A/B/C/E) |
+|---|------|---------|-----------------------|
+| 1 | E4-SPEC-4 | **[high]** Lost confirmation can create duplicate registrations (`services/intake-service/app.py:132-144`). `create_intake` commits the registration, then runs match-key evaluation and eligibility on the same request thread before the 201 goes out. A connection drop in that window leaves a committed row while the portal tells the operator the registration was not saved; a retry has no idempotency key and no uniqueness guard, so a second `patients` row is created. Next step asked for: a test proving one row survives commit-then-timeout-then-retry | **A — premise accepted, declined as a pre-disclosed accepted residual; routed to `e5`. No code change.** Verified all three parts of the claim, and one correction: the window is **not introduced by this branch**. `main`'s `create_intake` (`git show main:services/intake-service/app.py:127-148`) already committed the patient, then ran the matcher, eligibility *and* the consent write before responding; the branch shortens the post-commit path and narrows what a lost response leaves behind (a complete registration rather than a possibly consent-less one). What the branch does change is reachability: registration through the portal worked nowhere before, so the window was unreachable end-to-end. Disclosed before the round in four places — `pr-body.md` *Accepted residuals* bullet 1, `plan.md` Landmines, `docs/debt-log.md:143-146` ("residual on the residual"), and the `intake-service/app.py` module docstring, which names the idempotency key as the fix and D4 as its home. **Not fixed here for three reasons, in order of weight:** (1) the fix persists state — an idempotency key plus a request/result store — which is the design-gate trigger at fix-session step 4, so it is a stage-3 plan revision, not a mid-review patch (`docs/review-loop-metrics.md` §3.1: every B finding in the baseline came from improvising exactly this shape mid-review); (2) the reviewer's cheaper alternative — return 201 at the commit and let the UI say "status unknown" — contradicts **frozen** E4-SPEC-7, which requires the failure message to identify the registration as *not saved*, and moving eligibility off the request thread is register-first, which ADR 0010 records as needing a job/result store; the spec is frozen at implementation stage, so that path is stage 2, not this loop; (3) the requested test asserts behaviour deliberately not implemented — as an `xfail` it moves the pinned xfail count (`CLAUDE.md` §6), a controlled surface — so it lands with the fix, not ahead of it. **Bounded today, not silent:** a retry duplicate shares the SSN and demographics, so the tier-1 match key queues the pair for human review (ADR 0005, `_evaluate_match_key`). Flagged, never merged — the records stay split until a human acts, which is D5, open by design |
+
+**No commit this round.** The suite was not re-run: the tree is unchanged from `e40d4b0`, the head
+the impl gate measured at `969 passed, 1 xfailed, 5 deselected`.
+
+**Where the finding goes — routed, not just named.** `docs/workflow/e5/requirements.md` was scoped
+to the thirteen remaining `_post`/`_get` call sites and carried nothing about idempotency. Owner
+direction this session ("Widen into e5", the alternative being a new `e7`), so that document now
+carries the chunk: §1 second ask, new §2.1 stating the defect and the three rejected framings,
+**E5-REQ-10 through E5-REQ-13**, four assumptions, four open questions, and a narrowed §6 — the
+"registration path is out of scope" exclusion now excludes e4's *error contract* rather than the
+path, because chunk 2 extends `contracts/intake-registration.json` additively. E5-REQ-12 and
+E5-REQ-13 are guards the finding did not ask for: idempotency must not become an accidental MPI
+(that is D5, open by design), and the key must not be derived from patient values, which would put
+PHI in a new column and in logs. A residual routed to a document that does not carry it is routed
+nowhere; this is what makes the decline a deferral rather than a dismissal.
