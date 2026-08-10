@@ -250,7 +250,11 @@ def me(session: dict = Depends(require_capability("profile.read"))):
 # --------------------------------------------------------------------------- #
 @app.post("/intake")
 def proxy_intake(payload: dict, session: dict = Depends(require_capability("patients.write"))):
-    return _post("intake", "/intake", payload)
+    # Migrated off the inherited _post (E4-SPEC-11..18, D4's open half, owner
+    # approved): _post collapsed a downstream 422 into a 200-OK {"error": ...}
+    # body, which is how the portal came to report a successful registration
+    # that created no patient (docs/debt-log.md "Intake contract break").
+    return _post_checked("intake", "/intake", payload, timeout=settings.intake_timeout_seconds)
 
 
 @app.get("/eligibility")

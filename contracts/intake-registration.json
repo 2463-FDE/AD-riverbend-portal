@@ -1,0 +1,47 @@
+{
+  "$comment": "Single source of truth for the POST /intake request contract (E4-SPEC-19). Asserted by tests/test_intake_payload_contract.py (service side) and frontend/app/intake/payload.contract.test.ts (portal side), so either half drifting reddens its own CI job. Synthetic values only — no real or seeded PHI.",
+  "consent_kinds": [
+    "npp_ack",
+    "treatment_consent",
+    "roi_consent",
+    "financial_responsibility_ack",
+    "communications_opt_in"
+  ],
+  "request_fields": {
+    "root": ["demographics", "insurance", "consents"],
+    "demographics": [
+      "name",
+      "dob",
+      "ssn",
+      "gender",
+      "address",
+      "phone",
+      "email",
+      "notes",
+      "created_via"
+    ],
+    "insurance": ["payer_name", "member_id", "group_number", "plan_type"]
+  },
+  "portal_omits": {
+    "demographics": ["notes"]
+  },
+  "sample_request": {
+    "demographics": {
+      "name": "Sample Patient",
+      "dob": "1985-03-12",
+      "ssn": "000000000",
+      "gender": "Prefer not to say",
+      "address": "1 Example Way",
+      "phone": "555-0100",
+      "email": "sample@example.invalid",
+      "created_via": "self_service"
+    },
+    "insurance": {
+      "payer_name": "Example Health",
+      "member_id": "EXMP000001",
+      "group_number": "GRP-0001",
+      "plan_type": "PPO"
+    },
+    "consents": ["npp_ack", "treatment_consent"]
+  }
+}

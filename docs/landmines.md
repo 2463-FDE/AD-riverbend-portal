@@ -75,11 +75,17 @@ Sourced from `ARCHITECTURE.md` §7 and the handoff docs.
 - ⚠️ **Schema and migrations are hand-synced** — there is no migration runner, and on a fresh
   volume only `db/schema.sql` runs. A mismatch breaks fresh-volume boots against existing
   databases.
-- ⚠️ **Intake registration is broken and reports success** — the portal's payload 422s at
-  intake-service, the gateway relays it as HTTP 200, and the UI prints a success message with no
-  patient row created. Inherited from handoff commit `3663c4b`, unscheduled, and **deliberately
-  not patched piecemeal**: the fix touches the gateway's error handling (the open half of D4) and
-  widens a consent enum, so it is approval-gated. Full analysis in `docs/debt-log.md`.
+- ⚠️ **Intake registration — fixed 2026-08-10 (`e4`), and the guards are load-bearing.** It used
+  to 422 at intake-service, relay as HTTP 200, and print success with no patient row created
+  (inherited from handoff commit `3663c4b`). Two of the pieces that fixed it are things you must
+  not quietly change: `ConsentKind` is a **documented PHI control** — a closed five-value enum
+  pinned by test, and widening it is approval-gated; and `proxy_intake` is the one gateway route
+  on `_post_checked`, so putting it back on `_post` restores a 200-for-a-failure contract the
+  portal branches on. The payload shape is declared once in `contracts/intake-registration.json`
+  and asserted from both suites — edit the declaration, not one side of it.
+  **The other thirteen `_post`/`_get` proxy routes are unchanged** and are still the open half of
+  D4: migrating them is approval-gated and scheduled as `e5`. Full analysis in
+  `docs/debt-log.md`.
 
 **Never edit without explicit human approval:** auth, PHI columns, ROI / disclosure logic,
 migrations, and `.env` or any secret file.

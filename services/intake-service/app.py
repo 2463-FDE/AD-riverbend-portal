@@ -30,7 +30,12 @@ Inherited shortcomings (left as-is from the handoff):
     Full register-first / out-of-band re-verification (instant 201 + async
     verify) remains the complete fix and is still open — it needs a job/result
     store (see ADR 0010 and docs/debt-log.md D4).
-  * Consents are inserted one at a time (a commit per consent).
+  * Patient, coverage and consents are written in ONE transaction (E4-SPEC-4).
+    They used to commit separately, with a consent-write failure swallowed, so
+    a fault mid-sequence left a half-registered patient behind a 201. Atomicity
+    is per-request, not cross-service: a commit whose response is lost in
+    transit still leaves a row the operator never sees confirmed, which needs
+    an idempotency key on POST /intake (D4 follow-up, still open).
 """
 import json
 import os
@@ -124,55 +129,75 @@ def create_intake(req: IntakeRequest, db: Session = Depends(get_db)):
     # patient row is committed, so a matcher fault can never block or slow a
     # registration, and a candidate match is queued for a human rather than
     # acted on.
-    patient_id = _create_patient(db, req.demographics)
+    patient_id = _create_registration(db, req)
     _evaluate_match_key(db, patient_id, req.demographics)
-
-    if req.insurance is not None:
-        _create_coverage(db, patient_id, req.insurance)
 
     # D4 / RIV-088 / RIV-141 (bounded, ADR 0010): eligibility verification still
     # runs on this request thread — it DOES delay the 201, by at most
     # ELIGIBILITY_TIMEOUT_SECONDS, and the intake-side breaker drops that to ~0
     # once the dependency is known-bad. So a slow/hung payer degrades
     # registration instead of freezing it (RIV-141), but this is not yet true
-    # deferral. The patient row is already committed above, so a degraded result
-    # only changes what the eligibility *field* reports, never whether the
-    # patient is saved. Register-first + async re-verification is the remaining
-    # follow-up (ADR 0010, docs/debt-log.md D4).
-    eligibility = _verify_eligibility(req.insurance)
-
-    _record_consents(db, patient_id, req.consents)
+    # deferral. The registration is already committed above, so a degraded
+    # result only changes what the eligibility *field* reports, never whether
+    # the patient is saved. Register-first + async re-verification is the
+    # remaining follow-up (ADR 0010, docs/debt-log.md D4).
+    eligibility = _verify_eligibility_guarded(req.insurance)
 
     elapsed = round(time.time() - started, 2)
     log.info("POST /intake 201 patient_id=%s elapsed=%.2fs", patient_id, elapsed)
     return IntakeResponse(patient_id=patient_id, elapsed_seconds=elapsed, eligibility=eligibility)
 
 
-def _create_patient(db: Session, demo: Demographics) -> int:
+def _create_registration(db: Session, req: IntakeRequest) -> int:
+    """Patient + coverage + consents, or nothing (E4-SPEC-4).
+
+    One transaction, one commit. The three writes used to commit separately —
+    and a consent failure was swallowed outright — so a fault between them left
+    a patient with no consent rows, a 201 at the desk, and nothing to say the
+    registration was half-written (docs/debt-log.md D4 residual 2). What a
+    caller owes a failed registration is now decided here: nothing survives it.
+    """
     try:
         patient = Patient(
-            name=demo.name,
-            dob=demo.dob,
-            ssn=demo.ssn,
-            gender=demo.gender,
-            address=demo.address,
-            phone=demo.phone,
-            email=demo.email,
-            notes=demo.notes,
-            created_via=demo.created_via,
+            name=req.demographics.name,
+            dob=req.demographics.dob,
+            ssn=req.demographics.ssn,
+            gender=req.demographics.gender,
+            address=req.demographics.address,
+            phone=req.demographics.phone,
+            email=req.demographics.email,
+            notes=req.demographics.notes,
+            created_via=req.demographics.created_via,
         )
         db.add(patient)
+        # db.py's session is autoflush=False, so this is explicit and required:
+        # it assigns the PK inside the transaction, without committing.
+        db.flush()
+        patient_id = patient.id     # read before commit expires the instance
+        if req.insurance is not None:
+            db.add(
+                InsuranceCoverage(
+                    patient_id=patient_id,
+                    payer_name=req.insurance.payer_name,
+                    member_id=req.insurance.member_id,
+                    group_number=req.insurance.group_number,
+                    plan_type=req.insurance.plan_type,
+                )
+            )
+        for kind in req.consents:
+            db.add(Consent(patient_id=patient_id, kind=kind))
         db.commit()
-        db.refresh(patient)
-        return patient.id
+        return patient_id
     except SQLAlchemyError as e:
         db.rollback()
         # PHI policy rule 3: never stringify a statement-level DB error — a
-        # DBAPIError embeds [SQL: ...] [parameters: (...)], i.e. the full
-        # patients row (name, DOB, SSN, notes). Class name only, same idiom as
-        # _verify_eligibility's 2026-07-08 fix. Test: tests/test_intake_db_error_phi.py.
-        log.error("intake: failed to create patient (%s)", type(e).__name__)
-        raise HTTPException(status_code=503, detail="patient store unavailable")
+        # DBAPIError embeds [SQL: ...] [parameters: (...)], i.e. the full bound
+        # row (name, DOB, SSN, notes for the patient write; member_id and
+        # group_number for the coverage one). Class name only, same idiom as
+        # _verify_eligibility's 2026-07-08 fix.
+        # Test: tests/test_intake_db_error_phi.py.
+        log.error("intake: failed to create registration (%s)", type(e).__name__)
+        raise HTTPException(status_code=503, detail="registration store unavailable")
 
 
 # --------------------------------------------------------------------------- #
@@ -359,7 +384,7 @@ def _evaluate_match_key(db: Session, patient_id: int, demo: Demographics) -> Non
     except Exception as e:
         # Broad on purpose. Class name only: a statement-level SQLAlchemy error
         # stringifies with [SQL: ...] [parameters: (...)], i.e. the bound
-        # patients row (name, DOB, SSN) — the same rule as _create_patient.
+        # patients row (name, DOB, SSN) — the same rule as _create_registration.
         log.error(
             "intake: match key evaluation failed for patient %s (%s)",
             patient_id,
@@ -392,44 +417,23 @@ def _record_match_failure(db: Session, patient_id: int, error_class: str) -> Non
         )
 
 
-def _create_coverage(db: Session, patient_id: int, ins: Insurance) -> None:
+def _verify_eligibility_guarded(ins: Optional[Insurance]) -> Optional[dict[str, Any]]:
+    """Verification must never fail a completed registration (E4-SPEC-4).
+
+    _verify_eligibility deliberately lets an unexpected exception propagate so
+    the breaker's try/finally is provably reached (tests/test_intake_breaker.py
+    ::test_unexpected_exception_records_a_failure_and_never_wedges_the_breaker).
+    That contract is kept; the registration just no longer rides on it — the
+    rows are committed before this runs, and a fault here would otherwise turn
+    a saved patient into a 500 at the desk.
+    """
     try:
-        coverage = InsuranceCoverage(
-            patient_id=patient_id,
-            payer_name=ins.payer_name,
-            member_id=ins.member_id,
-            group_number=ins.group_number,
-            plan_type=ins.plan_type,
-        )
-        db.add(coverage)
-        db.commit()
-    except SQLAlchemyError as e:
-        db.rollback()
-        # Rule 3 (see _create_patient): str(e) would embed member_id/group_number.
-        log.error(
-            "intake: failed to record coverage for patient %s (%s)",
-            patient_id,
-            type(e).__name__,
-        )
-        raise HTTPException(status_code=503, detail="coverage store unavailable")
-
-
-def _record_consents(db: Session, patient_id: int, kinds: list[str]) -> None:
-    # Inefficient by design: one INSERT + COMMIT per consent (a separate
-    # transaction round-trip each) rather than a single batched insert.
-    for kind in kinds:
-        try:
-            db.add(Consent(patient_id=patient_id, kind=kind))
-            db.commit()
-        except SQLAlchemyError as e:
-            db.rollback()
-            # Rule 3 (see _create_patient). kind is ConsentKind-constrained — safe.
-            log.error(
-                "intake: failed to record consent %s for patient %s (%s)",
-                kind,
-                patient_id,
-                type(e).__name__,
-            )
+        return _verify_eligibility(ins)
+    except Exception as e:
+        # Class only (PHI policy rule 3): an httpx exception embeds the failing
+        # URL, which carries insurance_id=<member_id> as a query param.
+        log.error("intake: eligibility verification failed unexpectedly (%s)", type(e).__name__)
+        return {"active": None, "status": "unknown", "reason": "eligibility check failed"}
 
 
 def _verify_eligibility(ins: Optional[Insurance]) -> Optional[dict[str, Any]]:

@@ -40,7 +40,6 @@ account), `docs/debt-log.md` (per-defect detail and status), the code.
 ```
 frontend/           Next.js 15 App Router portal (3070) — the ONLY frontend, permanent.
                     app/lib/gateway.ts is the single server-side call into the gateway.
-                    ⚠️ Registration is BROKEN and reports success (see §5).
 services/
   gateway/          FastAPI BFF (8070). Owns login, sessions, RBAC, fan-out. ⚠️ auth lives here
   intake-service/   (8071) registration, insurance, consent, eligibility trigger
@@ -51,6 +50,7 @@ services/
   roi-service/      (8076) release-of-information + disclosures
   ai-assistant/     (8077) LLM features. ⚠️ the only vendor-egress path in the estate
 config/roles.yaml   declared RBAC policy; enforced twin is gateway/authz.py (test-pinned equal)
+contracts/          cross-boundary payload declarations, asserted from BOTH suites
 db/schema.sql       flattened schema — the ONLY thing that runs on a fresh Postgres volume
 db/migrations/      ordered SQL files with no runner (see §8) — hand-synced to schema.sql
 db/seed/generate_seed.py  deterministic generator → seed.sql
@@ -119,24 +119,30 @@ wins and nobody maintains it.
 with status. Check the register before reporting a "new" PHI leak — several are already logged as
 OPEN by design.
 
-The one live defect worth knowing before you touch intake or the gateway: **registration is
-completely non-functional and the UI reports success.** The frontend payload 422s at
-intake-service, the gateway relays it as 200, and the UI's success branch prints a fallback string.
-Four layers, three of them backend. Full analysis in `docs/debt-log.md` "Intake contract break";
-tracked as TODO-1. Deliberately not patched piecemeal.
+The defect that used to head this section — registration completely non-functional while the UI
+reported success — was **fixed 2026-08-10 by `e4`** (TODO-1 closed; `docs/workflow/e4/`, and
+`docs/debt-log.md` "Intake contract break" keeps the account of what was wrong). What is worth
+knowing before you touch intake or the gateway now is what holds it closed:
+`contracts/intake-registration.json` is the one payload declaration both suites assert against,
+`ConsentKind` is a test-pinned closed enum and a documented PHI control, and `proxy_intake` is the
+single gateway route on `_post_checked`. The other **thirteen** proxy routes are still on the
+error-swallowing `_post`/`_get` — the rest of D4's open half, scheduled as `e5`.
 
 ## 6. Testing
 
 - `tests/`, pytest, one marker (`integration`). No shared package, so tests load modules by file
   path via `tests/conftest.py::load_module`. Bare sibling names (`config`) collide across services
   — pin `sys.modules` first.
-- **Baseline, measured 2026-08-10 under `make test-docker`: `940 passed, 1 xfailed, 5 deselected`**
-  (was 923 on 2026-08-08, and 821 on 2026-08-06; W2 added 100 and closed one deliberate gap on
-  purpose — `docs/landmines.md` §3 records which — then 2 more for the PR #63 codex round-1
-  regressions; W1 added 11 as a deliberate addition, no gap moved: 4 timeout tests, 6 PHI
-  negative tests over the LLM-path log sites, and 1 parametrize case; then 6 more for the PR #69
-  codex round-1 request-id retention fix — 4 in `tests/test_llm_client.py`, 1 intake, 1
-  visit-chat).
+- **Baseline, measured 2026-08-10 under `make test-docker`: `969 passed, 1 xfailed, 5 deselected`**
+  (was 940 earlier the same day, 923 on 2026-08-08, and 821 on 2026-08-06; W2 added 100 and closed
+  one deliberate gap on purpose — `docs/landmines.md` §3 records which — then 2 more for the
+  PR #63 codex round-1 regressions; W1 added 11 as a deliberate addition, no gap moved: 4 timeout
+  tests, 6 PHI negative tests over the LLM-path log sites, and 1 parametrize case; then 6 more for
+  the PR #69 codex round-1 request-id retention fix — 4 in `tests/test_llm_client.py`, 1 intake, 1
+  visit-chat; `e4` added 29 as a deliberate addition — 11 gateway registration proxy, 7 intake
+  endpoint, 6 payload contract, 2 compose override guards, 1 budget invariant, 1 consent-enum pin,
+  1 no-longer-swallowed consent failure. The `POST /intake` endpoint gap it closed was **not** one
+  of the deliberate ones: `docs/landmines.md` §3's list is unchanged).
   The xfail is the HL7 AL1/RXA gap; the deselected 5 are the integration tests. These counts are
   load-bearing — a moved count means a deliberate gap moved, which is a finding to report, not a
   number to update.

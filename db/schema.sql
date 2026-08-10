@@ -121,7 +121,9 @@ CREATE TABLE IF NOT EXISTS records (
 CREATE TABLE IF NOT EXISTS consents (
     id          SERIAL PRIMARY KEY,
     patient_id  INTEGER NOT NULL REFERENCES patients(id),
-    kind        TEXT,                          -- npp_ack | treatment_consent | roi_consent
+    -- npp_ack | treatment_consent | roi_consent | financial_responsibility_ack
+    -- | communications_opt_in  (enforced at the intake boundary, not by a CHECK)
+    kind        TEXT,
     signed_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

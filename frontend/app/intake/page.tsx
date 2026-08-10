@@ -4,32 +4,31 @@ import { useState } from "react";
 import Link from "next/link";
 import Card from "../components/Card";
 import DateField from "../components/DateField";
+import VerdictBadge, { verdictTone } from "../components/VerdictBadge";
 import { apiFetch } from "../lib/session";
 import { formatSsn, formatPhone, digitsOnly } from "../lib/format";
+import type { EligibilityVerdict } from "../lib/types";
+import { buildIntakePayload } from "./payload";
+import type { ConsentsForm, DemographicsForm, InsuranceForm } from "./payload";
 
-interface Demographics {
-  first_name: string;
-  last_name: string;
-  dob: string;
-  gender: string;
-  ssn: string;
-  phone: string;
-  email: string;
-  address: string;
-}
-interface Insurance {
-  carrier: string;
-  member_id: string;
-  group_number: string;
-  plan_type: string;
-  policy_holder: string;
-}
-interface Consents {
-  treatment: boolean;
-  privacy: boolean;
-  financial: boolean;
-  communications: boolean;
-}
+type Demographics = DemographicsForm;
+type Insurance = InsuranceForm;
+type Consents = ConsentsForm;
+
+// A registration is either confirmed by a patient id or it is a failure with a
+// message the operator can act on. There is no third state: the page used to
+// have one — a 2xx carrying no id fell through to a hardcoded success string,
+// which is what let a completely broken registration read as done (TODO-1).
+type SubmitResult =
+  | { ok: true; patientId: number; eligibility: EligibilityVerdict | null }
+  | { ok: false; text: string };
+
+const NOT_SAVED_CORRECTABLE =
+  "Registration was not saved. Some of the details entered could not be accepted — " +
+  "please correct them at the desk.";
+const NOT_SAVED_SYSTEM =
+  "Registration was not saved. The system could not complete it. Your answers are still " +
+  "on this page — please try again shortly.";
 
 const STEPS = ["Demographics", "Insurance", "Consents", "Review & Submit"];
 
@@ -50,17 +49,18 @@ export default function IntakePage() {
     member_id: "",
     group_number: "",
     plan_type: "",
-    policy_holder: "",
+    policy_holder_is_self: true,
   });
   const [consents, setConsents] = useState<Consents>({
     treatment: false,
     privacy: false,
     financial: false,
     communications: false,
+    roi: false,
   });
 
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [result, setResult] = useState<SubmitResult | null>(null);
 
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -82,37 +82,31 @@ export default function IntakePage() {
   async function submit() {
     setBusy(true);
     setResult(null);
-    // Combined payload: demographics + insurance + consents.
-    // SSN is display-formatted (F2) but sent as bare digits — a 9-digit SSN
-    // loses no meaning. Phone is sent as-is: dashes are only readability and
-    // any country code / extension the patient typed must survive to storage
-    // (formatPhone leaves those verbatim), so we do NOT collapse it to digits.
-    const payload = {
-      demographics: {
-        ...demo,
-        ssn: digitsOnly(demo.ssn),
-        phone: demo.phone.trim(),
-      },
-      insurance: ins,
-      consents,
-    };
+    const payload = buildIntakePayload(demo, ins, consents);
     try {
-      // NOTE: /api/intake is intentionally slow (~4-5s, RIV-088) — it "spins"
-      // before confirming. See app/api/intake/route.ts.
+      // NOTE: /api/intake can take a few seconds — intake verifies payer
+      // eligibility on the request thread (bounded, ADR 0010).
       const res = await apiFetch("/api/intake", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
-      if (!res.ok || data?.error) {
-        setResult({ ok: false, text: data?.error || "Submission failed." });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        // Status class alone decides which of the two things the operator is
+        // being told (E4-SPEC-6/7, 14). The downstream `detail` is deliberately
+        // never rendered: it can carry the submitted values that were rejected.
+        const rejected = res.status === 400 || res.status === 422;
+        setResult({ ok: false, text: rejected ? NOT_SAVED_CORRECTABLE : NOT_SAVED_SYSTEM });
+      } else if (typeof data?.patient_id !== "number") {
+        // A success status that confirms no record is not a success
+        // (E4-SPEC-5). This is the branch the old fallback string hid.
+        setResult({ ok: false, text: NOT_SAVED_SYSTEM });
       } else {
         setResult({
           ok: true,
-          text: data.patient_id
-            ? `Intake submitted. Your patient ID is ${data.patient_id}.`
-            : "Intake submitted successfully.",
+          patientId: data.patient_id,
+          eligibility: (data.eligibility as EligibilityVerdict | null) ?? null,
         });
       }
     } catch {
@@ -144,7 +138,7 @@ export default function IntakePage() {
         body: JSON.stringify({
           has_insurance: hasInsurance,
           plan_type: planType,
-          policy_holder_is_self: !ins.policy_holder,
+          policy_holder_is_self: ins.policy_holder_is_self,
           communications_opt_in: consents.communications,
           financial_ack: consents.financial,
         }),
@@ -170,8 +164,21 @@ export default function IntakePage() {
         </div>
         <Card>
           <div className="rb-alert rb-alert--ok" role="status" style={{ marginBottom: 16 }}>
-            {result.text}
+            {`Intake submitted. Your patient ID is ${result.patientId}.`}
           </div>
+          {/* The verdict intake already produced, on a screen (E4-SPEC-24/25).
+              VerdictBadge renders the eligibility path's own four-value
+              vocabulary and nothing else, so the explicit line below is what
+              keeps a missing or unrecognised verdict visible rather than
+              absent — an unchecked coverage state must never look like a
+              silently good one. */}
+          <p style={{ marginBottom: 12 }}>
+            {verdictTone(result.eligibility?.status) ? (
+              <VerdictBadge eligibility={result.eligibility} />
+            ) : (
+              <span className="rb-muted">Insurance eligibility was not checked.</span>
+            )}
+          </p>
           <p className="rb-muted">
             Thank you. Riverbend front-desk staff will review your intake before your first visit.
           </p>
@@ -314,9 +321,24 @@ export default function IntakePage() {
                 onChange={(v) => setIns({ ...ins, plan_type: v })}
                 options={["", "HMO", "PPO", "EPO", "POS", "Medicare", "Medicaid", "Self-pay"]} />
             </div>
-            <Field id="policy_holder" label="Policy holder name"
-              hint="Leave blank if you are the policy holder."
-              value={ins.policy_holder} onChange={(v) => setIns({ ...ins, policy_holder: v })} />
+            {/* A checkbox, not a name field: Riverbend has nowhere to store a
+                non-patient policy holder (no column, and adding one is a PHI
+                storage change of its own), so the free-text field collected an
+                identifier it then discarded. The fact the checklist actually
+                uses is whether the patient IS the holder. */}
+            <div className="rb-checkbox">
+              <input
+                id="policy_holder_is_self"
+                type="checkbox"
+                checked={ins.policy_holder_is_self}
+                onChange={(e) => setIns({ ...ins, policy_holder_is_self: e.target.checked })}
+              />
+              <label className="rb-checkbox__body" htmlFor="policy_holder_is_self">
+                <strong>I am the policy holder</strong>
+                Uncheck if this insurance is held by someone else — please bring their details to
+                the desk.
+              </label>
+            </div>
           </fieldset>
         )}
 
@@ -341,6 +363,15 @@ export default function IntakePage() {
               onChange={(v) => setConsents({ ...consents, communications: v })}
               title="Electronic communications (optional)"
               body="I agree to receive appointment reminders and portal notifications by email or text." />
+            {/* Optional, like the two above. The wording points at the Notice
+                of Privacy Practices and authorizes no specific disclosure: this
+                is an intake acknowledgement, NOT a 45 CFR 164.508 release
+                authorization, and nothing in roi-service reads it as one
+                (docs/todo.md TODO-61). */}
+            <Consent id="c_roi" checked={consents.roi}
+              onChange={(v) => setConsents({ ...consents, roi: v })}
+              title="Release of information (optional)"
+              body="I authorize Riverbend to release my records as described in the Notice of Privacy Practices." />
           </fieldset>
         )}
 
@@ -363,7 +394,7 @@ export default function IntakePage() {
               ["Member ID", ins.member_id || "—"],
               ["Group number", ins.group_number || "—"],
               ["Plan type", ins.plan_type || "—"],
-              ["Policy holder", ins.policy_holder || "Self"],
+              ["Policy holder", ins.policy_holder_is_self ? "Self" : "Not the patient"],
             ]} />
             <h3 style={{ marginTop: 18 }}>Consents</h3>
             <ReviewBlock rows={[
@@ -371,6 +402,7 @@ export default function IntakePage() {
               ["Privacy (HIPAA)", consents.privacy ? "Accepted" : "Not accepted"],
               ["Financial responsibility", consents.financial ? "Accepted" : "Declined"],
               ["Electronic communications", consents.communications ? "Accepted" : "Declined"],
+              ["Release of information", consents.roi ? "Accepted" : "Declined"],
             ]} />
           </div>
         )}

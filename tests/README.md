@@ -34,9 +34,13 @@ the module under test by file path (see `conftest.py::load_module`).
   gateway-side proxy, chat controls and Redis rate limit (`test_gateway_ai_proxy.py`,
   `test_gateway_ai_chat_controls.py`, `test_gateway_ai_rate_limit.py`), visit memory
   (`test_visit_memory.py`), tracing (`test_tracing.py`).
-- **Intake and HL7** — payload validation (`test_intake_schemas.py`), the intake
-  freeze regression (`test_intake_freeze_regression.py`), HL7 PID/PV1
-  (`test_hl7_parser.py`, with the AL1/RXA gap as the suite's one `xfail`).
+- **Intake and HL7** — payload validation (`test_intake_schemas.py`), the route itself
+  end to end (`test_intake_endpoint.py`), the two-sided payload declaration
+  (`test_intake_payload_contract.py`, whose portal twin is
+  `frontend/app/intake/payload.contract.test.ts`), the gateway's registration proxy
+  (`test_gateway_intake_proxy.py`), the intake freeze regression
+  (`test_intake_freeze_regression.py`), HL7 PID/PV1 (`test_hl7_parser.py`, with the
+  AL1/RXA gap as the suite's one `xfail`).
 - **Topology and gates** — the host-published-port allowlist
   (`test_compose_topology.py`, ADR 0016) and the RIV-160 retrieval-eval drift gate
   (`test_rag_eval.py`, `test_drift_check.py`).
@@ -53,12 +57,11 @@ These are NOT oversights to "fix" in the test suite; they mirror real gaps:
   AL1/RXA; the test documents the gap rather than hiding it.
 - **No tests for ROI authorization enforcement** — none exists to test.
 - **No tests for input normalization / duplicate-patient prevention.**
-- **No test drives `POST /intake` as an endpoint** — every intake test calls
-  `app_mod._verify_eligibility(...)` directly, so the route's own wiring is
-  unguarded (`docs/todo.md` TODO-55). Added to this list 2026-08-08.
 
-> **Two entries left this list 2026-08-08, closed by shipped work:** the eligibility
+> **Three entries have left this list, closed by shipped work.** 2026-08-08: the eligibility
 > timeout/breaker gap (ADR 0010 — `test_intake_breaker.py`, `test_payer_breaker.py`) and
 > "auth coverage is thin (RIV-201)" (ADR 0017 — `test_gateway_authz.py` pins the enforced
-> capability map against the declared one). `docs/landmines.md` §3 still owns the
-> negative-test rule for new work on these paths.
+> capability map against the declared one). 2026-08-10: "no test drives `POST /intake` as an
+> endpoint", closed by `tests/test_intake_endpoint.py` (`e4`, TODO-55) — it was never a
+> deliberate gap, just missing coverage. `docs/landmines.md` §3 still owns the negative-test
+> rule for new work on these paths.

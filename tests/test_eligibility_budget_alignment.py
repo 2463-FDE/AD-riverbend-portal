@@ -300,6 +300,47 @@ def test_an_empty_catalog_is_not_clamped_back_to_the_default_at_either_end(monke
     assert ai_blank.settings.ai_member_id_prefixes == ()
 
 
+def _registration_budget_sources():
+    """(label, gateway registration bound, intake's own registration budget).
+
+    Both sources of truth, for the same reason as every invariant above: a code
+    default that satisfies the bound proves nothing if `cp .env.example .env`
+    seeds one that does not (PR #5 r5).
+    """
+    raw = _env_example_values()
+    missing = [
+        name
+        for name in ("INTAKE_TIMEOUT_SECONDS", "ELIGIBILITY_TIMEOUT_SECONDS")
+        if name not in raw
+    ]
+    assert not missing, f".env.example is missing {missing} — a fresh deploy would not seed them"
+    return [
+        ("config.py defaults", _gw.intake_timeout_seconds, _intake.eligibility_timeout_seconds),
+        (
+            ".env.example",
+            float(raw["INTAKE_TIMEOUT_SECONDS"]),
+            float(raw["ELIGIBILITY_TIMEOUT_SECONDS"]),
+        ),
+    ]
+
+
+def test_the_gateway_registration_bound_never_preempts_intake():
+    """E4-SPEC-17, E4-SPEC-18. The gateway bounds POST /intake; intake's own worst case on
+    that path is its eligibility budget, which it spends on the request thread.
+    A gateway bound at or below that number gives up on a registration intake is
+    still legitimately processing — the desk sees a system failure while a
+    patient row is being written, which is the one outcome E4-SPEC-4's atomicity
+    cannot help with (the commit is per-request, not cross-service).
+    """
+    for label, gw_timeout, intake_timeout in _registration_budget_sources():
+        assert gw_timeout >= intake_timeout + MARGIN_SECONDS, (
+            f"[{label}] the gateway's INTAKE_TIMEOUT_SECONDS ({gw_timeout}s) must be at "
+            f"least {MARGIN_SECONDS}s above intake's own ELIGIBILITY_TIMEOUT_SECONDS "
+            f"({intake_timeout}s) — below that the gateway aborts a registration that "
+            "intake is still legitimately processing"
+        )
+
+
 def test_the_recognised_member_id_LENGTH_is_pinned_at_both_ends():
     # The catalog is not the only mirror this round created: each service compiles
     # its own regex around the same `\d{3,9}` bound, and the tuple comparison above

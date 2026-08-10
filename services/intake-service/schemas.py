@@ -16,11 +16,18 @@ class ConsentKind(str, Enum):
     scrubs SSN/email/phone, not names or dates. Unknown values are now rejected
     at the boundary, so they never reach the log or the database. Mirrors the
     values documented on ``models.Consent.kind``. See docs/phi-logging-policy.md.
+
+    The set is closed and pinned by test (tests/test_intake_schemas.py) — the
+    intake form collects exactly these five, and the shared payload declaration
+    (contracts/intake-registration.json) is asserted equal to them from both
+    suites, so neither side can drift the vocabulary on its own.
     """
 
     npp_ack = "npp_ack"
     treatment_consent = "treatment_consent"
     roi_consent = "roi_consent"
+    financial_responsibility_ack = "financial_responsibility_ack"
+    communications_opt_in = "communications_opt_in"
 
 
 class Demographics(BaseModel):

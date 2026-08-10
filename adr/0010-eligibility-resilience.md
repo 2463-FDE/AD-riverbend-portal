@@ -151,10 +151,21 @@ already exists in `ai-assistant/llm_client.py` and the gateway's `_post_checked`
   which raises this ceiling with it, not raising this knob alone.
   **Consequence, stated plainly:** during a slow-but-answering payer incident the
   front desk now gets `status: "pending"` for most registrations instead of a
-  real verdict it waited seconds for. (Smaller than it sounds: `_create_coverage`
+  real verdict it waited seconds for. (Smaller than it sounds: `_create_registration`
   never writes `insurance_coverages.status` / `verified_at`, so the verdict was
   only ever a field in the `/intake` response, not stored state — persisting it is
-  part of the register-first follow-up.) That is the deliberate trade — verification is
+  part of the register-first follow-up.)
+  > **Amended 2026-08-10 (`e4`) — one symbol in the parenthesis above; the decision,
+  > its trade and every budget value are unchanged.** The registration writes became
+  > one transaction, so the helper that sentence named no longer exists. What it
+  > states is still true of the merged one, word for word: a registration writes
+  > `payer_name`/`member_id`/`group_number`/`plan_type` only, `status` and
+  > `verified_at` stay untouched, and persisting the verdict is still open
+  > (`docs/debt-log.md` D4 residual 3). `e4` did put the verdict on a *screen* — the
+  > intake confirmation renders it — which is a different need from putting it in a
+  > column. ADR 0010 stays `Accepted`.
+
+  That is the deliberate trade — verification is
   best-effort on this path (the patient row is already committed), intake capacity
   is not — and it turns the incident's cost from one payer budget *per
   registration* into roughly one *per reset window*. Rejected alternative: leave
