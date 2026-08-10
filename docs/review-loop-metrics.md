@@ -511,6 +511,33 @@ asks for proof it could not gather itself, check whether the proof already exist
 producing it again — and post the artifact either way, because an unanswered E reads identically
 to an ignored A.**
 
+PR #69 r1 — 1 finding: **1 A / 0 B / 0 C**, 0 refuted · **[medium] A, fixed** — the class-name-only
+LLM-path log fix (W1-SPEC-13) also deleted the Bedrock `request_id`, which lived only inside the
+exception message: two of the three `LLMResponseError` raise sites fire *before* the success log
+that emits it, so a schema-drift incident left a 502 with no correlation handle after a paid egress.
+Fixed as the reviewer proposed, narrowed to the id: a `request_id` attribute on `LLMError` (the
+`egressed` idiom, raiser-set, `None` by default) logged as a structured field at the two catch
+sites. **Lesson: a redaction rule deletes a channel, not just a string** — the SPEC-13 sweep asked
+"is this message safe to log?" and never asked "what did the message carry that nothing else does?"
+The register row and both negative tests hid it, because both were written to prove text was gone,
+not that diagnosability survived. Worth carrying into any future rule-shaped sweep: pair "must not
+log X" with "must still log Y", or the negative test passes on a log line nobody can use. The
+finding was also over-stated on one of its three sites (the structured-validation raise fires after
+the success log, so that path lost only the join) — checking each raise site individually is what
+kept the fix from growing a provider-error-code surface the spec does not carry.
+
+PR #69 r2 — 0 findings: **dry**, verdict `approve` · tagged on `73b9f06`, the r1 fix commit, so
+the dry read lands on the surface r1 wrote rather than on the original diff. Its ship line names
+the three claims that carry the PR — the `LLMUnavailable` subclass contract, `request_id` as
+structured metadata, and message-leakage removed without moving status/accounting — and it did
+**not** re-raise its own r1 recommendation of provider error code / status, which the disposition
+had declined; that narrowing held on second look. **Scope note worth carrying: the reviewer is a
+code-diff reviewer and named none of the four documentation slices in the diff** (two register
+rows, the seam-map cite, `CLAUDE.md` §6 / `todo.md`). On a PR that is half registry upkeep, an
+`approve` is evidence about the code only — the registers' evidence is plan verification steps 7
+and 8, produced by the impl gate, and nothing in the review loop duplicates it. Loop closed at 2
+rounds, 1 A-fix.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
