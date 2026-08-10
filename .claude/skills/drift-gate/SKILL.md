@@ -31,7 +31,10 @@ context is the mechanism, not a nicety.
 1. **Read the spec first, alone.** Before opening the plan, list every SPEC id and note
    what you would expect a plan to do about each. This ordering is deliberate: form
    expectations from the contract, then test the plan against them — not the reverse.
-2. **Read the requirements §6 (out-of-scope)** — the plan must carry it verbatim.
+2. **Read the requirements' out-of-scope section** — the plan must carry it verbatim.
+   Locate it by heading, never by a section number: `.claude/skills/requirement-synthesis/`
+   owns that document's numbering and it moves per item (§7 in `docs/workflow/e4/`, §6 in
+   `w1`–`w3`, `e1` and `e2`). A plan citing the wrong number is itself a finding.
 3. **Read the plan and close the scope map both ways:** every SPEC id appears in the map;
    every planned change traces to a SPEC id or is named registry upkeep. An unmapped SPEC
    or an untraceable change is a finding.

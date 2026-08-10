@@ -1,6 +1,6 @@
 # E4 Requirements
 
-> Status: DRAFT
+> Status: AGREED 2026-08-10
 > Source: engagement owner ask, 2026-08-08
 
 ## 1. Raw ask (verbatim)
@@ -119,6 +119,11 @@ or secrets — but the landmines bullet for this defect states it is approval-ga
 | E4-REQ-8 | Engineering org: the behavioural claims about registration are asserted against the registration endpoint itself, not against a helper one layer inside it | TODO-55. Today no `TestClient` over intake-service exists anywhere in `tests/` |
 | E4-REQ-9 | Front desk: the eligibility verdict the backend already produces is visible on the registration confirmation, including when it is explicitly degraded or unchecked | TODO-56; same lines as E4-REQ-2. Visibility only — persisting the verdict is out of scope (§7). In scope per D-2 |
 | E4-REQ-10 | Engagement owner: the registries stop describing this defect as unscheduled and stop asserting the contract-mismatch class is unguarded | TODO-1, TODO-55, TODO-56, the D4 follow-up line, the `docs/landmines.md` §1 bullet, and the stale `docs/debt-log.md:333-336` JS-harness claim |
+| E4-REQ-13 | System: a registration that does not succeed leaves no partial patient, insurance, or consent record | The failure half of E4-REQ-1. Registration writes three record kinds, so partial survival is real, not theoretical; this is what makes "does not succeed" in E4-REQ-2 a single definite state and what E4-REQ-3's rejection of an unstorable consent rests on. Owner decision 2026-08-10, raised at spec stage (D-5) |
+| E4-REQ-14 | Patient / front desk: the intake form confirms that the policy holder is the patient rather than collecting a policy-holder name, and no policy-holder identity is stored | ⚠ human-gate adjacency — an insurance field on a PHI path, though no column is added. Homes the inherited 2026-07-31 decision (§2) in this table; not a reopening. The resulting absence of policy-holder identity is already recorded as deliberate in `docs/debt-log.md` (D-5) |
+
+**Numbering.** E4-REQ-11 and E4-REQ-12 are the §4 deferrals, re-homed to `e5` as E5-REQ-1 and
+E5-REQ-2; their ids are not reused here. The two additions above take the next free ids.
 
 **UI surface.** The client-visible surface is the registration confirmation, covered by
 E4-REQ-2 and E4-REQ-9. Recorded explicitly per the lesson of TODO-44 (closed) rather than left
@@ -177,14 +182,17 @@ deleted so the reasoning does not have to be re-derived.
 | D-2 | **E4-REQ-9 (TODO-56, the discarded eligibility verdict) is in scope.** | It lives on the lines E4-REQ-2 rewrites; excluding it means deliberately re-discarding `data.eligibility` in a function under edit, and booking a second visit to the same code |
 | D-3 | **The estate conversion is deferred to a named item now, not at pickup: `e5`.** Its requirement is E4-REQ-11 in §4. | Naming it now is what the e2 §4.3 mechanism does. Not naming it is how TODO-1 sat unscheduled after the 2026-08-05 descope took its plan and left the defect |
 | D-4 | **Vocabulary stays `item` + `chunk`; "ticket" is not adopted.** | "Ticket" already denotes the client's `RIV-nnn` namespace (RIV-088, RIV-141, RIV-160, RIV-175) throughout `docs/debt-log.md` and `docs/landmines.md`. A second meaning for one word is `CLAUDE.md` §10's named failure |
+| D-5 | **Two requirements added at spec stage: E4-REQ-13 (atomicity on failure) and E4-REQ-14 (policy-holder shape).** Requirements re-stamped AGREED 2026-08-10. | Both surfaced while writing the spec. E4-REQ-13 was decided nowhere upstream; E4-REQ-14 was decided 2026-07-31 but lived only in §2 prose, so the spec statement had no requirement to map to. The drift gate checks plan against spec, not spec against requirements — an unbacked SPEC would have been built, not flagged. Growing scope through stage 1 is the mechanism `docs/workflow/README.md` gives for this |
+| D-6 | **§7's first out-of-scope bullet is corrected: the deferral holds because the contract decision lands in e4 and the symptom lands in `e5`, not because no portal surface is affected.** Requirements re-stamped AGREED 2026-08-10. | Raised as gate round-2 finding 6 against the plan, 2026-08-10. The dropped clause — "no portal surface consumes their error bodies, so the deferral is chunked delivery rather than narrowed scope" — was already falsified by this document's own §2 correction of the same date: only `intake/page.tsx` parses `.error`, but `roi/page.tsx:50-52` and `appointments/page.tsx:31-33, 42-45` check no status at all and coerce any non-list body to `[]`, which is why §4 gives `e5` a portal half (E4-REQ-12). The plan carries §7 verbatim, so the choice was to carry a known-false sentence or fix it here. Fixed here — the deferral's real basis is D-3's, and it is unchanged |
 
 ## 7. Out of scope
 
 - **The other thirteen inherited gateway proxy call sites** — deferred to `e5` per D-3, with the
   requirement recorded as E4-REQ-11 in §4 rather than dropped. They inherit e4's frozen contract
-  and carry no further decisions, and no portal surface consumes their error bodies, so the
-  deferral is chunked delivery rather than narrowed scope. This is the rest of D4's follow-up
-  line.
+  and carry no further decisions, so the deferral is chunked delivery rather than narrowed scope:
+  the decision lands here, the remaining route contracts land there. It is not deferred because
+  the portal is unaffected — §2's correction and E4-REQ-12 record that it is (corrected by D-6,
+  2026-08-10). This is the rest of D4's follow-up line.
 - **Persisting the eligibility verdict to `insurance_coverages.status`** — D4 residual 3. The
   verdict reaching a screen (E4-REQ-9) and the verdict reaching the database are separate needs;
   the second is a storage change on a PHI path with its own gate.
