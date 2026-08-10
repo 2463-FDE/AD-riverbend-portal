@@ -23,7 +23,7 @@ requirement synthesis → spec (EARS) → code plan
   an `rN:` disposition comment (A/B/C/E labels, defined in `docs/review-loop-metrics.md`
   §1), iterate until dry. The push→review→merge segment is artifact-backed and owned by
   the implementation skill: `pr-body.md` carries the delivery `Status:` (PUSHED PR #n →
-  MERGED sha) and `review-findings.md` is the round log. No separate skill owns it. The
+  MERGED sha) and `findings.md` §Review is the round log. No separate skill owns it. The
   fix-session procedure (label → cluster → route: state-touching fixes back to stage 3,
   repeat findings get the class fix, rest patched on branch) is the implementation
   skill's "Addressing a round" section — decided 2026-08-07 on first reach with e1
@@ -55,57 +55,63 @@ docs/workflow/
     spec.md           ← EARS spec (contract)
     plan.md           ← code plan. Status: DRAFT | GATED — plan maturity ONLY, never
                         delivery state.
-    gate-findings.md  ← gate round log (created on first finding; owned by the
-                        drift-gate skill, dispositions filled in stage 3)
     pr-body.md        ← delivery artifact + PR-body draft (working-tree, not committed on
                         the code branch; lands on main via noncode-merge). Carries the
                         delivery Status: header (DRAFT → IMPLEMENTED → PUSHED → MERGED);
                         deviations, test-first split, residuals, Risk & landmines.
-    impl-findings.md  ← impl-gate round log (created on first finding; owned by the
-                        impl-gate skill, dispositions filled in stage 4)
-    review-findings.md ← codex review round log (created on first finding; owned by the
-                        implementation skill, dispositions filled by the stage-4 fix session)
+    findings.md       ← round log for all three gated stages, one `## ` section each,
+                        created on that stage's first finding:
+                          ## Gate       drift-gate skill writes; stage 3 fills dispositions
+                          ## Impl gate  impl-gate skill writes; stage 4 fills dispositions
+                          ## Review     implementation skill writes; the stage-4 fix
+                                        session fills dispositions
+                        Rounds are `### Round N — <date>` inside their section. Findings
+                        only — it carries no Status: header of its own.
 ```
 
 Workflow state is derivable from these files alone — no session memory required:
 **plan `Status:`** (plan maturity: DRAFT | GATED) + **`pr-body.md` `Status:`** (delivery
-lifecycle: DRAFT → IMPLEMENTED → PUSHED PR #n → MERGED sha) + the **three round logs**
-(`gate-findings.md`, `impl-findings.md`, `review-findings.md`). The decode tables are
-below.
+lifecycle: DRAFT → IMPLEMENTED → PUSHED PR #n → MERGED sha) + the **three round-log
+sections of `findings.md`**. A stage that has never produced a finding has no section, so
+an absent section reads exactly as an absent file did before the 2026-08-09 merge. The
+decode tables are below.
 
 ## State decode tables
 
 The cold-handover entry point: from these tables plus the artifacts above, derive any
 item's exact state without `gh` or session memory. Three stages, three tables.
 
-**Gate stage** (`gate-findings.md`, plan `Status:`):
+Each table reads its own `findings.md` section; "latest round" means the last
+`### Round N` under that section only, never one from a neighbouring stage.
+
+**Gate stage** (`findings.md` §Gate, plan `Status:`):
 
 | Observation | State |
 |---|---|
-| plan `DRAFT`, no `gate-findings.md` | gate not yet run |
-| latest round has findings with empty dispositions | stage-3 revision pending |
+| plan `DRAFT`, no §Gate section | gate not yet run |
+| latest §Gate round has findings with empty dispositions | stage-3 revision pending |
 | dispositions filled, plan still `DRAFT` | re-gate pending |
-| plan `GATED` | plan gated; round log closed |
+| plan `GATED` | plan gated; §Gate closed |
 
-**Impl-gate stage** (`impl-findings.md`, plan `Status:`, `pr-body.md` `Status:`):
+**Impl-gate stage** (`findings.md` §Impl gate, plan `Status:`, `pr-body.md` `Status:`):
 
 | Observation | State |
 |---|---|
 | plan `GATED`, no branch diff | implementation not started |
-| plan `GATED`, branch complete, no `impl-findings.md` | impl gate not yet run |
-| latest round has findings with empty dispositions | stage-4 fix pending |
+| plan `GATED`, branch complete, no §Impl gate section | impl gate not yet run |
+| latest §Impl gate round has findings with empty dispositions | stage-4 fix pending |
 | dispositions filled, `pr-body.md` still `DRAFT` | re-gate pending |
-| `pr-body.md` `IMPLEMENTED` | push-ready; round log closed |
+| `pr-body.md` `IMPLEMENTED` | push-ready; §Impl gate closed |
 
-**Review stage** (`review-findings.md`, `pr-body.md` `Status:`):
+**Review stage** (`findings.md` §Review, `pr-body.md` `Status:`):
 
 | Observation | State |
 |---|---|
 | `pr-body.md` `IMPLEMENTED`, not pushed | awaiting human push gate |
-| `pr-body.md` `PUSHED PR #n`, no `review-findings.md` | pushed; codex not yet run |
-| latest round has findings with empty dispositions | stage-4 fix pending |
+| `pr-body.md` `PUSHED PR #n`, no §Review section | pushed; codex not yet run |
+| latest §Review round has findings with empty dispositions | stage-4 fix pending |
 | dispositions filled, `pr-body.md` still `PUSHED` | re-review pending |
-| `pr-body.md` `MERGED <sha>` | delivered; round logs closed |
+| `pr-body.md` `MERGED <sha>` | delivered; all sections closed |
 
 ## Ground rules
 

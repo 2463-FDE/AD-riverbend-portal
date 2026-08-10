@@ -6,7 +6,7 @@
 > **Review record — PR #58, 4 rounds, closed dry.** r1 2 findings, r2 1, r3 1 — all
 > **A, fixed** on branch (`7b5d7d2`, `997a042`, `700fa5c`); r4 dry, verdict `approve`.
 > Squash-merged to `main` as `f69a554`, branch deleted. Round log:
-> `docs/workflow/w3/review-findings.md`; ledger lines in `docs/review-loop-metrics.md` §4.
+> `docs/workflow/w3/findings.md` §Review; ledger lines in `docs/review-loop-metrics.md` §4.
 > No fix this loop introduced state, so none went back to stage 3 — spec stays AGREED,
 > plan stays GATED, both unamended by the review. Residuals below are unchanged by it.
 >
