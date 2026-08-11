@@ -34,8 +34,13 @@ Inherited shortcomings (left as-is from the handoff):
     They used to commit separately, with a consent-write failure swallowed, so
     a fault mid-sequence left a half-registered patient behind a 201. Atomicity
     is per-request, not cross-service: a commit whose response is lost in
-    transit still leaves a row the operator never sees confirmed, which needs
-    an idempotency key on POST /intake (D4 follow-up, still open).
+    transit still leaves a row the operator never sees confirmed. That is closed
+    as of 2026-08-11 (e5, E5-SPEC-24..40) — the caller names the submission
+    attempt (submission_id), the record binds it to the registration inside the
+    same transaction, and a repeat of the attempt replays that registration
+    instead of forking a second chart. Register-first / async re-verification is
+    the other half of the same class and is still open (above): this makes the
+    retry safe, register-first shrinks the window that makes it necessary.
 """
 import json
 import os
@@ -48,7 +53,7 @@ import yaml
 from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import matching
@@ -62,6 +67,7 @@ from models import (
     InsuranceCoverage,
     MatchEvaluationFailure,
     Patient,
+    RegistrationSubmission,
 )
 from schemas import (
     Demographics,
@@ -123,14 +129,38 @@ def create_intake(req: IntakeRequest, db: Session = Depends(get_db)):
     # free-text fields (Codex review). See docs/phi-logging-policy.md.
     log.info('POST /intake meta=%s', json.dumps(log_metadata(req)))
 
-    # D5 (partly remediated, ADR 0005 / W2): still no MPI, and every intake
-    # inserts a brand new chart even for a returning patient — W2 merges
-    # nothing. What it adds is detection: the match key is evaluated AFTER the
-    # patient row is committed, so a matcher fault can never block or slow a
-    # registration, and a candidate match is queued for a human rather than
-    # acted on.
-    patient_id = _create_registration(db, req)
-    _evaluate_match_key(db, patient_id, req.demographics)
+    # Idempotency per submission ATTEMPT (e5, E5-SPEC-24/25/30). The window this
+    # closes is the one e4 made reachable: the registration commits, the
+    # response is lost in transit, the portal correctly says nothing was saved
+    # (E4-SPEC-7), and the operator's retry used to fork a second chart with its
+    # own coverage and consent rows. A recorded identifier means the retry gets
+    # the registration the first attempt created, and creates nothing.
+    #
+    # This is NOT a master patient index (E5-SPEC-36): nothing here consults
+    # demographics, so the same human submitted twice with two identifiers still
+    # forks two charts and is still only queued for review. That is D5, and it
+    # stays open by design.
+    replayed = _find_registration(db, req.submission_id)
+    if replayed is not None:
+        patient_id = replayed
+    else:
+        try:
+            patient_id = _create_registration(db, req)
+        except _SubmissionAlreadyRecorded:
+            # A concurrent request carrying the same identifier won the race
+            # (E5-SPEC-32). It has committed by definition — that is what
+            # released the lock our insert was waiting on — so one re-read is
+            # enough and nothing polls.
+            patient_id = _require_registration(db, req.submission_id)
+        else:
+            # D5 (partly remediated, ADR 0005 / W2): still no MPI, and every
+            # intake inserts a brand new chart even for a returning patient — W2
+            # merges nothing. What it adds is detection: the match key is
+            # evaluated AFTER the patient row is committed, so a matcher fault
+            # can never block or slow a registration, and a candidate match is
+            # queued for a human rather than acted on. A replay reaches neither
+            # this line nor the create above, so it queues nothing new.
+            _evaluate_match_key(db, patient_id, req.demographics)
 
     # D4 / RIV-088 / RIV-141 (bounded, ADR 0010): eligibility verification still
     # runs on this request thread — it DOES delay the 201, by at most
@@ -148,6 +178,81 @@ def create_intake(req: IntakeRequest, db: Session = Depends(get_db)):
     return IntakeResponse(patient_id=patient_id, elapsed_seconds=elapsed, eligibility=eligibility)
 
 
+class _SubmissionAlreadyRecorded(Exception):
+    """The UNIQUE index rejected our identifier: a concurrent request won.
+
+    Internal control flow, never surfaced to a caller — the loser of the race
+    re-reads the winner's registration and answers with it (E5-SPEC-32).
+    """
+
+
+# The constraint by name, plus the shape SQLite spells the same collision with,
+# so the collision path can tell OUR unique violation from any other integrity
+# error (a foreign key, say) without stringifying an exception that would embed
+# the bound patients row.
+_SUBMISSION_CONSTRAINT = "uq_registration_submission_id"
+_SUBMISSION_COLUMN = "registration_submissions.submission_id"
+
+
+def _is_submission_collision(e: IntegrityError) -> bool:
+    orig = str(getattr(e, "orig", "") or "")
+    return _SUBMISSION_CONSTRAINT in orig or _SUBMISSION_COLUMN in orig
+
+
+def _bound_the_collision_wait(db: Session) -> None:
+    """Bound how long this transaction waits on a concurrent submission.
+
+    The loser of a collision blocks on the UNIQUE index until the winner commits
+    (its row is invisible until then), so without a bound a duplicate submission
+    becomes a hang. `lock_timeout` turns that into a 55P03, which reaches the
+    existing 503 branch (E5-SPEC-33).
+
+    Postgres only: the endpoint tests run on in-memory SQLite, which serializes
+    writers and has no such knob. The guard must not quietly become "never" —
+    tests/test_intake_idempotency.py pins both halves.
+
+    `SET` takes no bind parameters, so the value is interpolated. It is coerced
+    to an int first and it comes from config, never from a request. The knob is
+    SECONDS (config.registration_lock_wait_seconds, plan D-15) and
+    `lock_timeout`'s unit here is MILLISECONDS: a dropped `* 1000` would shrink
+    the bound 1000x and turn every routine collision wait into a 503, so the
+    test pins the issued value and not merely that a statement was issued.
+    """
+    if db.get_bind().dialect.name != "postgresql":
+        return
+    milliseconds = int(settings.registration_lock_wait_seconds * 1000)
+    db.execute(text(f"SET LOCAL lock_timeout = '{milliseconds}ms'"))
+
+
+def _find_registration(db: Session, submission_id: str) -> Optional[int]:
+    """The patient this submission identifier already registered, if any."""
+    try:
+        return db.execute(
+            select(RegistrationSubmission.patient_id).where(
+                RegistrationSubmission.submission_id == submission_id
+            )
+        ).scalar_one_or_none()
+    except SQLAlchemyError as e:
+        db.rollback()
+        # Class only, same rule as _create_registration below.
+        log.error("intake: failed to read the submission record (%s)", type(e).__name__)
+        raise HTTPException(status_code=503, detail="registration store unavailable")
+
+
+def _require_registration(db: Session, submission_id: str) -> int:
+    """The winner's registration after we lost the race, or a 503.
+
+    Missing here means the row that rejected our insert has vanished, which is
+    not a state a caller can act on — it is the store misbehaving, so it takes
+    the same answer as any other store failure.
+    """
+    patient_id = _find_registration(db, submission_id)
+    if patient_id is None:
+        log.error("intake: submission record vanished after a unique violation")
+        raise HTTPException(status_code=503, detail="registration store unavailable")
+    return patient_id
+
+
 def _create_registration(db: Session, req: IntakeRequest) -> int:
     """Patient + coverage + consents, or nothing (E4-SPEC-4).
 
@@ -156,8 +261,15 @@ def _create_registration(db: Session, req: IntakeRequest) -> int:
     a patient with no consent rows, a 201 at the desk, and nothing to say the
     registration was half-written (docs/debt-log.md D4 residual 2). What a
     caller owes a failed registration is now decided here: nothing survives it.
+
+    As of e5 the submission record joins that transaction (E5-SPEC-29). It has
+    to: a record written outside it would either claim an identifier for a
+    registration that then failed — so the retry replays a chart that does not
+    exist — or leave a committed registration unclaimed, which is the window
+    this whole path exists to close.
     """
     try:
+        _bound_the_collision_wait(db)
         patient = Patient(
             name=req.demographics.name,
             dob=req.demographics.dob,
@@ -186,8 +298,22 @@ def _create_registration(db: Session, req: IntakeRequest) -> int:
             )
         for kind in req.consents:
             db.add(Consent(patient_id=patient_id, kind=kind))
+        # Same transaction, same commit (E5-SPEC-29).
+        db.add(
+            RegistrationSubmission(submission_id=req.submission_id, patient_id=patient_id)
+        )
         db.commit()
         return patient_id
+    except IntegrityError as e:
+        db.rollback()
+        if _is_submission_collision(e):
+            # Not a failure: a concurrent request carrying this identifier
+            # committed first. The caller re-reads and replays it (E5-SPEC-32).
+            raise _SubmissionAlreadyRecorded from None
+        # Any other integrity error is a store failure like the ones below, and
+        # gets the same class-only log for the same PHI reason.
+        log.error("intake: failed to create registration (%s)", type(e).__name__)
+        raise HTTPException(status_code=503, detail="registration store unavailable")
     except SQLAlchemyError as e:
         db.rollback()
         # PHI policy rule 3: never stringify a statement-level DB error — a

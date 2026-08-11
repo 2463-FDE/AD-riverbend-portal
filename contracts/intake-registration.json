@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of truth for the POST /intake request contract (E4-SPEC-19). Asserted by tests/test_intake_payload_contract.py (service side) and frontend/app/intake/payload.contract.test.ts (portal side), so either half drifting reddens its own CI job. Synthetic values only — no real or seeded PHI.",
+  "$comment": "Single source of truth for the POST /intake request contract (E4-SPEC-19). Asserted by tests/test_intake_payload_contract.py (service side) and frontend/app/intake/payload.contract.test.ts (portal side), so either half drifting reddens its own CI job. Synthetic values only — no real or seeded PHI. e5 added submission_id on the request side (E5-SPEC-27): a client-generated UUIDv4 naming the submission ATTEMPT, so a retry of an attempt whose response was lost replays the registration instead of forking a second chart. Additive on the request side only — nothing here is renamed, retyped or removed, and the response side e4 froze is untouched.",
   "consent_kinds": [
     "npp_ack",
     "treatment_consent",
@@ -8,7 +8,7 @@
     "communications_opt_in"
   ],
   "request_fields": {
-    "root": ["demographics", "insurance", "consents"],
+    "root": ["submission_id", "demographics", "insurance", "consents"],
     "demographics": [
       "name",
       "dob",
@@ -26,6 +26,7 @@
     "demographics": ["notes"]
   },
   "sample_request": {
+    "submission_id": "6f1d1a2e-6e0f-4a3c-9a4c-0f8a5b2d7c31",
     "demographics": {
       "name": "Sample Patient",
       "dob": "1985-03-12",

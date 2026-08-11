@@ -2,6 +2,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -61,11 +62,32 @@ class IntakeRequest(BaseModel):
     # matching how models.Consent.kind is stored and how log_metadata emits it.
     model_config = ConfigDict(use_enum_values=True)
 
+    # The caller's identifier for this submission ATTEMPT (E5-SPEC-26): a repeat
+    # of the attempt returns the registration the first one created instead of
+    # forking a second chart. Required, per requirements D-10 — no path retains
+    # the non-idempotent behaviour, so the guarantee is not conditional on the
+    # caller remembering to ask for it.
+    submission_id: str
     demographics: Demographics
     insurance: Optional[Insurance] = None
     consents: list[ConsentKind] = Field(
         default_factory=lambda: ["npp_ack", "treatment_consent"]
     )
+
+    @field_validator("submission_id")
+    @classmethod
+    def submission_id_well_formed(cls, v: str) -> str:
+        """Canonicalize through UUID, or reject.
+
+        Canonicalizing normalizes case and bracing, so two spellings of one
+        identifier cannot both claim a registration row. A rejection here is a
+        pydantic 422 — a rejection by the submitted values, which is e4's
+        correctable-at-the-desk branch (E4-SPEC-6, E5-SPEC-40).
+        """
+        try:
+            return str(UUID(v))
+        except (ValueError, AttributeError, TypeError):
+            raise ValueError("submission_id must be a UUID")
 
 
 class IntakeResponse(BaseModel):
@@ -171,6 +193,12 @@ def log_metadata(req: IntakeRequest) -> dict[str, Any]:
     demo = req.demographics
     ins = req.insurance
     return {
+        # The one value in this projection that is copied out rather than
+        # flattened to a flag, and the only one that safely can be: it is random
+        # and derived from nothing the operator typed (E5-SPEC-38), so it
+        # discloses nothing about the patient. It is also what makes a
+        # lost-confirmation retry traceable at all (E5-SPEC-39).
+        "submission_id": req.submission_id,
         "consents": list(req.consents),          # constrained to ConsentKind
         "self_service": demo.created_via == "self_service",
         "has_insurance": ins is not None,
