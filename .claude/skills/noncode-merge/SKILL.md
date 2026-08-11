@@ -1,14 +1,17 @@
 ---
 name: noncode-merge
-description: Streamlined path for landing non-code changes (docs, ADRs, .claude/ tooling, workflow artifacts) on main — branch, commit, gated push, PR, squash merge, ff local main. Use when the user says "merge the docs", "land this on main", "ship the tooling", or invokes /noncode-merge, and the pending changes contain no runtime code.
+description: Streamlined path for landing non-code changes (docs, ADRs, .claude/ tooling, workflow artifacts) on main — branch, commit, gated push, PR, codex review loop, squash merge, ff local main. Use when the user says "merge the docs", "land this on main", "ship the tooling", or invokes /noncode-merge, and the pending changes contain no runtime code.
 ---
 
 # Non-code merge
 
 Fast path to `main` for changes that cannot alter runtime behavior: `docs/**`, `adr/**`,
 any `*.md`, and `.claude/**` tooling. Everything else in `CONTRIBUTING.md` still binds
-(branch naming, Conventional Commits, PR body sections, squash merge); this skill only
-streamlines the sequence and drops the review round that non-code changes skip.
+(branch naming, Conventional Commits, PR body sections, squash merge); this skill
+streamlines the sequence, **not the review** — non-code PRs take the same `@codex-review`
+loop as code pushes. (Established 2026-08-11: the earlier skip rested on the assumption
+codex could not review docs, which turned out false. What stays dropped is the
+implementation machinery — TDD, impl gate — not review.)
 
 ## Scope guard (run first)
 
@@ -40,17 +43,91 @@ silently; ask which part to land.
    the house narrative sections; **Risk & landmines is required** — for a clean non-code
    diff write "none touched — non-code only (docs/tooling), no runtime paths". State in
    Verification that no code paths changed.
-5. **Review fork:**
-   - Default: non-code PRs skip the `@codex-review` loop (standing protocol).
-   - If the owner said this one needs **human eyes**: stop here. Leave the PR open, report
-     the URL, do not merge until the owner says so.
-6. **Merge** once CI is green: `gh pr merge --squash --delete-branch`. Squash subject
-   follows the commit convention.
+5. **Review loop:** post `@codex-review` as a separate PR comment, same as a code push.
+   Work each round per "Addressing a round" (below); iterate until a dry round or
+   `approve`. If the owner said this one needs **human eyes**: stop here. Leave the PR
+   open, report the URL, do not merge until the owner says so.
+6. **Merge** once CI is green **and the review is dry**:
+   `gh pr merge --squash --delete-branch`. Squash subject follows the commit convention.
 7. **Sync local:** `git checkout main && git pull --ff-only`, confirm local `main` is at
    the squash commit, and confirm the working tree is clean. Report PR number, squash SHA,
    and files landed.
 8. **Refresh stale branches** (below). Do not report the merge as done until every open PR
    branch from step 0 is either refreshed or explicitly deferred by the owner.
+
+## Addressing a round (step 5)
+
+Same discipline as the implementation skill's fix session — labels A/B/C/E per
+`docs/review-loop-metrics.md` §1 — adapted to documents: **route each finding to the
+pipeline node that owns the claim**; never rewrite a governed artifact in place under
+review pressure.
+
+1. **Label** each finding A/B/C/E. A refutation takes evidence from the document's own
+   sources (code, git history, the registries) and closes with an anchored comment, no
+   edit. A finding that restates a recorded owner decision or an accepted residual is
+   answered from the record (pr-body residuals, plan Landmines section, a findings-round
+   disposition) — not re-litigated; reopening is the owner's call only.
+2. **Cluster** findings that share one root cause; fix causes, not instances.
+3. **Route** each cluster by the document that owns the claim:
+
+   | Finding target | Route |
+   |---|---|
+   | Wording, cites, registry upkeep, factual slip in a mutable doc (`docs/**`, ADR body, `.claude/` skill text) | Patch on this branch. |
+   | `requirements.md` content (`AGREED`) | Stage 1: `requirement-synthesis` revises; the owner re-stamps. |
+   | `spec.md` content (frozen) | Owner decision first — a frozen spec never changes silently mid-loop. An accepted amendment runs `spec-authoring` re-freeze, and a downstream `GATED` plan takes a `drift-gate` re-run. |
+   | `plan.md` design content (`GATED`) | Stage 3: `plan-authoring` revises; `drift-gate` re-stamps. |
+   | The **code the docs describe**, not the docs | Out of this PR. The record stays faithful to what shipped; file the code finding where the registry contract puts it (`debt-log` risk / `todo` loose end / next item's requirements) and cite the filing in the disposition. |
+   | `docs/landmines.md` §1 zone content, `docs/specs-deprecated/**` | Owner only — this skill never touches them (see Never). |
+
+   A stage-routed finding does not block the rest of the PR by default: the disposition
+   records the routing, and the owner decides whether the PR waits for the revised
+   artifact or lands without it. Merge precondition: before step 6, every stage-routed
+   finding has, in a round disposition, its route on record (with the filing cite when
+   the route is a registry) **and** the owner's explicit call — wait, land without, or
+   defer. A stage-routed finding with no recorded owner call blocks the merge. The
+   worked example below fixes the wording so the record stays searchable.
+4. **Re-verify:** CI green; if a workflow artifact changed, re-check its stamps, round
+   numbers, and cross-cites against the state decode tables in `docs/workflow/README.md`.
+5. **Close the round:** reply with the `rN:` disposition comment carrying the labels;
+   append the ledger line to `docs/review-loop-metrics.md` §4 and **commit it on this same
+   branch** — it is non-code and in scope, so unlike the code loop the round log lands
+   with the PR it describes; re-tag `@codex-review`. The ledger line is part of the
+   reviewed diff — the next round may raise findings against it like any other hunk —
+   but it cannot feed the loop by itself: a new round starts only on the re-tag that
+   closes a round with findings, and after a dry round or `approve` there is no re-tag,
+   so the closing ledger line lands with the merge as bookkeeping.
+6. **Round-3 rule:** unchanged from the implementation skill — a third round with any open
+   finding stops the loop; the owner accepts as a named residual, overrules, or routes,
+   per finding, and the next round honors recorded decisions rather than re-raising them.
+
+### Worked example — one finding, end to end
+
+Round 2 raises: *"the plan's mitigation for the double-book path contradicts the frozen
+spec's SPEC-9."*
+
+1. **Label** — `A`: a defect in the artifact as pushed, not something a fix round wrote.
+2. **Cluster** — one finding, nothing shares its root cause.
+3. **Route** — the claim is about `plan.md` design content, and that plan is `GATED`, so
+   the routing table sends it to **stage 3** (`plan-authoring` revises, `drift-gate`
+   re-stamps). It is *not* patched on this branch, and this PR's other findings are
+   unaffected.
+4. **Re-verify** — the branch did not change, so no stamp, round number or cross-cite
+   moved; CI is unaffected.
+5. **Close the round** — reply with the `rN:` disposition. **The owner call is recorded
+   there, in the PR comment, one line per routed finding**, in this form:
+
+   > **r2 F1 — [medium] A, routed to stage 3** (`plan-authoring` revises, `drift-gate`
+   > re-stamps; not patched here). **Owner call 2026-08-12: land without** — the plan
+   > revision ships with e6; this PR is not held for it.
+
+   Three fields make it count: the **route** (plus the filing cite when the route is a
+   registry), the **owner call** verbatim as one of *wait* / *land without* / *defer*,
+   and the **date**. A routing with no owner call is still an open finding — step 6's
+   round-3 rule applies to it, and the merge precondition in step 3 blocks on it.
+
+Then append the ledger line, commit it on this branch, and re-tag `@codex-review` —
+unless this was a third round with anything still open, in which case the loop stops
+here and the owner takes it per step 6.
 
 ## Refreshing stale branches (step 8)
 

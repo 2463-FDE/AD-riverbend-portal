@@ -73,6 +73,10 @@ Run these against the finished draft; each has caught a real gap.
   "none touched"; deliberate defects are preserved — suppress-with-citation, never fix.
 - **Version caveats noted:** a tool deprecated beyond the pinned version is future churn
   to record, not silent debt.
+- **Context opens with a scan summary:** three to five lines a cold reviewer can orient
+  from in thirty seconds — what changes, why now, the shape of the diff — before the
+  detail. Density after that is fine; an unscannable opening is not (codex on PR #75:
+  the e5 plan was thorough and hard to scan).
 - Exemplar: `docs/workflow/e1/plan.md`.
 
 ## Template
@@ -88,6 +92,9 @@ Run these against the finished draft; each has caught a real gap.
 > (W<N>-SPEC-1..<n>). Requirements: `docs/workflow/w<N>/requirements.md` (AGREED <date>).
 
 ## Context
+
+<scan summary — three to five lines a cold reviewer orients on: what this changes, why
+now, what it must not touch. Detail and citations follow it, not above it.>
 
 <why this change, what gap it closes, what it must not touch. Cite debt IDs/TODOs.>
 

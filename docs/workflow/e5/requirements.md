@@ -1,10 +1,21 @@
 # E5 Requirements
 
-> Status: DRAFT
+> Status: AGREED 2026-08-10, amended 2026-08-11 (fact corrections only, owner-approved)
 > Source: engagement owner ask, 2026-08-08; widened by owner direction 2026-08-10 (§1, second ask)
-> Depends on: `docs/workflow/e4/` — e5 applies a contract e4 freezes. e4's spec was AGREED and its
-> plan GATED 2026-08-10, and the code is open as PR #72, so the blocking condition below is
-> satisfied for everything except what PR #72's review still moves.
+>
+> **Amendment 2026-08-11** — the e5 drift gate (`findings.md` §Gate round 1) found this document's
+> portal-surface measurements wrong. Owner disposition: correct them and cover the missed surface
+> rather than carry it as a residual. Three corrections, all factual: §2 and D-8 gain the records
+> chart read (`frontend/app/records/page.tsx:78`) as a sixth unchecked read surface; the
+> "13 of 17 `apiFetch` call sites check status" claim in §2, §4 and D-8 is corrected to 10 of 17;
+> and §6's "unchecked write surfaces" is corrected — those four writes do check status. No
+> requirement text changed, no requirement was added or removed, and the scope boundary is where
+> it was: E5-REQ-2 always read "a read surface", so the enumeration was catching up to it.
+> Open questions closed by owner decision 2026-08-10 — §5 is now the decisions record, and its
+> section number is unchanged so cites written against it still point where they did.
+> Depends on: `docs/workflow/e4/` — e5 applies a contract e4 freezes. **e4 is DONE**: code merged
+> as PR #72 and the delivery record as PR #73, both 2026-08-10. The blocking condition below is
+> fully satisfied; the frozen contract is on `main`.
 >
 > *(Superseded, kept as the record: "e4 is itself DRAFT as of this writing, so nothing here may be
 > specced until e4 is agreed." — 2026-08-08.)*
@@ -45,17 +56,23 @@ document that does not carry it is routed nowhere.
 
 **What e4 leaves.** e4 converts the registration path off the inherited error-swallowing gateway
 helpers and freezes the error contract. Thirteen inherited call sites remain
-(`services/gateway/app.py`): eight `_get` at `:260, 303, 308, 315, 331, 343, 350, 373` and five
-`_post` at `:355, 362, 378, 385, 1235`. They span eligibility, records, scheduling, ROI and
-interop. `_post` and `_get` (`app.py:1243-1257`) collapse every failure into a **200 OK**
-`{"error": str(e)}` body and log `str(e)`.
+(`services/gateway/app.py`, re-measured on `main` after e4 merged): eight `_get` at
+`:264, 307, 312, 319, 335, 347, 354, 377` and five `_post` at `:359, 366, 382, 389, 1239`. They
+span eligibility, records, scheduling, ROI and interop. `_post` and `_get` (`app.py:1249-1265`)
+collapse every failure into a **200 OK** `{"error": str(e)}` body and log `str(e)`.
 
 **The conversion targets already exist and are in production use.** `_post_checked`
-(`app.py:1295`) and `_get_checked` (`:1261`) relay downstream status, map transport failures to
+(`app.py:1299`) and `_get_checked` (`:1267`) relay downstream status, map transport failures to
 typed 502/504, and log the exception **class** only. W2 landed three routes on them
 (`proxy_review_queue`, `proxy_review_disposition`, `proxy_relevant_records`, all `timeout=30.0`),
 and the two `/ai` routes use them. CLAUDE.md §4 already names them the standard and says not to
 add a fifteenth inherited caller. e5 is repointing, not designing.
+
+e4 added a fourth converted route and, with it, a second timeout precedent: `proxy_intake`
+(`app.py:257`) passes `settings.intake_timeout_seconds`, a configurable value defaulting to 30
+(`services/gateway/config.py:74`). So the estate now carries both a literal `timeout=30.0` and a
+settings-backed one. e5 takes the literal `timeout=30.0` shape (D-4) — a choice between two
+existing precedents, not a new design.
 
 **The portal half, and why it is not optional.** Discovered while drafting e4 and recorded as a
 correction there. The portal's inherited read surfaces check no response status:
@@ -63,17 +80,30 @@ correction there. The portal's inherited read surfaces check no response status:
 - `frontend/app/roi/page.tsx:50-52`
 - `frontend/app/appointments/page.tsx:31-33` and `:42-45`
 - `frontend/app/page.tsx:39-47` (dashboard: appointments and records)
+- `frontend/app/records/page.tsx:78-83` (the chart read) — *added 2026-08-11, see the count
+  correction below*
 
-Each parses the body and coerces anything non-list to `d.items ?? []`. So a downstream outage
-today renders as **"you have none"** — an empty appointment list, an empty ROI queue — which is
-the read-side twin of the registration silent success. Converting the gateway alone does not
-change it: `{"detail": …}` is as non-list as `{"error": …}`, and with no `r.ok` check the page
-still shows empty. **The gateway conversion is necessary and not sufficient**; the visible defect
-closes only when both halves land.
+Each parses the body and coerces anything non-list to `d.items ?? []` (the records chart read
+coerces `json.encounters ?? []` and then says **"No records found for this patient."**). So a
+downstream outage today renders as **"you have none"** — an empty appointment list, an empty ROI
+queue, a patient with no chart — which is the read-side twin of the registration silent success.
+Converting the gateway alone does not change it: `{"detail": …}` is as non-list as `{"error": …}`,
+and with no `r.ok` check the page still shows empty. **The gateway conversion is necessary and not
+sufficient**; the visible defect closes only when both halves land.
 
 The correct pattern is already in-tree from W2 — `frontend/app/records/page.tsx:96-113` checks
-`!res.ok`, then shape-guards the body, and sets an explicit failed state. Thirteen of seventeen
-`apiFetch` call sites already check status; the inherited four are the gap.
+`!res.ok`, then shape-guards the body, and sets an explicit failed state.
+
+**Count correction, 2026-08-11.** This document twice claimed thirteen of seventeen `apiFetch`
+call sites already check status, leaving four as the gap. Both numbers were wrong and the pair
+was internally inconsistent (13 + 5 enumerated ≠ 17). Re-measured on `main`: **17 non-test call
+sites, 10 checking status, 7 not.** The seven are the six read surfaces listed above plus
+`frontend/app/components/AppShell.tsx:112` (logout — a write, out of scope per §6). The sixth
+read, the records chart read, was missed at this stage and found by the e5 drift gate
+(`findings.md` §Gate round 1, finding 3); the owner's disposition 2026-08-11 was to cover it, so
+it is folded in here, in D-8, and in E5-SPEC-8 rather than carried as a residual. Its omission is
+conspicuous: the pattern this document cites as the one to imitate is the sibling function twenty
+lines below it in the same file.
 
 **Zones this crosses** (`docs/landmines.md` §1):
 
@@ -152,16 +182,16 @@ residual* at `docs/debt-log.md:143-146` and in the `intake-service` module docst
 | ID | Requirement | Notes |
 |----|-------------|-------|
 | E5-REQ-1 | System: every gateway proxy route surfaces a downstream failure or rejection to its caller as a failure, not as a success response carrying an error body | ⚠ human-gate — gateway error handling; the set includes three ROI routes. Re-homed E4-REQ-11; applies the contract e4 freezes |
-| E5-REQ-2 | Front desk / patient: a downstream outage on a read surface is shown as an outage, not as an empty result | Re-homed E4-REQ-12. The user-visible half; `records/page.tsx:96-113` is the in-tree pattern |
+| E5-REQ-2 | Front desk / patient: a downstream outage on a read surface is shown as an outage, not as an empty result | Re-homed E4-REQ-12. The user-visible half; `records/page.tsx:96-113` is the in-tree pattern. All unchecked read surfaces, per D-8 (six call sites, corrected 2026-08-11) |
 | E5-REQ-3 | System: no gateway proxy log line or response body carries exception text that can embed a request URL or its query parameters | ⚠ human-gate — PHI. The `member_id` leak class; the inherited helpers still log `str(e)` on every route |
 | E5-REQ-4 | System: bounding a converted call does not preempt the downstream service's own bounded path | ⚠ human-gate — ADR 0010 pinning on any eligibility-reaching path |
 | E5-REQ-5 | System: no route's success behaviour changes — a request that succeeds today returns the same status and body after conversion | the regression floor; this is an error-path change only |
 | E5-REQ-6 | System: no route's authorization behaviour changes — same capability, same roles, no new unauthenticated path, and no widening of what the D11-exposed reads return | ⚠ human-gate — RBAC is test-pinned to `config/roles.yaml`; D11 is a documented intentional gap and e5 neither fixes nor widens it |
-| E5-REQ-7 | Interop sender: an HL7 message that interop rejects or fails to process is answered as a rejection, not as an acknowledgement | ⚠ outward-facing contract change; see open question 1 |
-| E5-REQ-8 | Engineering org: no error-swallowing proxy helper remains reachable, so the class cannot return via a new route | CLAUDE.md §4's "do not add a fifteenth" becomes structural rather than advisory. See open question 4 |
+| E5-REQ-7 | Interop sender: an HL7 message that interop rejects or fails to process is answered as a rejection, not as an acknowledgement | ⚠ outward-facing contract change, taken deliberately per D-2 — the only e5 change whose blast radius leaves the estate |
+| E5-REQ-8 | Engineering org: no error-swallowing proxy helper remains reachable, so the class cannot return via a new route | Satisfied by deleting `_post`/`_get` (D-3), so CLAUDE.md §4's "do not add a fifteenth" becomes structural rather than advisory |
 | E5-REQ-9 | Engagement owner: the registries stop carrying the gateway conversion as outstanding debt | D4's follow-up line, CLAUDE.md §4's "fourteen inherited proxy routes", and e4 §4's deferral record |
 | E5-REQ-10 | Front desk: retrying a registration submission whose outcome was never seen results in one patient chart, not two | The chunk-2 outcome, stated as what the operator gets. Source: PR #72 codex r1 |
-| E5-REQ-11 | System: a registration request carries an identifier of the submission attempt, and a repeat of that attempt returns the registration the first one created rather than creating another | ⚠ human-gate — new persisted state, so `db/schema.sql` plus a migration. Extends `contracts/intake-registration.json` additively (§6) |
+| E5-REQ-11 | System: a registration request carries an identifier of the submission attempt, and a repeat of that attempt returns the registration the first one created rather than creating another | ⚠ human-gate — new persisted state, so `db/schema.sql` plus a migration. Extends `contracts/intake-registration.json` additively on the request side only (§6); the replay answers with the original `201` (D-5), and a concurrent collision resolves per D-6 |
 | E5-REQ-12 | Front desk: a fresh registration is never mistaken for a retry — a new submission always creates a new chart, including for a patient who is already registered | The D5 guard, stated as a requirement rather than left to the plan. Idempotency must not become an accidental MPI |
 | E5-REQ-13 | System: the submission identifier is not derived from and does not carry patient-identifying values | ⚠ human-gate — PHI. A key hashed from SSN/DOB/name would put PHI in logs, error bodies and a new column, and would also violate E5-REQ-12 |
 
@@ -171,25 +201,30 @@ not screens). Recorded per the lesson of TODO-44.
 
 **Two chunks, one item.** E5-REQ-1 through E5-REQ-9 are the gateway/portal error-contract
 conversion; E5-REQ-10 through E5-REQ-13 are registration idempotency. They share no code and no
-seam — the plan stage may sequence them independently, and if the spec stage finds the item too
-wide to gate as one, splitting chunk 2 back out is a cheaper correction than a joint plan that
-has to be revised. Recorded now so that decision is available rather than rediscovered.
+seam, so the plan stage may sequence them independently and land them as separate branches.
+**They are specced together** (D-1): one frozen spec, one gate. The split option is closed at
+this stage — the spec stage inherits the decision rather than re-taking it.
 
 ## 4. Assumptions
 
-- **e4 lands first.** e5 applies a contract e4 freezes; specced before e4 is agreed, e5 would be
-  writing against a decision that can still move.
-- `timeout=30.0` matches what W2's three converted routes already use, so adopting it estate-wide
-  is following a precedent rather than making a new decision — except on eligibility-reaching
-  paths, where ADR 0010 governs (E5-REQ-4). Challengeable: a uniform value may be wrong for
-  `proxy_search`, which can scan the whole corpus.
+- ~~**e4 lands first.**~~ **Satisfied, not assumed.** e4 merged 2026-08-10 (PR #72 code, PR #73
+  delivery record), so the contract e5 applies is frozen and on `main`. Kept as the record of
+  what was blocking.
+- ~~`timeout=30.0` matches what W2's three converted routes already use…~~ **Decided, not
+  assumed** — D-4. The residual risk the assumption named is unchanged and now accepted: a
+  uniform 30s may be wrong for `proxy_search`, which can scan the whole corpus with no `LIMIT`.
+  That is D11's problem and out of scope here (§6).
 - Converting error paths does not widen D11. The routes return the same rows on success; only
   the failure representation changes. If that is wrong, E5-REQ-6 is the requirement that catches
   it.
 - `frontend/app/records/page.tsx:96-113` is the pattern the portal half imitates, not a new
   design. It shipped with W2 and is already the repo's convention for a checked read.
-- The four unchecked portal read surfaces listed in §2 are the complete set. Measured this
-  session: 17 `apiFetch` call sites, 13 checking status.
+- ~~The four unchecked portal read surfaces listed in §2 are the complete set.~~ **Wrong, and
+  corrected 2026-08-11** — there were six, not four, and the measurement behind the claim was also
+  wrong (§2, count correction). Re-measured on `main` after e4 merged: 17 non-test `apiFetch` call
+  sites, **10** checking status. The unchecked six reads are §2's list; the seventh unchecked site
+  is the logout write. e4 added none — its registration path checks status. Kept struck rather than
+  deleted because D-8 and E5-SPEC-8 were both sized against the wrong number.
 - **The retry that matters is the operator's, not the browser's.** The portal does not retry
   automatically today, so the duplicate arrives because a human re-submits a form the portal told
   them was not saved. If an automatic retry is ever added, the key has to survive it too — but no
@@ -201,40 +236,21 @@ has to be revised. Recorded now so that decision is available rather than redisc
 - **`consents.kind` needs no schema change and neither does this** — except for the new table.
   No existing PHI column is touched by chunk 2; the migration adds a table and nothing else.
 
-## 5. Open questions
+## 5. Decisions
 
-1. **`proxy_hl7` (E5-REQ-7): do external interop senders depend on the current always-200
-   behaviour?** HL7 senders typically expect an ACK/NAK, and today every outcome is a 200. This
-   is the only requirement in e5 whose blast radius reaches outside the estate, and the repo does
-   not record a sender contract. If unknown, the safe options are to convert it behind the same
-   contract and document the change, or to hold `proxy_hl7` back as a third chunk.
-2. **Uniform `timeout=30.0`, or per-route values?** Uniform matches W2 and is one decision;
-   per-route is more honest for `proxy_search` (unbounded corpus scan, no `LIMIT` — D11) and for
-   anything eligibility-reaching. Recommend uniform except where ADR 0010 binds.
-3. **Does E5-REQ-2 cover all four unchecked surfaces, or only those on converted routes?** The
-   dashboard's records call (`page.tsx:44`) reads a route e5 converts, so all four fall in
-   naturally; confirming avoids leaving one surface silently empty.
-4. **E5-REQ-8: delete `_post`/`_get` outright, or leave them unreferenced?** Deleting makes the
-   class unreproducible and is the stronger guarantee; `docs/landmines.md` §2 says not to delete
-   code that looks unused without a call-site search, which after e5 would return nothing.
-5. **What does a replayed registration answer with (E5-REQ-11)?** Returning the original `201`
-   and `patient_id` is the simplest and makes the retry indistinguishable from success, which is
-   the point. The alternative — a `200` marking it as a replay — is more honest to a caller that
-   wants to know, and the portal has no use for the distinction today. Recommend the replayed
-   `201` and record the choice, because the payload contract pins the response shape.
-6. **What happens when the retry arrives before the first request commits?** Two requests with
-   one key, concurrently. The key's `UNIQUE` constraint decides it, and the loser must then wait
-   for or read the winner's result rather than answering "duplicate" to an operator who has seen
-   nothing. This is the part of chunk 2 that is genuinely concurrent, and the design gate should
-   see it named rather than discovered.
-7. **How long is a submission identifier kept?** Kept forever, the table grows without bound;
-   pruned, a late retry past the horizon silently creates the duplicate the item exists to
-   prevent. A retention window measured against how long an operator might plausibly re-submit
-   (minutes to hours, not days) is the likely answer, but it is a decision, and there is no
-   scheduled job anywhere in this estate to enforce it.
-8. **Does this get a spec of its own?** See §3's two-chunk note — the spec stage decides whether
-   e5 is specced as one item or chunk 2 is split back out. Flagged here so it is a stage-2
-   decision rather than an accident.
+Taken by the engagement owner 2026-08-10, closing the eight open questions this section carried
+in DRAFT. Each is binding on the spec stage; a plan that departs from one is drift, not a choice.
+
+| ID | Decision | Consequence |
+|----|----------|-------------|
+| D-1 | **e5 is specced as one item with two chunks.** Not split back out as `e7`. | One `spec.md` covering E5-REQ-1..13, internally sectioned by chunk; one gate. The plan stage may still sequence the chunks independently and land them as separate branches — §3's two-chunk note stands as guidance, not as a split. |
+| D-2 | **`proxy_hl7` converts with the other twelve**, and the outward-facing contract change is documented rather than avoided. | E5-REQ-7 stays in scope. Always-200 is the defect, not the contract: HL7 senders expect ACK/NAK. The spec must state the change as outward-facing, and the PR body must name it — this is the one e5 change whose blast radius leaves the estate. |
+| D-3 | **`_post` and `_get` are deleted**, not left unreferenced. | E5-REQ-8 becomes a structural guarantee: CLAUDE.md §4's "do not add a fifteenth" stops being advisory because there is nothing to call. `docs/landmines.md` §2's don't-delete-unused rule is satisfied by a call-site search that must return zero before the deletion lands, and that search is a gate item. |
+| D-4 | **Uniform `timeout=30.0`**, except where ADR 0010 binds. | Follows W2's three converted routes rather than e4's settings-backed `proxy_intake` shape; no new config surface. Eligibility-reaching paths stay pinned per E5-REQ-4 and `tests/test_eligibility_budget_alignment.py`. `proxy_search` gets 30s too — its unbounded scan is D11's problem, out of scope here (§6). |
+| D-5 | **A replayed registration answers with the original `201` and `patient_id`.** No replay marker, no `200`. | The retry is indistinguishable from success, which is the point: the operator gets the confirmation they lost. `contracts/intake-registration.json`'s response shape is unchanged — chunk 2's additive extension is on the **request** side only. The portal needs no fifth result branch, so e4's four frozen branches (E4-SPEC-6, E4-SPEC-7) hold. |
+| D-6 | **On a concurrent collision, the loser waits for the winner and returns the winner's result.** | The `UNIQUE` constraint decides the race; the losing request must then read and replay, not answer "duplicate". The wait is bounded — an unbounded one converts a duplicate into a hang. Naming the mechanism here means the drift gate checks a stated design rather than discovering one. |
+| D-7 | **Submission identifiers are kept forever.** No retention window, no pruning. | Removes the horizon past which a late retry silently creates the duplicate the item exists to prevent, and avoids inventing scheduled-job machinery this estate does not have. The table grows at the same order as `patients`; the growth is **accepted and recorded**, and the migration carries an index so it stays cheap to look up. |
+| D-8 | **E5-REQ-2 covers every unchecked portal read surface**, not only those on converted routes. | `frontend/app/roi/page.tsx:50`, `frontend/app/appointments/page.tsx:31` and `:42`, `frontend/app/page.tsx:39` and `:44`, `frontend/app/records/page.tsx:78`. All read routes e5 converts, so they fall in naturally. Write surfaces are not added (that would need new ids); 10 of 17 `apiFetch` call sites already check status and are untouched. *(Amended 2026-08-11 by owner disposition of gate finding 3: the enumeration said "four" and listed five call sites, and missed the records chart read entirely. Scope is unchanged in kind — E5-REQ-2's text was always "a read surface" — so this is a corrected measurement, not a widened requirement.)* |
 
 ## 6. Out of scope
 
@@ -260,5 +276,17 @@ has to be revised. Recorded now so that decision is available rather than redisc
   as a candidate pair, and still get merged by nobody. E5-REQ-12 exists to keep that true.
 - **HL7 AL1/RXA mapping** — `proxy_hl7`'s error contract is in scope; what interop does with a
   well-formed message is not.
+- **The portal's *write* surfaces** — booking, cancel, ROI-create and ROI-fulfill
+  (`appointments/page.tsx:59`, `:84`, `roi/page.tsx:67`, `:96`), plus logout
+  (`components/AppShell.tsx:112`). E5-REQ-2 is a read-surface requirement and D-8 kept it that
+  way; covering the writes would need new ids, and the gateway routes behind them are converted
+  here either way. *(Corrected 2026-08-11: this bullet called those four writes "unchecked". They
+  are not — all four check `!r.ok` and set an explicit error message, crudely but correctly, at
+  `appointments/page.tsx:69` and `:85` and `roi/page.tsx:79` and `:97`. The one genuinely
+  unchecked write is logout, and it has no result surface to mis-render. Nothing about the scope
+  boundary changes; the phantom does.)*
+- **Retention or pruning of submission identifiers** — D-7 keeps them forever deliberately. No
+  scheduled job, no horizon. The unbounded growth is accepted and recorded, not deferred to a
+  future item.
 - **CI check routing** — `e3`'s chunk.
 - **Correcting the README compliance claim** — TODO-12, human-gated by scenario design.

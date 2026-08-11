@@ -72,8 +72,14 @@ Deviation handling, per the pipeline:
 - **Ask before pushing.** Push is human-gated.
 - PR body: copy from `docs/workflow/<item>/pr-body.md` (end-of-implementation step 6);
   the draft is the durable record and lands on `main` via `noncode-merge` (not on the
-  code branch — see step 6). The "Risk & landmines" section is required — a residual the
-  plan accepted is disclosed in the PR, not rediscovered by review.
+  code branch — see step 6). The "Risk & landmines" section is required. Know what the
+  disclosure does and does not buy: it informs human readers and gives the fix session an
+  anchored record to cite — it does **not** prevent rediscovery, because **the reviewer
+  reads the diff, not the PR prose**. Expect a round for each residual **the changed
+  lines make visible**; a residual absent from the diff costs nothing (observed so far on
+  two PRs — `docs/review-loop-metrics.md` §4, PR #72 and #74 entries, is the source of
+  truth, and two entries is thin enough that §4 outranks this line if they diverge).
+  The only thing that reduces the visible-residual cost is accepting fewer of them.
 - **After push (an owned step, artifact-backed):** advance the `pr-body.md` `Status:`
   line to `PUSHED PR #<n> <date>`, then comment `@codex-review`. Each round is worked by
   the fix-session procedure below; iterate until dry. On merge, advance `pr-body.md`
@@ -91,6 +97,15 @@ baseline analysis) — that file is the why, this section is the how.
    believed wrong is refuted with runtime evidence (build it, run it, hit the endpoint —
    never inference from static config) and closed with an anchored comment, no code
    change.
+   **A finding that restates an accepted residual or a recorded owner decision is
+   answered from the record, not re-litigated:** no code change; close it with an
+   anchored comment pointing at the recorded acceptance (the pr-body residuals section,
+   the plan's Landmines section, or the findings-round disposition that accepted it).
+   This is expected, not a surprise — the reviewer reads the diff, not the prose, so
+   an accepted residual the diff makes visible tends to come back as a finding
+   (`docs/review-loop-metrics.md` §4 carries the measurements). Reopening an
+   accepted residual is the owner's call only; the fix session neither re-accepts nor
+   silently fixes it.
 3. **Cluster** findings that share one root cause; fix causes, not instances.
 4. **Route** each cluster:
    - The fix would introduce or alter state (counter, TTL, lock, breaker, budget,

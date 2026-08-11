@@ -555,6 +555,67 @@ round per residual per PR, and the only thing that reduces it is accepting fewer
 writing the disclosure differently. Worth watching whether r2 re-raises it after the disposition —
 PR #69 r2 did honour a declined recommendation, which is the behaviour this relies on.
 
+PR #74 r1 — **0 findings**, clean, approved in one round. The PR carried three accepted residuals
+(pr-body §Accepted residuals), and none came back — which refines rather than contradicts the
+PR #72 lesson: all three are *absent from the diff* (out-of-scope `proxy_search`, untouched
+eligibility column, work not in the branch), whereas #72's rediscovered residual was a window the
+diff itself made reachable. The reviewer reads the diff, so a residual the diff does not exhibit
+costs no round; expect rediscovery only for residuals the changed lines make visible.
+
+PR #75 r1 — the first non-code PR through the review loop (the skip rule was revoked
+2026-08-11) — 2 findings: **2 A / 0 B / 0 C**, 0 refuted. (1) [medium] the implementation
+skill's residual guidance overstated the measured rule: "one round per accepted residual
+per PR" was written from e4's n=1 before this PR's own #74 entry refined it to
+diff-visible residuals only. Both skill sites aligned; §4 named as the source of truth.
+Note the shape: the same PR carried the stale skill line and the ledger refinement that
+falsified it, and the reviewer caught the divergence — the CLAUDE.md §10 failure mode (a
+duplicated instruction where the stale copy wins) caught at review instead of in the
+wild. (2) plan scannability — accepted on premise, fixed as class not instance: the
+GATED e5 plan is a stamped record no post-delivery edit may rewrite, so `plan-authoring`
+gained a Context scan-summary rule for future plans instead.
+
+PR #75 r2 — 3 findings: **2 A / 1 B / 0 C**, 0 refuted · all three target the review
+mechanism this PR ships, which is the point of running it on itself. (1) [medium] A —
+step 5's every-round ledger commit read as a self-feeding loop (metrics commit → new
+round → new metrics commit); fixed by pinning the termination semantics in the skill:
+the ledger line is reviewable diff like any other hunk, but rounds start only on the
+re-tag that closes a round with findings — a dry round or `approve` has no re-tag, so
+its closing line lands with the merge as bookkeeping. (2) [low] A — the routing table's
+"a stage-routed finding does not block by default" named no merge precondition; fixed:
+before merge every stage-routed finding needs its route on record in a disposition
+(with the filing cite when the route is a registry) and the owner's explicit
+wait/land/defer call. (3) [low] **B, the ledger's first non-code B** — r1's class fix
+added the scan-summary rule beside a stamped e5 plan that predates it, and nothing said
+the rule is prospective; the ambiguity is the fix round's new surface (`ec7d598`), the
+predicted B shape in document form. Fixed where the claim lives: the PR body now states
+the rule applies to future plans, not retroactively to the gated artifact.
+
+PR #75 r3 — 3 findings: **1 A / 2 B / 0 C**, 0 refuted · **the first round in this ledger
+where B outnumbers A**, and the round the round-3 rule was written for. (1) [medium] **B**
+— r2's merge precondition said the owner must call *wait / land without / defer* and never
+said where that call is recorded or in what words, so every future agent would invent a
+format; the under-specification is r2's own surface (`e6c9960`), which did not exist a
+round earlier. Fixed with a worked example carrying the exact disposition line and its
+three required fields (route, verbatim call, date). (2) [low] **A** — "both measured" for
+the diff-visible residual rule overstates n=2; the word ships in the original push
+`5e628f2` as "measured on e4" (n=1, thinner still), so r1 inherited the overclaim rather
+than creating it. Softened to "observed so far on two PRs", with §4 named as outranking
+the skill line if they diverge. (3) [low] **B** — r1's scan-summary rule landed in
+`plan-authoring`'s rules section while the Template's `## Context` block still showed the
+old shape, so learners read the rule and copied a form that ignores it; the divergence is
+`ec7d598`'s surface. Template mirrored.
+**Lesson, and the reason this round stopped the loop rather than closing it:** two of the
+three findings are defects the previous two fix rounds wrote — the §3.1 B mechanism
+reproduced in prose, where the "state" being altered is a rule rather than a counter. A
+process rule behaves exactly like stateful machinery under review: adding one creates a
+surface (where is it recorded? what wording? does it apply retroactively?) that the next
+round finds. **Generalizes: a fix that adds a rule owes the same design-gate question as a
+fix that adds state — what does this rule leave unspecified, and where will that show up?**
+The three rounds cost, in order, a termination semantics, a merge precondition, and a
+worked example, each answering the last one's gap. That is convergent, not divergent, but
+it is convergent because the artifacts are documents nobody executes; the same shape in
+code is PR #7.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
