@@ -205,3 +205,23 @@ CREATE TABLE IF NOT EXISTS match_evaluation_failures (
     error_class     TEXT NOT NULL,                    -- exception class name, never a message
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ---------------------------------------------------------------------------
+-- Registration submission idempotency (e5, E5-SPEC-29/34)
+-- ---------------------------------------------------------------------------
+-- One row per completed registration submission, written in the SAME
+-- transaction as the patient/coverage/consent rows: a record written outside
+-- that transaction reopens the window it exists to close. The UNIQUE index is
+-- the mechanism, not an optimization — it decides a concurrent collision and
+-- makes replay lookup cheap as the table grows (requirements D-7). No PHI: an
+-- opaque client-generated identifier, a patient id and a timestamp.
+-- Rows are kept FOREVER. No expiry, no pruning (requirements D-7): a retention
+-- horizon is a date past which a late retry silently creates the duplicate this
+-- table exists to prevent. The unbounded growth is accepted and recorded.
+CREATE TABLE IF NOT EXISTS registration_submissions (
+    id              SERIAL PRIMARY KEY,
+    submission_id   TEXT NOT NULL,
+    patient_id      INTEGER NOT NULL REFERENCES patients(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_registration_submission_id UNIQUE (submission_id)
+);

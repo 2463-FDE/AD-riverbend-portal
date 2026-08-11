@@ -1,5 +1,5 @@
 """ORM models intake-service touches. (Copy-paste per service — no shared lib yet.)"""
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text, UniqueConstraint
 from sqlalchemy.sql import func
 
 from db import Base
@@ -66,6 +66,34 @@ class DuplicateReviewQueue(Base):
     disposition = Column(Text)                        # duplicate_confirmed | not_duplicate
     decided_by = Column(Text)
     decided_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class RegistrationSubmission(Base):
+    """One completed registration submission, keyed by the caller's identifier.
+
+    Written in the SAME transaction as the patient/coverage/consent rows
+    (E5-SPEC-29): a record written outside that transaction reopens the
+    lost-confirmation window it exists to close. The UNIQUE constraint is the
+    mechanism — a concurrent collision blocks on it, and the loser then re-reads
+    this row and replays the winner's result rather than creating a second
+    chart.
+
+    No PHI columns: ``submission_id`` is opaque and random, derived from no
+    submitted value (E5-SPEC-38), so it is safe to log as a correlation key.
+    Rows are kept forever — no expiry, no pruning (requirements D-7).
+    """
+
+    __tablename__ = "registration_submissions"
+    # Named so the constraint reads the same in db/schema.sql, the migration and
+    # the DBAPI error a collision raises — the collision path keys on it.
+    __table_args__ = (
+        UniqueConstraint("submission_id", name="uq_registration_submission_id"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    submission_id = Column(Text, nullable=False)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
