@@ -83,9 +83,11 @@ Sourced from `ARCHITECTURE.md` §7 and the handoff docs.
   on `_post_checked`, so putting it back on `_post` restores a 200-for-a-failure contract the
   portal branches on. The payload shape is declared once in `contracts/intake-registration.json`
   and asserted from both suites — edit the declaration, not one side of it.
-  **The other thirteen `_post`/`_get` proxy routes are unchanged** and are still the open half of
-  D4: migrating them is approval-gated and scheduled as `e5`. Full analysis in
-  `docs/debt-log.md`.
+  **The other thirteen `_post`/`_get` proxy routes were converted 2026-08-11 (`e5`,
+  owner-approved) and both swallowing helpers were deleted**, closing D4's estate-wide half. What
+  is gated now is the reverse: reintroducing a helper that answers a failure with a success, or
+  adding a fan-out route that uses neither checked helper —
+  `tests/test_gateway_proxy_error_contract.py` fails both. Full analysis in `docs/debt-log.md`.
 
 **Never edit without explicit human approval:** auth, PHI columns, ROI / disclosure logic,
 migrations, and `.env` or any secret file.

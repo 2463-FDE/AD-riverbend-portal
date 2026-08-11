@@ -167,3 +167,64 @@ describe("records page relevant-records panel", () => {
     expect(apiFetch).toHaveBeenLastCalledWith("/api/patients/1043/relevant-records");
   });
 });
+
+describe("patient chart read surface (E5-SPEC-5 .. E5-SPEC-8)", () => {
+  // The sixth unchecked read, found by the e5 drift gate and covered by spec
+  // D-12. `json.encounters ?? []` rendered an outage as "No records found for
+  // this patient." — on a PHI read surface, twenty lines above a sibling
+  // function that already did this correctly.
+  const CHART_EMPTY = "No records found for this patient.";
+  const HELPER_OK = jsonResponse(200, {
+    patient_id: 1042,
+    duplicate_disclosure: "none",
+    items: [],
+  });
+
+  it("renders a failed load, not an empty chart, on a gateway failure status", async () => {
+    respond(jsonResponse(503, { detail: "records service unreachable" }), HELPER_OK);
+    await loadChart();
+
+    expect(await screen.findByText(/records could not be loaded/i)).toBeInTheDocument();
+    expect(screen.queryByText(CHART_EMPTY)).toBeNull();
+  });
+
+  it("renders a failed load when a 200 body carries no encounters array", async () => {
+    respond(jsonResponse(200, { detail: "records service error" }), HELPER_OK);
+    await loadChart();
+
+    expect(await screen.findByText(/records could not be loaded/i)).toBeInTheDocument();
+    expect(screen.queryByText(CHART_EMPTY)).toBeNull();
+  });
+
+  it("still renders the empty state for a patient with genuinely no records", async () => {
+    respond(jsonResponse(200, { patient_id: 1042, encounters: [] }), HELPER_OK);
+    await loadChart();
+
+    expect(await screen.findByText(CHART_EMPTY)).toBeInTheDocument();
+    expect(screen.queryByText(/records could not be loaded/i)).toBeNull();
+  });
+
+  it("puts no exception text on the failed state", async () => {
+    // The catch branch used to render e.message into the status line. Exception
+    // text is not a user-facing sentence, and the failed state must be one
+    // state rather than two spellings of it.
+    apiFetch
+      .mockRejectedValueOnce(new Error("connect ECONNREFUSED records-service:8073"))
+      .mockResolvedValueOnce(HELPER_OK);
+    await loadChart();
+
+    expect(await screen.findByText(/records could not be loaded/i)).toBeInTheDocument();
+    expect(screen.queryByText(/ECONNREFUSED|records-service:8073/)).toBeNull();
+  });
+
+  it("still fetches the relevant-records helper when the chart read fails", async () => {
+    // W2-SPEC-2 runs both ways: the helper is fetched separately so neither
+    // call gates the other. A failed chart must not silently drop the
+    // duplicate-chart disclosure.
+    respond(jsonResponse(503, { detail: "records service unreachable" }), HELPER_OK);
+    await loadChart();
+
+    await screen.findByText(/records could not be loaded/i);
+    expect(apiFetch).toHaveBeenLastCalledWith("/api/patients/1042/relevant-records");
+  });
+});

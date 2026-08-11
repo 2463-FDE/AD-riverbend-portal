@@ -16,10 +16,34 @@ import { fmtDateTime, fmtTimeRange, fmtDate } from "../lib/format";
 
 const DEFAULT_PATIENT_ID = "1042";
 
+// Fixed, client-authored, non-PHI. Both panels answer a question, and a read
+// that could not complete has not answered it (E5-SPEC-5, E5-SPEC-6). The slots
+// one matters most: "no open slots" sends a patient away from a clinic that has
+// availability.
+const APPTS_UNAVAILABLE =
+  "Appointments could not be loaded. This is not a statement that this patient has none — " +
+  "retry before relying on this view.";
+const SLOTS_UNAVAILABLE =
+  "Open slots could not be loaded. This is not a statement that there are none available — " +
+  "retry before telling a patient nothing is open.";
+
+// Both reads answer either a bare array or {items: [...]}. Anything else —
+// including the {"detail": ...} body a converted gateway sends on failure — is
+// a failed load, not an empty one.
+function listOf(d: unknown): unknown[] | null {
+  if (Array.isArray(d)) return d;
+  const items = (d as { items?: unknown } | null)?.items;
+  return Array.isArray(items) ? items : null;
+}
+
 export default function AppointmentsPage() {
   const [patientId, setPatientId] = useState(DEFAULT_PATIENT_ID);
   const [appts, setAppts] = useState<Appointment[] | null>(null);
   const [slots, setSlots] = useState<Slot[] | null>(null);
+  // Three states per panel, not two: null = loading, Failed = could not load,
+  // [] = genuinely empty.
+  const [apptsFailed, setApptsFailed] = useState(false);
+  const [slotsFailed, setSlotsFailed] = useState(false);
   const [reason, setReason] = useState("");
   const [busySlot, setBusySlot] = useState<number | null>(null);
   const [busyCancel, setBusyCancel] = useState<number | null>(null);
@@ -27,23 +51,41 @@ export default function AppointmentsPage() {
 
   const loadAppts = useCallback(async () => {
     setAppts(null);
+    setApptsFailed(false);
     try {
       const r = await apiFetch(`/api/appointments?patient_id=${encodeURIComponent(patientId)}`);
-      const d = await r.json();
-      setAppts(Array.isArray(d) ? d : (d.items ?? []));
+      if (!r.ok) {
+        setApptsFailed(true);
+        return;
+      }
+      const items = listOf(await r.json());
+      if (!items) {
+        setApptsFailed(true);
+        return;
+      }
+      setAppts(items as Appointment[]);
     } catch {
-      setAppts([]);
+      setApptsFailed(true);       // never setAppts([]) — that is the defect
     }
   }, [patientId]);
 
   const loadSlots = useCallback(async () => {
     setSlots(null);
+    setSlotsFailed(false);
     try {
       const r = await apiFetch(`/api/slots?limit=12`);
-      const d = await r.json();
-      setSlots(d.items ?? []);
+      if (!r.ok) {
+        setSlotsFailed(true);
+        return;
+      }
+      const items = listOf(await r.json());
+      if (!items) {
+        setSlotsFailed(true);
+        return;
+      }
+      setSlots(items as Slot[]);
     } catch {
-      setSlots([]);
+      setSlotsFailed(true);
     }
   }, []);
 
@@ -131,7 +173,9 @@ export default function AppointmentsPage() {
 
       <div className="rb-grid rb-grid--2">
         <Card title="Your appointments" icon={<IconCalendar />}>
-          {appts === null ? (
+          {apptsFailed ? (
+            <div className="rb-alert rb-alert--err" role="status">{APPTS_UNAVAILABLE}</div>
+          ) : appts === null ? (
             <Loading label="Loading appointments…" />
           ) : appts.length ? (
             <div className="rb-list">
@@ -188,7 +232,9 @@ export default function AppointmentsPage() {
 
           <hr className="rb-divider" />
 
-          {slots === null ? (
+          {slotsFailed ? (
+            <div className="rb-alert rb-alert--err" role="status">{SLOTS_UNAVAILABLE}</div>
+          ) : slots === null ? (
             <Loading label="Finding open slots…" />
           ) : openSlots.length ? (
             <div className="rb-list">

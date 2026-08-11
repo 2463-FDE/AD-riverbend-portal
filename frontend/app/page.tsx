@@ -23,6 +23,25 @@ import { fmtDateTime, firstName } from "./lib/format";
 // show on landing (a single-patient demo account).
 const DEFAULT_PATIENT_ID = "1042";
 
+// Fixed, client-authored, non-PHI. The dashboard is the landing surface, so an
+// outage rendered as "you have none" is the first thing a user reads
+// (E5-SPEC-5, E5-SPEC-6).
+const APPTS_UNAVAILABLE =
+  "Appointments could not be loaded. This is not a statement that there are none scheduled — " +
+  "retry, or open the appointments page.";
+const RESULTS_UNAVAILABLE =
+  "Recent results could not be loaded. This is not a statement that there are none on file — " +
+  "retry, or open the records page.";
+
+// The appointments read answers either a bare array or {items: [...]}. Anything
+// else — including the {"detail": ...} body a converted gateway sends on
+// failure — is a failed load, not an empty one.
+function listOf(d: unknown): unknown[] | null {
+  if (Array.isArray(d)) return d;
+  const items = (d as { items?: unknown } | null)?.items;
+  return Array.isArray(items) ? items : null;
+}
+
 function isResult(r: RecordItem): boolean {
   return Boolean(r.test || r.value !== undefined || r.reference_range);
 }
@@ -30,6 +49,10 @@ function isResult(r: RecordItem): boolean {
 export default function DashboardPage() {
   const [appts, setAppts] = useState<Appointment[] | null>(null);
   const [results, setResults] = useState<RecordItem[] | null>(null);
+  // Three states per panel, not two: null = loading, Failed = could not load,
+  // [] = genuinely empty.
+  const [apptsFailed, setApptsFailed] = useState(false);
+  const [resultsFailed, setResultsFailed] = useState(false);
   const [name, setName] = useState("there");
 
   useEffect(() => {
@@ -37,18 +60,38 @@ export default function DashboardPage() {
     if (u?.full_name) setName(firstName(u.full_name));
 
     apiFetch(`/api/appointments?patient_id=${DEFAULT_PATIENT_ID}`)
-      .then((r) => r.json())
-      .then((d) => setAppts(Array.isArray(d) ? d : (d.items ?? [])))
-      .catch(() => setAppts([]));
+      .then(async (r) => {
+        if (!r.ok) {
+          setApptsFailed(true);
+          return;
+        }
+        const items = listOf(await r.json());
+        if (!items) {
+          setApptsFailed(true);
+          return;
+        }
+        setAppts(items as Appointment[]);
+      })
+      .catch(() => setApptsFailed(true));   // never setAppts([])
 
     apiFetch(`/api/records?patient_id=${DEFAULT_PATIENT_ID}`)
-      .then((r) => r.json())
-      .then((d) => {
-        const encounters: EncounterBlock[] = d.encounters ?? [];
-        const recs = encounters.flatMap((e) => e.records ?? []).filter(isResult);
+      .then(async (r) => {
+        if (!r.ok) {
+          setResultsFailed(true);
+          return;
+        }
+        const d: unknown = await r.json();
+        const encounters = (d as { encounters?: unknown } | null)?.encounters;
+        if (!Array.isArray(encounters)) {
+          setResultsFailed(true);
+          return;
+        }
+        const recs = (encounters as EncounterBlock[])
+          .flatMap((e) => e.records ?? [])
+          .filter(isResult);
         setResults(recs.slice(0, 5));
       })
-      .catch(() => setResults([]));
+      .catch(() => setResultsFailed(true));
   }, []);
 
   const upcoming = (appts ?? [])
@@ -67,7 +110,9 @@ export default function DashboardPage() {
         {/* Next appointment */}
         <Card title="Next appointment" icon={<IconCalendar />}
           action={<Link href="/appointments">View all</Link>}>
-          {appts === null ? (
+          {apptsFailed ? (
+            <div className="rb-alert rb-alert--err" role="status">{APPTS_UNAVAILABLE}</div>
+          ) : appts === null ? (
             <Loading label="Loading appointments…" />
           ) : next ? (
             <div>
@@ -98,7 +143,9 @@ export default function DashboardPage() {
         {/* Recent results */}
         <Card title="Recent results" icon={<IconLab />}
           action={<Link href="/records">View records</Link>}>
-          {results === null ? (
+          {resultsFailed ? (
+            <div className="rb-alert rb-alert--err" role="status">{RESULTS_UNAVAILABLE}</div>
+          ) : results === null ? (
             <Loading label="Loading results…" />
           ) : results.length ? (
             <table className="rb-table">

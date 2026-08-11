@@ -30,6 +30,14 @@ const DUPLICATE_DISCLOSURE =
   "so the set may be incomplete — check with Health Information Management before relying " +
   "on it as a complete history. Merging charts is an HIM procedure.";
 
+// Fixed, client-authored, non-PHI. The sixth unchecked read (spec D-12): this
+// surface rendered an outage as "No records found for this patient." — on a
+// chart. The failed state is ONE state, so the catch branch below stops
+// spelling it a second way with an exception message (E5-SPEC-5, E5-SPEC-6).
+const CHART_UNAVAILABLE =
+  "Records could not be loaded. This is not a statement that this patient has none on file — " +
+  "retry, and do not treat this as an empty chart.";
+
 const REASON_LABEL: Record<RelevantRecordItem["reason"], string> = {
   allergy: "Allergy recorded",
   medication: "Medication recorded",
@@ -67,6 +75,7 @@ export default function RecordsPage() {
   const [busy, setBusy] = useState(false);
   const [relevant, setRelevant] = useState<RelevantRecordsResponse | null>(null);
   const [relevantFailed, setRelevantFailed] = useState(false);
+  const [chartFailed, setChartFailed] = useState(false);
 
   async function load() {
     setBusy(true);
@@ -74,16 +83,30 @@ export default function RecordsPage() {
     setSelected(null);
     setRelevant(null);
     setRelevantFailed(false);
+    setChartFailed(false);
     try {
       const res = await apiFetch(`/api/records?patient_id=${encodeURIComponent(patientId)}`);
-      const json = await res.json();
-      const encounters: EncounterBlock[] = json.encounters ?? [];
-      setData(encounters);
-      setSelected(encounters[0] ?? null);
-      if (encounters.length === 0) setStatus("No records found for this patient.");
-    } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Could not load records.");
-      setData([]);
+      // if/else rather than early returns: loadRelevant() below must still run
+      // when the chart read fails, so neither call gates the other (W2-SPEC-2).
+      if (!res.ok) {
+        setChartFailed(true);
+        setData(null);
+      } else {
+        const json: unknown = await res.json();
+        const encounters = (json as { encounters?: unknown } | null)?.encounters;
+        if (!Array.isArray(encounters)) {
+          setChartFailed(true);
+          setData(null);
+        } else {
+          const blocks = encounters as EncounterBlock[];
+          setData(blocks);
+          setSelected(blocks[0] ?? null);
+          if (blocks.length === 0) setStatus("No records found for this patient.");
+        }
+      }
+    } catch {
+      setChartFailed(true);       // never setData([]) — that is the defect
+      setData(null);
     } finally {
       setBusy(false);
     }
@@ -145,6 +168,12 @@ export default function RecordsPage() {
       {status && (
         <div className="rb-alert rb-alert--info" role="status">
           {status}
+        </div>
+      )}
+
+      {chartFailed && (
+        <div className="rb-alert rb-alert--err" role="status">
+          {CHART_UNAVAILABLE}
         </div>
       )}
 

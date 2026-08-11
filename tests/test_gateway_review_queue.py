@@ -152,19 +152,9 @@ def test_downstream_status_codes_are_relayed_not_flattened(monkeypatch, status):
     assert r.json()["detail"] == "review pair not found"
 
 
-def test_queue_routes_never_use_the_swallowing_helpers(monkeypatch):
-    """CLAUDE.md §4: fourteen inherited routes collapse failures into a 200 OK
-    ``{"error": ...}``; do not add a fifteenth. Proven behaviourally — with the
-    legacy helpers wired to explode, both new routes still work."""
-    def _boom(*a, **k):
-        raise AssertionError("a review-queue route used the swallowing _get/_post")
-
-    monkeypatch.setattr(gw, "_get", _boom)
-    monkeypatch.setattr(gw, "_post", _boom)
-    monkeypatch.setattr(gw.httpx, "get", lambda *a, **k: _Resp(payload={"items": []}))
-    monkeypatch.setattr(gw.httpx, "post", lambda *a, **k: _Resp(payload={"id": 1}))
-
-    assert client.get("/review-queue").status_code == 200
-    assert client.post(
-        "/review-queue/1/disposition", json={"disposition": "not_duplicate"}
-    ).status_code == 200
+# test_queue_routes_never_use_the_swallowing_helpers lived here until e5
+# (2026-08-11, plan D-16). It proved the claim behaviourally, by monkeypatching
+# _get/_post to explode — which stops being possible once e5 DELETES them
+# (E5-SPEC-20): the test would fail at setattr, and its assertion would be
+# vacuous besides. The claim is re-homed as a structural scan in
+# tests/test_gateway_proxy_error_contract.py — no such helper exists to avoid.
