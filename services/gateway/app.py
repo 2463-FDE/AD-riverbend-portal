@@ -261,7 +261,12 @@ def proxy_intake(payload: dict, session: dict = Depends(require_capability("pati
 def proxy_eligibility(
     insurance_id: str, session: dict = Depends(require_capability("eligibility.check"))
 ):
-    return _get("eligibility", "/eligibility", params={"insurance_id": insurance_id})
+    return _get_checked(
+        "eligibility",
+        "/eligibility",
+        PROXY_TIMEOUT_SECONDS,
+        params={"insurance_id": insurance_id},
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -304,19 +309,24 @@ def proxy_patients(
     limit: int = Query(25, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
-    return _get("records", "/patients", params={"q": q, "limit": limit, "offset": offset})
+    return _get_checked(
+        "records",
+        "/patients",
+        PROXY_TIMEOUT_SECONDS,
+        params={"q": q, "limit": limit, "offset": offset},
+    )
 
 
 @app.get("/patients/{patient_id}")
 def proxy_patient(patient_id: int, session: dict = Depends(require_capability("patients.read"))):
-    return _get("records", f"/patients/{patient_id}")
+    return _get_checked("records", f"/patients/{patient_id}", PROXY_TIMEOUT_SECONDS)
 
 
 @app.get("/patients/{patient_id}/records")
 def proxy_records(patient_id: int, session: dict = Depends(require_capability("records.read"))):
     # IDOR: a valid session is required, but it is never checked against
     # {patient_id}. {patient_id} is the sequential primary key.
-    return _get("records", f"/patients/{patient_id}/records")
+    return _get_checked("records", f"/patients/{patient_id}/records", PROXY_TIMEOUT_SECONDS)
 
 
 @app.get("/patients/{patient_id}/relevant-records")
@@ -332,7 +342,7 @@ def proxy_relevant_records(
 
 @app.get("/records/search")
 def proxy_search(q: str, session: dict = Depends(require_capability("records.search"))):
-    return _get("records", "/records/search", params={"q": q})
+    return _get_checked("records", "/records/search", PROXY_TIMEOUT_SECONDS, params={"q": q})
 
 
 # --------------------------------------------------------------------------- #
@@ -344,26 +354,35 @@ def proxy_slots(
     provider_id: Optional[int] = None,
     limit: int = Query(50, ge=1, le=200),
 ):
-    return _get("scheduling", "/slots", params={"provider_id": provider_id, "limit": limit})
+    return _get_checked(
+        "scheduling",
+        "/slots",
+        PROXY_TIMEOUT_SECONDS,
+        params={"provider_id": provider_id, "limit": limit},
+    )
 
 
 @app.get("/appointments")
 def proxy_list_appointments(
     patient_id: int, session: dict = Depends(require_capability("schedule.read"))
 ):
-    return _get("scheduling", "/appointments", params={"patient_id": patient_id})
+    return _get_checked(
+        "scheduling", "/appointments", PROXY_TIMEOUT_SECONDS, params={"patient_id": patient_id}
+    )
 
 
 @app.post("/appointments")
 def proxy_book(payload: dict, session: dict = Depends(require_capability("appointments.write"))):
-    return _post("scheduling", "/appointments", payload)
+    return _post_checked("scheduling", "/appointments", payload, PROXY_TIMEOUT_SECONDS)
 
 
 @app.post("/appointments/{appointment_id}/cancel")
 def proxy_cancel(
     appointment_id: int, session: dict = Depends(require_capability("appointments.write"))
 ):
-    return _post("scheduling", f"/appointments/{appointment_id}/cancel", {})
+    return _post_checked(
+        "scheduling", f"/appointments/{appointment_id}/cancel", {}, PROXY_TIMEOUT_SECONDS
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -374,19 +393,23 @@ def proxy_roi_list(
     session: dict = Depends(require_capability("disclosures.read")),
     patient_id: Optional[int] = None,
 ):
-    return _get("roi", "/roi/requests", params={"patient_id": patient_id})
+    return _get_checked(
+        "roi", "/roi/requests", PROXY_TIMEOUT_SECONDS, params={"patient_id": patient_id}
+    )
 
 
 @app.post("/roi/requests")
 def proxy_roi_create(payload: dict, session: dict = Depends(require_capability("disclosures.write"))):
-    return _post("roi", "/roi/requests", payload)
+    return _post_checked("roi", "/roi/requests", payload, PROXY_TIMEOUT_SECONDS)
 
 
 @app.post("/roi/requests/{request_id}/fulfill")
 def proxy_roi_fulfill(
     request_id: int, session: dict = Depends(require_capability("disclosures.write"))
 ):
-    return _post("roi", f"/roi/requests/{request_id}/fulfill", {})
+    return _post_checked(
+        "roi", f"/roi/requests/{request_id}/fulfill", {}, PROXY_TIMEOUT_SECONDS
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1236,12 +1259,28 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
 # --------------------------------------------------------------------------- #
 @app.post("/hl7/ingest")
 def proxy_hl7(payload: dict, session: dict = Depends(require_capability("hl7.ingest"))):
-    return _post("interop", "/hl7/ingest", payload)
+    # Converted with the other twelve (E5-SPEC-18, D-9). OUTWARD-FACING: this
+    # is the one e5 route whose callers are outside the estate. interop-service
+    # already answers an unparseable or oversized message with 422/413
+    # (services/interop-service/app.py:44, 47, 55); the inherited _post relayed
+    # that as a 200, so a sending system saw every message as accepted. Relaying
+    # interop's own status IS the change — no HL7 ACK/NAK message is constructed.
+    return _post_checked("interop", "/hl7/ingest", payload, PROXY_TIMEOUT_SECONDS)
 
 
 # --------------------------------------------------------------------------- #
 # transport helpers
 # --------------------------------------------------------------------------- #
+# The uniform bound on a proxied call (e5, requirements D-4). Not a config
+# surface: one value, thirteen call sites, and the same 30s the inherited
+# _post/_get hardcoded, so no route's bound moves. It is PINNED — it must never
+# fall below a downstream service's own configured budget for the call, or the
+# gateway converts a slow success into a fabricated outage
+# (tests/test_eligibility_budget_alignment.py). The registration path keeps its
+# own configured bound (settings.intake_timeout_seconds, E4-SPEC-17).
+PROXY_TIMEOUT_SECONDS = 30.0
+
+
 def _clean(params: Optional[dict]) -> dict:
     return {k: v for k, v in (params or {}).items() if v is not None}
 

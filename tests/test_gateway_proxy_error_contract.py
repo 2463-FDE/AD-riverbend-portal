@@ -54,6 +54,7 @@ class Route:
     id: str
     method: str
     path: str                       # as called on the gateway
+    template: str                   # the route's declared path template
     role: str                       # a role holding the route's capability
     service: str                    # SERVICES key
     downstream: str                 # path at the downstream service
@@ -74,6 +75,7 @@ ROUTES = [
         id="eligibility",
         method="GET",
         path="/eligibility?insurance_id=BCBS4471",
+        template="/eligibility",
         role="front_desk",
         service="eligibility",
         downstream="/eligibility",
@@ -83,6 +85,7 @@ ROUTES = [
         id="patients",
         method="GET",
         path="/patients?q=gonzalez&limit=25&offset=0",
+        template="/patients",
         role="front_desk",
         service="records",
         downstream="/patients",
@@ -92,6 +95,7 @@ ROUTES = [
         id="patient",
         method="GET",
         path="/patients/1042",
+        template="/patients/{patient_id}",
         role="front_desk",
         service="records",
         downstream="/patients/1042",
@@ -101,6 +105,7 @@ ROUTES = [
         id="records",
         method="GET",
         path="/patients/1042/records",
+        template="/patients/{patient_id}/records",
         role="clinician",
         service="records",
         downstream="/patients/1042/records",
@@ -110,6 +115,7 @@ ROUTES = [
         id="search",
         method="GET",
         path="/records/search?q=gonzalez",
+        template="/records/search",
         role="clinician",
         service="records",
         downstream="/records/search",
@@ -119,6 +125,7 @@ ROUTES = [
         id="slots",
         method="GET",
         path="/slots?provider_id=3&limit=50",
+        template="/slots",
         role="front_desk",
         service="scheduling",
         downstream="/slots",
@@ -128,6 +135,7 @@ ROUTES = [
         id="list_appointments",
         method="GET",
         path="/appointments?patient_id=1042",
+        template="/appointments",
         role="front_desk",
         service="scheduling",
         downstream="/appointments",
@@ -137,6 +145,7 @@ ROUTES = [
         id="roi_list",
         method="GET",
         path="/roi/requests?patient_id=1042",
+        template="/roi/requests",
         role="roi_clerk",
         service="roi",
         downstream="/roi/requests",
@@ -146,6 +155,7 @@ ROUTES = [
         id="book",
         method="POST",
         path="/appointments",
+        template="/appointments",
         role="front_desk",
         service="scheduling",
         downstream="/appointments",
@@ -155,6 +165,7 @@ ROUTES = [
         id="cancel",
         method="POST",
         path="/appointments/77/cancel",
+        template="/appointments/{appointment_id}/cancel",
         role="front_desk",
         service="scheduling",
         downstream="/appointments/77/cancel",
@@ -164,6 +175,7 @@ ROUTES = [
         id="roi_create",
         method="POST",
         path="/roi/requests",
+        template="/roi/requests",
         role="roi_clerk",
         service="roi",
         downstream="/roi/requests",
@@ -173,6 +185,7 @@ ROUTES = [
         id="roi_fulfill",
         method="POST",
         path="/roi/requests/77/fulfill",
+        template="/roi/requests/{request_id}/fulfill",
         role="roi_clerk",
         service="roi",
         downstream="/roi/requests/77/fulfill",
@@ -182,6 +195,7 @@ ROUTES = [
         id="hl7",
         method="POST",
         path="/hl7/ingest",
+        template="/hl7/ingest",
         role="admin",
         service="interop",
         downstream="/hl7/ingest",
@@ -293,3 +307,224 @@ def test_a_downstream_list_body_is_relayed_as_a_list(monkeypatch, route):
 
     assert r.status_code == 200
     assert r.json() == [{"id": 7}]
+
+
+# --------------------------------------------------------------------------- #
+# 2. A downstream failure reaches the caller as a failure (E5-SPEC-1)
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("status", [400, 404, 409, 422, 500, 503])
+@pytest.mark.parametrize("route", ROUTES, ids=ROUTE_IDS)
+def test_a_downstream_failure_is_relayed_not_flattened(monkeypatch, route, status):
+    """E5-SPEC-1. The whole defect in one assertion: the inherited helpers
+    answered 200 with an ``{"error": ...}`` body for every one of these."""
+    _patch_transport(
+        monkeypatch, response=_FakeResponse(status, {"detail": "downstream said no"})
+    )
+    _login_as(route.role)
+
+    r = _call(route)
+
+    assert r.status_code == status
+    assert r.json()["detail"] == "downstream said no"
+
+
+# --------------------------------------------------------------------------- #
+# 3. A call that could not be completed is distinguishable (E5-SPEC-2)
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("route", ROUTES, ids=ROUTE_IDS)
+def test_a_timeout_becomes_504(monkeypatch, route):
+    """E5-SPEC-2 — the gateway's own bound expired."""
+    _patch_transport(monkeypatch, exc=httpx.TimeoutException("read timed out"))
+    _login_as(route.role)
+
+    assert _call(route).status_code == 504
+
+
+@pytest.mark.parametrize("route", ROUTES, ids=ROUTE_IDS)
+def test_a_transport_failure_becomes_502(monkeypatch, route):
+    """E5-SPEC-2 — the service is unreachable."""
+    _patch_transport(monkeypatch, exc=httpx.ConnectError("connection refused"))
+    _login_as(route.role)
+
+    assert _call(route).status_code == 502
+
+
+@pytest.mark.parametrize("route", ROUTES, ids=ROUTE_IDS)
+def test_a_failure_to_complete_differs_in_class_from_a_rejection(monkeypatch, route):
+    """E5-SPEC-2. The portal branches on the status CLASS, so "the request was
+    rejected" and "the call never completed" must never arrive as one code."""
+    _patch_transport(monkeypatch, response=_FakeResponse(422, {"detail": "rejected"}))
+    _login_as(route.role)
+    rejected = _call(route)
+
+    _patch_transport(monkeypatch, exc=httpx.ConnectError("connection refused"))
+    _login_as(route.role)
+    incomplete = _call(route)
+
+    assert rejected.status_code // 100 == 4
+    assert incomplete.status_code // 100 == 5
+
+
+# --------------------------------------------------------------------------- #
+# 4. No success status ever carries an error body (E5-SPEC-3)
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param({"response": _FakeResponse(503, {"detail": "unavailable"})}, id="downstream-503"),
+        pytest.param({"response": _FakeResponse(422, {"detail": "rejected"})}, id="downstream-422"),
+        pytest.param({"exc": httpx.TimeoutException("read timed out")}, id="timeout"),
+        pytest.param({"exc": httpx.ConnectError("connection refused")}, id="connect-error"),
+        pytest.param({"response": _FakeResponse(500, text_body="<html>502</html>")}, id="non-json"),
+    ],
+)
+@pytest.mark.parametrize("route", ROUTES, ids=ROUTE_IDS)
+def test_no_failure_answers_success_or_carries_an_error_key(monkeypatch, route, failure):
+    """E5-SPEC-3. Kills the 200-with-error-body shape estate-wide."""
+    _patch_transport(monkeypatch, **failure)
+    _login_as(route.role)
+
+    r = _call(route)
+
+    assert r.status_code >= 400, "a failure answered with a success status"
+    body = r.json()
+    assert not (isinstance(body, dict) and "error" in body)
+
+
+# --------------------------------------------------------------------------- #
+# 5. No exception text, URL or query value on any failure path
+#    (E5-SPEC-9, E5-SPEC-10) — the landmines §3 adversarial case
+# --------------------------------------------------------------------------- #
+POISON_URL = "http://records-service:8073/records/search?q=Quentin+Gonzalez"
+
+
+@pytest.mark.parametrize("route", ROUTES, ids=ROUTE_IDS)
+def test_a_poisoned_exception_reaches_neither_the_response_nor_a_log(
+    monkeypatch, caplog, route
+):
+    """E5-SPEC-9, E5-SPEC-10. ``str(e)`` on an httpx error embeds the request
+    URL and its query parameters — the mechanism behind the eligibility
+    member_id leak. Only the exception CLASS may reach a log record, and
+    nothing of it may reach the response."""
+    _patch_transport(monkeypatch, exc=httpx.ConnectError(f"failed to connect to {POISON_URL}"))
+    _login_as(route.role)
+
+    with caplog.at_level(logging.DEBUG):
+        r = _call(route)
+
+    assert r.status_code == 502
+    # Scoped to what the GATEWAY emits. caplog also captures the httpx library's
+    # own INFO line for the TestClient's INBOUND request to this process — a
+    # harness artifact carrying the test's own URL, which would make the scan
+    # below fail on a leak the gateway did not commit. (That httpx emits request
+    # URLs at INFO is real and estate-wide, but it is neither this route's log
+    # entry nor something e5 changes — see docs/workflow/e5/pr-body.md.)
+    messages = [rec.getMessage() for rec in caplog.records if rec.name == "gateway"]
+    assert messages, "a transport failure must log something"
+    for haystack in [r.text] + messages:
+        assert POISON_URL not in haystack
+        assert "Quentin" not in haystack
+        assert "?q=" not in haystack
+        assert "failed to connect" not in haystack
+    assert any("ConnectError" in m for m in messages)
+
+
+@pytest.mark.parametrize("route", ROUTES, ids=ROUTE_IDS)
+def test_a_downstream_error_body_that_is_not_a_detail_string_is_not_relayed(
+    monkeypatch, route
+):
+    """E5-SPEC-10. FastAPI's own 422 body is a LIST of errors, each carrying the
+    offending ``input`` value; relaying it would put submitted values into the
+    gateway's response."""
+    _patch_transport(
+        monkeypatch,
+        response=_FakeResponse(
+            422,
+            {"detail": [{"loc": ["body", "ssn"], "input": "123-45-6789", "msg": "bad"}]},
+        ),
+    )
+    _login_as(route.role)
+
+    r = _call(route)
+
+    assert r.status_code == 422
+    assert "123-45-6789" not in r.text
+
+
+# --------------------------------------------------------------------------- #
+# 6. The route set is closed (E5-SPEC-4)
+# --------------------------------------------------------------------------- #
+# Routes that legitimately do not fan out to a domain service.
+NON_PROXY_ROUTES = {
+    ("GET", "/healthz"),
+    ("POST", "/login"),
+    ("POST", "/logout"),
+    ("GET", "/me"),
+}
+
+# Routes already carrying this contract, each with its own contract test:
+# W2 landed the review queue and the relevant-records read, e4 landed intake,
+# and the two /ai routes are covered by tests/test_gateway_ai_proxy.py.
+ALREADY_CONVERTED_ROUTES = {
+    ("POST", "/intake"),
+    ("GET", "/review-queue"),
+    ("POST", "/review-queue/{pair_id}/disposition"),
+    ("GET", "/patients/{patient_id}/relevant-records"),
+    ("POST", "/ai/intake-instructions"),
+    ("POST", "/ai/visit-chat"),
+}
+
+
+def test_every_fan_out_route_is_covered_by_this_contract():
+    """E5-SPEC-4. Universality is the requirement — a route left behind reopens
+    the class. Deliberately an EXCLUSION list rather than a "routes that call a
+    checked helper" predicate: the latter would pass vacuously the moment a new
+    route called neither helper."""
+    declared = set()
+    for r in gw.app.routes:
+        if not isinstance(r, APIRoute):
+            continue
+        for method in r.methods - {"HEAD", "OPTIONS"}:
+            declared.add((method, r.path))
+
+    unaccounted = declared - NON_PROXY_ROUTES - ALREADY_CONVERTED_ROUTES
+    covered = {(r.method, r.template) for r in ROUTES}
+    assert unaccounted == covered, (
+        "a gateway route fans out downstream without an error-contract row: "
+        f"missing={sorted(unaccounted - covered)} stale={sorted(covered - unaccounted)}"
+    )
+
+
+def test_the_exclusion_lists_name_only_routes_that_exist():
+    """A stale exclusion is how the closure test above goes quietly vacuous."""
+    declared = set()
+    for r in gw.app.routes:
+        if not isinstance(r, APIRoute):
+            continue
+        for method in r.methods - {"HEAD", "OPTIONS"}:
+            declared.add((method, r.path))
+    assert (NON_PROXY_ROUTES | ALREADY_CONVERTED_ROUTES) <= declared
+
+
+# --------------------------------------------------------------------------- #
+# 8. The HL7 sender is told the message was rejected (E5-SPEC-18)
+# --------------------------------------------------------------------------- #
+HL7 = next(r for r in ROUTES if r.id == "hl7")
+
+
+@pytest.mark.parametrize("status", [422, 413])
+def test_an_interop_rejection_reaches_the_sending_system(monkeypatch, status):
+    """E5-SPEC-18 — the one e5 change whose blast radius leaves the estate.
+    interop-service already answers an unparseable or oversized message with a
+    rejection status; before this every ingest was answered 200, so a sending
+    system's malformed message looked accepted."""
+    _patch_transport(
+        monkeypatch, response=_FakeResponse(status, {"detail": "unparseable HL7 message"})
+    )
+    _login_as(HL7.role)
+
+    r = _call(HL7)
+
+    assert r.status_code == status
+    assert r.status_code != 200
+    assert "error" not in r.json()

@@ -341,6 +341,47 @@ def test_the_gateway_registration_bound_never_preempts_intake():
         )
 
 
+def _proxy_timeout_seconds():
+    """The gateway's uniform proxy bound (e5, requirements D-4).
+
+    Read by source scan for the same reason the member-id bound below is:
+    importing `services/gateway/app.py` pulls in a database engine and a Redis
+    client, and this file is a config-only test. The value, not the machinery,
+    is what drifts.
+    """
+    root = pathlib.Path(__file__).resolve().parent.parent
+    src = (root / "services/gateway/app.py").read_text()
+    found = re.findall(r"^PROXY_TIMEOUT_SECONDS\s*=\s*([0-9.]+)\s*$", src, re.M)
+    assert len(found) == 1, (
+        f"expected exactly one PROXY_TIMEOUT_SECONDS assignment in the gateway, found "
+        f"{found} — the bound is one value over thirteen call sites (e5, requirements D-4)"
+    )
+    return float(found[0])
+
+
+def test_the_uniform_proxy_bound_never_preempts_a_downstream_budget():
+    """E5-SPEC-11, E5-SPEC-12. e5 converts thirteen routes onto one bound. Only
+    one of them reaches a service with a configured budget of its own —
+    `GET /eligibility` → eligibility-service, whose worst case is the payer
+    budget — so that is the number the bound is pinned against. Every other
+    converted route reaches a service that makes no outbound call at all, so its
+    budget is a single DB round trip.
+
+    Below this, the gateway aborts a call eligibility-service is still
+    legitimately making and the desk sees a fabricated outage instead of the
+    graceful degraded verdict the whole ADR 0010 chain exists to deliver.
+    """
+    proxy_bound = _proxy_timeout_seconds()
+    for label, source in _every_caller_and_source():
+        payer_worst_case, _, _, _ = _budgets(source)
+        assert proxy_bound >= payer_worst_case + MARGIN_SECONDS, (
+            f"[{label}] the gateway's PROXY_TIMEOUT_SECONDS ({proxy_bound}s) must be at "
+            f"least {MARGIN_SECONDS}s above eligibility-service's worst-case payer budget "
+            f"({payer_worst_case}s) — below that the gateway converts a slow success into "
+            "a fabricated outage"
+        )
+
+
 def test_the_recognised_member_id_LENGTH_is_pinned_at_both_ends():
     # The catalog is not the only mirror this round created: each service compiles
     # its own regex around the same `\d{3,9}` bound, and the tuple comparison above
