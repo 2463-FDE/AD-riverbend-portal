@@ -28,6 +28,12 @@ requirement synthesis → spec (EARS) → code plan
   repeat findings get the class fix, rest patched on branch) is the implementation
   skill's "Addressing a round" section — decided 2026-08-07 on first reach with e1
   PR #49, rebuilt from scratch informed by `docs/review-loop-metrics.md` §3.
+  **Non-code PRs run the same loop** (decided 2026-08-11 — codex does review docs; the
+  earlier skip rested on the assumption it could not): the `noncode-merge` skill owns
+  their push→review→merge segment and routes artifact findings back to the owning stage —
+  requirements → stage 1 re-stamp, frozen spec → owner decision then re-freeze + plan
+  re-gate, plan → stage 3 + re-gate; findings about the code the docs describe are filed
+  in the registries, not fixed by editing the record.
 - Stage mechanisms are decided when a stage is first reached and recorded here. Currently
   defined: requirement synthesis (`.claude/skills/requirement-synthesis/`), spec
   (`.claude/skills/spec-authoring/`, decided 2026-08-06 on first reach), code plan

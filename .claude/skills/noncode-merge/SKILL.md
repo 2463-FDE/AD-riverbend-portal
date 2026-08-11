@@ -1,14 +1,17 @@
 ---
 name: noncode-merge
-description: Streamlined path for landing non-code changes (docs, ADRs, .claude/ tooling, workflow artifacts) on main — branch, commit, gated push, PR, squash merge, ff local main. Use when the user says "merge the docs", "land this on main", "ship the tooling", or invokes /noncode-merge, and the pending changes contain no runtime code.
+description: Streamlined path for landing non-code changes (docs, ADRs, .claude/ tooling, workflow artifacts) on main — branch, commit, gated push, PR, codex review loop, squash merge, ff local main. Use when the user says "merge the docs", "land this on main", "ship the tooling", or invokes /noncode-merge, and the pending changes contain no runtime code.
 ---
 
 # Non-code merge
 
 Fast path to `main` for changes that cannot alter runtime behavior: `docs/**`, `adr/**`,
 any `*.md`, and `.claude/**` tooling. Everything else in `CONTRIBUTING.md` still binds
-(branch naming, Conventional Commits, PR body sections, squash merge); this skill only
-streamlines the sequence and drops the review round that non-code changes skip.
+(branch naming, Conventional Commits, PR body sections, squash merge); this skill
+streamlines the sequence, **not the review** — non-code PRs take the same `@codex-review`
+loop as code pushes. (Established 2026-08-11: the earlier skip rested on the assumption
+codex could not review docs, which turned out false. What stays dropped is the
+implementation machinery — TDD, impl gate — not review.)
 
 ## Scope guard (run first)
 
@@ -40,17 +43,54 @@ silently; ask which part to land.
    the house narrative sections; **Risk & landmines is required** — for a clean non-code
    diff write "none touched — non-code only (docs/tooling), no runtime paths". State in
    Verification that no code paths changed.
-5. **Review fork:**
-   - Default: non-code PRs skip the `@codex-review` loop (standing protocol).
-   - If the owner said this one needs **human eyes**: stop here. Leave the PR open, report
-     the URL, do not merge until the owner says so.
-6. **Merge** once CI is green: `gh pr merge --squash --delete-branch`. Squash subject
-   follows the commit convention.
+5. **Review loop:** post `@codex-review` as a separate PR comment, same as a code push.
+   Work each round per "Addressing a round" (below); iterate until a dry round or
+   `approve`. If the owner said this one needs **human eyes**: stop here. Leave the PR
+   open, report the URL, do not merge until the owner says so.
+6. **Merge** once CI is green **and the review is dry**:
+   `gh pr merge --squash --delete-branch`. Squash subject follows the commit convention.
 7. **Sync local:** `git checkout main && git pull --ff-only`, confirm local `main` is at
    the squash commit, and confirm the working tree is clean. Report PR number, squash SHA,
    and files landed.
 8. **Refresh stale branches** (below). Do not report the merge as done until every open PR
    branch from step 0 is either refreshed or explicitly deferred by the owner.
+
+## Addressing a round (step 5)
+
+Same discipline as the implementation skill's fix session — labels A/B/C/E per
+`docs/review-loop-metrics.md` §1 — adapted to documents: **route each finding to the
+pipeline node that owns the claim**; never rewrite a governed artifact in place under
+review pressure.
+
+1. **Label** each finding A/B/C/E. A refutation takes evidence from the document's own
+   sources (code, git history, the registries) and closes with an anchored comment, no
+   edit. A finding that restates a recorded owner decision or an accepted residual is
+   answered from the record (pr-body residuals, plan Landmines section, a findings-round
+   disposition) — not re-litigated; reopening is the owner's call only.
+2. **Cluster** findings that share one root cause; fix causes, not instances.
+3. **Route** each cluster by the document that owns the claim:
+
+   | Finding target | Route |
+   |---|---|
+   | Wording, cites, registry upkeep, factual slip in a mutable doc (`docs/**`, ADR body, `.claude/` skill text) | Patch on this branch. |
+   | `requirements.md` content (`AGREED`) | Stage 1: `requirement-synthesis` revises; the owner re-stamps. |
+   | `spec.md` content (frozen) | Owner decision first — a frozen spec never changes silently mid-loop. An accepted amendment runs `spec-authoring` re-freeze, and a downstream `GATED` plan takes a `drift-gate` re-run. |
+   | `plan.md` design content (`GATED`) | Stage 3: `plan-authoring` revises; `drift-gate` re-stamps. |
+   | The **code the docs describe**, not the docs | Out of this PR. The record stays faithful to what shipped; file the code finding where the registry contract puts it (`debt-log` risk / `todo` loose end / next item's requirements) and cite the filing in the disposition. |
+   | `docs/landmines.md` §1 zone content, `docs/specs-deprecated/**` | Owner only — this skill never touches them (see Never). |
+
+   A stage-routed finding does not block the rest of the PR by default: the disposition
+   records the routing, and the owner decides whether the PR waits for the revised
+   artifact or lands without it.
+4. **Re-verify:** CI green; if a workflow artifact changed, re-check its stamps, round
+   numbers, and cross-cites against the state decode tables in `docs/workflow/README.md`.
+5. **Close the round:** reply with the `rN:` disposition comment carrying the labels;
+   append the ledger line to `docs/review-loop-metrics.md` §4 and **commit it on this same
+   branch** — it is non-code and in scope, so unlike the code loop the round log lands
+   with the PR it describes; re-tag `@codex-review`.
+6. **Round-3 rule:** unchanged from the implementation skill — a third round with any open
+   finding stops the loop; the owner accepts as a named residual, overrules, or routes,
+   per finding, and the next round honors recorded decisions rather than re-raising them.
 
 ## Refreshing stale branches (step 8)
 
