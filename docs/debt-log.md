@@ -118,6 +118,8 @@
   swallowing helpers deleted, so the estate-wide half of this entry is
   DELIVERED. The portal half landed with it: six read surfaces that coerced any
   non-list body to an empty result now show a failed load as a failed load.
+  The lost-confirmation retry was closed 2026-08-11 (`e5` chunk 2): `POST /intake`
+  is idempotent per submission attempt (residual 2 below carries the account).
   Still open here: register-first / async re-verification (above), and the
   eligibility verdict still reaches no column.
 - **Three residuals measured 2026-08-07** (W3 backfill verification against
@@ -144,10 +146,21 @@
      verification runs after the commit behind a call-site guard, and the
      `try/finally` is untouched — it is still test-pinned for what it does
      guarantee (the breaker always settles, `tests/test_intake_breaker.py`).
-     **Residual on the residual:** atomicity is per-request, not cross-service.
-     A registration that commits and then loses its response in transit leaves a
-     row the operator never sees confirmed; that needs an idempotency key on
-     `POST /intake`, which is register-first's territory.
+     **Residual on the residual — CLOSED 2026-08-11 (`e5` chunk 2,
+     E5-SPEC-24..40).** Atomicity is per-request, not cross-service, so a
+     registration that committed and then lost its response in transit left a
+     row the operator never saw confirmed — and the retry forked a second chart
+     with its own coverage and consent rows. `POST /intake` now takes a required
+     `submission_id` naming the submission attempt; a repeat of that attempt
+     returns the registration the first one created and writes nothing
+     (`registration_submissions`, UNIQUE, written inside the registration's own
+     transaction). A concurrent collision is decided by that constraint: the
+     loser waits, bounded by `REGISTRATION_LOCK_WAIT_SECONDS`, then replays the
+     winner. Deliberately **not** an MPI — nothing on this path reads
+     demographics, so two genuine registrations for one person still fork two
+     charts and are still only queued for review (D5, below). Register-first /
+     async re-verification is a different fix for the same class and stays open
+     (above): this makes the retry safe, register-first shrinks the window.
   3. **The verdict is never persisted.** `_create_registration` writes
      `payer_name`/`member_id`/`group_number`/`plan_type` only, so
      `insurance_coverages.status` keeps its schema default `'unknown'`
