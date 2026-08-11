@@ -15,9 +15,10 @@ Harness copied from tests/test_gateway_intake_proxy.py: module pinning plus a
 dependency override, httpx faked at the gateway module seam, no Redis or DB I/O.
 """
 import logging
+import pathlib
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import httpx
@@ -504,6 +505,59 @@ def test_the_exclusion_lists_name_only_routes_that_exist():
         for method in r.methods - {"HEAD", "OPTIONS"}:
             declared.add((method, r.path))
     assert (NON_PROXY_ROUTES | ALREADY_CONVERTED_ROUTES) <= declared
+
+
+# --------------------------------------------------------------------------- #
+# 7. The error-swallowing helpers cannot come back (E5-SPEC-20, E5-SPEC-21)
+#
+# Re-homed from tests/test_gateway_review_queue.py, which proved the same claim
+# behaviourally by monkeypatching the helpers to explode. Deleting them makes
+# that test fail at setup and its assertion vacuous, so the claim lands here as
+# a structural scan instead: not "the queue routes avoid the helpers" but "no
+# such helper exists to avoid".
+# --------------------------------------------------------------------------- #
+_GATEWAY_SOURCE = (
+    pathlib.Path(REPO_ROOT) / "services" / "gateway" / "app.py"
+).read_text()
+
+# `_post_checked(` does not match this: there is no word boundary between
+# `_post` and `_checked`.
+_SWALLOWING_CALL = re.compile(r"\b_(?:get|post)\(")
+_SWALLOWING_DEF = re.compile(r"^def _(?:get|post)\(", re.M)
+
+
+def test_the_gateway_defines_no_error_swallowing_proxy_helper():
+    """E5-SPEC-20. Deletion, not disuse — CLAUDE.md §4's "do not add a
+    fifteenth" becomes structural rather than advisory."""
+    assert not _SWALLOWING_DEF.search(_GATEWAY_SOURCE), (
+        "services/gateway/app.py defines _get/_post again. These collapse every "
+        "downstream and transport failure into a 200 OK {\"error\": ...} body; "
+        "_get_checked/_post_checked are the replacements (D4, e5)"
+    )
+
+
+def test_no_gateway_route_calls_an_error_swallowing_helper():
+    """E5-SPEC-21. A call with no definition would be an ImportError at runtime,
+    but this fails in CI first and says why."""
+    offenders = [
+        line
+        for line in _GATEWAY_SOURCE.splitlines()
+        if _SWALLOWING_CALL.search(line)
+    ]
+    assert offenders == [], f"gateway calls a swallowing proxy helper: {offenders}"
+
+
+def test_the_swallowing_scan_still_matches_what_it_claims_to():
+    """The positive control. A regex that stops matching passes both scans above
+    forever and silently — the failure mode a structural test invites."""
+    assert _SWALLOWING_CALL.search('    return _get("records", "/patients")')
+    assert _SWALLOWING_CALL.search('    return _post("roi", "/roi/requests", payload)')
+    assert _SWALLOWING_DEF.search("def _get(service, path, params=None):\n")
+    # ...and does NOT match the checked helpers it must leave alone.
+    assert not _SWALLOWING_CALL.search('    return _get_checked("records", "/patients", 30.0)')
+    assert not _SWALLOWING_CALL.search('    return _post_checked("roi", "/x", {}, 30.0)')
+    assert "def _get_checked(" in _GATEWAY_SOURCE
+    assert "def _post_checked(" in _GATEWAY_SOURCE
 
 
 # --------------------------------------------------------------------------- #

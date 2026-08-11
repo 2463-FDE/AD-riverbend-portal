@@ -1285,34 +1285,17 @@ def _clean(params: Optional[dict]) -> dict:
     return {k: v for k, v in (params or {}).items() if v is not None}
 
 
-def _post(service: str, path: str, payload: dict):
-    try:
-        r = httpx.post(f"{SERVICES[service]}{path}", json=payload, timeout=30)
-        return r.json()
-    except Exception as e:
-        log.error("proxy POST %s%s failed: %s", service, path, e)
-        return {"error": str(e)}
-
-
-def _get(service: str, path: str, params: Optional[dict] = None):
-    try:
-        r = httpx.get(f"{SERVICES[service]}{path}", params=_clean(params), timeout=30)
-        return r.json()
-    except Exception as e:
-        log.error("proxy GET %s%s failed: %s", service, path, e)
-        return {"error": str(e)}
-
-
 def _get_checked(service: str, path: str, timeout: float, params: Optional[dict] = None):
     """GET from a downstream service, surfacing failure as failure.
 
     The read-side twin of ``_post_checked``, and for the same reason: the
-    inherited ``_get`` collapses every failure into a 200-OK
-    ``{"error": str(e)}`` body, so a caller cannot tell an outage from an empty
-    result, and the ``str(e)`` it logs can embed the request URL and its query
-    params. New routes use this one. The fourteen inherited ``_get``/``_post``
-    routes are deliberately NOT migrated here — that is the open half of D4 and
-    an approval-gated change of its own.
+    deleted ``_get`` collapsed every failure into a 200-OK
+    ``{"error": str(e)}`` body, so a caller could not tell an outage from an
+    empty result, and the ``str(e)`` it logged can embed the request URL and its
+    query params. Every gateway route that fans out downstream now uses this or
+    ``_post_checked``; the swallowing pair was deleted with the last call site
+    (e5, 2026-08-11), so the shape cannot be reintroduced by copying a
+    neighbour. tests/test_gateway_proxy_error_contract.py scans for it.
     """
     try:
         r = httpx.get(f"{SERVICES[service]}{path}", params=_clean(params), timeout=timeout)

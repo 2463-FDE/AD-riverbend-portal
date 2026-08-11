@@ -182,12 +182,9 @@ def _forbid_fanout(monkeypatch):
     def _boom(*a, **k):
         raise AssertionError("downstream fan-out ran for a denied request")
 
-    # All four transport helpers, not just the legacy pair: routes added since
-    # the _post_checked/_get_checked split would otherwise be asserted against
-    # a helper they never call, and the "no fan-out" claim would be vacuous
-    # exactly on the newest routes.
-    monkeypatch.setattr(gw, "_get", _boom)
-    monkeypatch.setattr(gw, "_post", _boom)
+    # Both transport helpers: every route that fans out downstream calls one of
+    # them, so the "no fan-out" claim cannot go vacuous on a route this test
+    # forgot. (The legacy _get/_post were deleted by e5 — E5-SPEC-20.)
     monkeypatch.setattr(gw, "_get_checked", _boom)
     monkeypatch.setattr(gw, "_post_checked", _boom)
 
@@ -287,8 +284,6 @@ def test_staff_keeps_every_capability():
 )
 def test_granted_role_reaches_the_downstream_proxy(monkeypatch, role, method, path):
     sentinel = {"proxied": True}
-    monkeypatch.setattr(gw, "_get", lambda *a, **k: sentinel)
-    monkeypatch.setattr(gw, "_post", lambda *a, **k: sentinel)
     monkeypatch.setattr(gw, "_get_checked", lambda *a, **k: sentinel)
     monkeypatch.setattr(gw, "_post_checked", lambda *a, **k: sentinel)
     _login_as(role)
