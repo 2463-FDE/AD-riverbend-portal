@@ -239,3 +239,57 @@ describe("registration outcome (E4)", () => {
     expect(JSON.stringify(body)).not.toContain("policy_holder");
   });
 });
+
+describe("intake submission identifier (E5-SPEC-26, E5-SPEC-35, E5-SPEC-38)", () => {
+  it("carries the same identifier across every re-submission of one attempt", async () => {
+    // The whole point of the identifier: the first attempt may have committed a
+    // registration whose response was lost, so the retry has to be recognisable
+    // as the SAME attempt. A fresh value per submission would create the second
+    // chart this closes.
+    render(<IntakePage />);
+    await submitWith(503, { detail: "registration store unavailable" });
+
+    apiFetch.mockResolvedValueOnce(jsonResponse(201, { patient_id: 5001 }));
+    fireEvent.click(screen.getByRole("button", { name: /submit intake/i }));
+    await waitFor(() => expect(apiFetch.mock.calls.length).toBe(2));
+
+    const ids = apiFetch.mock.calls.map(
+      (call) => JSON.parse((call[1] as { body: string }).body).submission_id,
+    );
+    expect(ids[0]).toBeTruthy();
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it("mints a fresh identifier for a genuinely new registration", async () => {
+    // E5-SPEC-35. A new registration reaches the form by a fresh mount, and it
+    // must not replay the previous patient's confirmation.
+    render(<IntakePage />);
+    await submitWith(201, { patient_id: 5001 });
+    const first = JSON.parse((apiFetch.mock.calls[0][1] as { body: string }).body).submission_id;
+
+    cleanup();
+    apiFetch.mockReset();
+    render(<IntakePage />);
+    await submitWith(201, { patient_id: 5002 });
+    const second = JSON.parse((apiFetch.mock.calls[0][1] as { body: string }).body).submission_id;
+
+    expect(second).not.toBe(first);
+  });
+
+  it("derives the identifier from nothing the operator typed (E5-SPEC-38)", async () => {
+    // A key hashed from name/DOB/SSN would put PHI in a log line, a response
+    // body and a stored column at once — and would collide for two genuine
+    // registrations of one person, i.e. an accidental master patient index.
+    render(<IntakePage />);
+    await submitWith(201, { patient_id: 5001 });
+
+    const body = JSON.parse((apiFetch.mock.calls[0][1] as { body: string }).body);
+    const id: string = body.submission_id;
+    expect(id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    for (const submitted of ["Ada", "Lovelace", "Ada Lovelace", body.demographics.dob]) {
+      expect(id).not.toContain(String(submitted));
+    }
+  });
+});

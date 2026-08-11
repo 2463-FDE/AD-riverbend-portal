@@ -48,6 +48,7 @@ export interface InsuranceForm {
 export type ConsentsForm = Record<ConsentKey, boolean>;
 
 export interface IntakePayload {
+  submission_id: string;
   demographics: {
     name: string;
     dob: string | null;
@@ -73,6 +74,30 @@ function orNull(value: string): string | null {
 }
 
 /**
+ * A random identifier for one submission ATTEMPT (E5-SPEC-26, E5-SPEC-38).
+ *
+ * Random, and derived from nothing the operator typed. A key hashed from
+ * SSN/DOB/name would put PHI in a log line, a response body and a stored column
+ * at once — and two genuine registrations for one person would collide, which
+ * is an accidental master patient index (E5-SPEC-36 exists to keep that from
+ * happening).
+ *
+ * `crypto.randomUUID` is secure-context-only, and this portal is not guaranteed
+ * to be served over https, so the fallback is not optional decoration:
+ * `getRandomValues` is available either way and the bits it returns are the
+ * same quality. The version and variant bits are set by hand because a UUIDv4
+ * is what the service validates against.
+ */
+export function newSubmissionId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant 10x
+  const hex = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
  * Build the POST /intake body from the wizard's three form objects.
  *
  * `notes` is deliberately omitted rather than sent empty — it is a staff field,
@@ -81,11 +106,17 @@ function orNull(value: string): string | null {
  * one. `created_via` is sent explicitly: the service defaults it, but a portal
  * submission that does not say where it came from is indistinguishable from a
  * front-desk one.
+ *
+ * `submissionId` is taken as an argument rather than minted here: it names the
+ * ATTEMPT, not the payload, so every re-submission of one attempt must carry the
+ * same value (E5-SPEC-26). Minting per build would hand each retry a fresh
+ * identifier and close nothing.
  */
 export function buildIntakePayload(
   demo: DemographicsForm,
   ins: InsuranceForm,
   consents: ConsentsForm,
+  submissionId: string,
 ): IntakePayload {
   // Every insurance field blank means no coverage was offered — send null, not
   // an empty object, so a self-pay walk-in does not get an empty coverage row.
@@ -100,6 +131,7 @@ export function buildIntakePayload(
   const hasInsurance = Object.values(insuranceFields).some((v) => v !== null);
 
   return {
+    submission_id: submissionId,
     demographics: {
       // The 422 the whole defect starts from: the service takes ONE name field.
       name: `${demo.first_name} ${demo.last_name}`.trim(),

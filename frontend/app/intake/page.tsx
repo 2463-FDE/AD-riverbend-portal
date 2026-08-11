@@ -8,7 +8,7 @@ import VerdictBadge, { verdictTone } from "../components/VerdictBadge";
 import { apiFetch } from "../lib/session";
 import { formatSsn, formatPhone, digitsOnly } from "../lib/format";
 import type { EligibilityVerdict } from "../lib/types";
-import { buildIntakePayload } from "./payload";
+import { buildIntakePayload, newSubmissionId } from "./payload";
 import type { ConsentsForm, DemographicsForm, InsuranceForm } from "./payload";
 
 type Demographics = DemographicsForm;
@@ -34,6 +34,17 @@ const STEPS = ["Demographics", "Insurance", "Consents", "Review & Submit"];
 
 export default function IntakePage() {
   const [step, setStep] = useState(0);
+  // Minted once per mount, and never again: the identifier names this
+  // registration ATTEMPT, so every re-submission of it — after a system failure,
+  // after a correctable rejection — carries the same value and replays into the
+  // registration the first attempt may already have created (E5-SPEC-26). A
+  // genuinely new registration reaches this form by a fresh mount and gets a
+  // fresh identifier (E5-SPEC-35); the confirmation screen replaces the form
+  // entirely and offers no "register another", so a success cannot be
+  // re-submitted from this mount.
+  // useState(fn) calls the initializer on the first render only — passing
+  // newSubmissionId() instead would re-mint on every render.
+  const [submissionId] = useState(newSubmissionId);
   const [demo, setDemo] = useState<Demographics>({
     first_name: "",
     last_name: "",
@@ -82,7 +93,7 @@ export default function IntakePage() {
   async function submit() {
     setBusy(true);
     setResult(null);
-    const payload = buildIntakePayload(demo, ins, consents);
+    const payload = buildIntakePayload(demo, ins, consents, submissionId);
     try {
       // NOTE: /api/intake can take a few seconds — intake verifies payer
       // eligibility on the request thread (bounded, ADR 0010).
