@@ -113,9 +113,13 @@
   The gateway half was delivered 2026-08-10 (`e4`): `proxy_intake` is off the
   error-swallowing `_post` and on `_post_checked` with a configured,
   test-pinned timeout, so a downstream 422 reaches the portal as a 422 instead
-  of a 200 carrying an `{"error": ...}` body. The other **thirteen**
-  `_post`/`_get` call sites are unchanged and deferred to `e5` — they inherit
-  `e4`'s error contract and carry no further decisions.
+  of a 200 carrying an `{"error": ...}` body. The other thirteen `_post`/`_get`
+  call sites were converted 2026-08-11 (`e5`, owner-approved) and both
+  swallowing helpers deleted, so the estate-wide half of this entry is
+  DELIVERED. The portal half landed with it: six read surfaces that coerced any
+  non-list body to an empty result now show a failed load as a failed load.
+  Still open here: register-first / async re-verification (above), and the
+  eligibility verdict still reaches no column.
 - **Three residuals measured 2026-08-07** (W3 backfill verification against
   `docs/workflow/w3/spec.md`; none is new breakage, and none is scheduled):
   1. **"Bounded" means each network phase, not total wall time.** The timeouts
@@ -356,9 +360,12 @@ already stale: Vitest + RTL landed with `e1`, ADR 0018, and CI runs `npm test`.)
 this as a UI bug:
 
 1. `intake-service` returns **422** on payload shape (table below).
-2. Gateway `proxy_intake` (`services/gateway/app.py:211`) uses the error-swallowing `_post` and
-   relays the 422 body at **HTTP 200**. Moving it to `_post_checked` is the open half of **D4**
-   and is approval-gated under `docs/landmines.md` §1 — deliberately **not** in the P2 fix.
+2. Gateway `proxy_intake` (`services/gateway/app.py:211`) used the error-swallowing `_post` and
+   relayed the 422 body at **HTTP 200**. Moving it to `_post_checked` was the open half of **D4**,
+   approval-gated under `docs/landmines.md` §1 — deliberately **not** in the P2 fix. *(Fixed for
+   this route 2026-08-10 by `e4`; for the remaining thirteen, and by deleting `_post`/`_get`
+   outright, 2026-08-11 by `e5`. The narrative above is kept in the present tense of the defect:
+   it is the record of what was wrong, not a claim about today.)*
 3. The BFF `proxy` (`frontend/app/lib/gateway.ts`) relays status and body verbatim.
 4. `frontend/app/intake/page.tsx:108` guards on `!res.ok || data?.error`. A 422 body carries
    `detail`, which is neither → success branch → line 113 finds no `patient_id` → prints the

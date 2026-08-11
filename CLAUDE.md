@@ -97,9 +97,11 @@ eval/rag/           RIV-160 retrieval eval + the CI drift gate
 - **Imitate:** the per-service module layout; the class-name-only exception logging idiom
   (`log.error("...(%s)", type(e).__name__)`); typed errors as in `ai-assistant/llm_client.py`;
   `_post_checked` over `_post`.
-- **Do NOT imitate:** `gateway/app.py:1204-1219` — `_post`/`_get` swallow every exception into a
-  **200 OK** `{"error": str(e)}` body and log `str(e)`. Fourteen inherited proxy routes still use
-  them; only the two `/ai` routes use the safe `_post_checked`. Do not add a fifteenth.
+- **The error-swallowing proxy helpers are gone.** `_post`/`_get` collapsed every exception into a
+  **200 OK** `{"error": str(e)}` body and logged `str(e)`. `e4` converted `POST /intake`, `e5`
+  converted the remaining thirteen and **deleted both helpers** (2026-08-11), so the rule is now
+  structural rather than advisory: every route that fans out uses `_get_checked`/`_post_checked`,
+  and `tests/test_gateway_proxy_error_contract.py` fails any route that does not.
 - **The `/ai` paths are the quality reference.** Atomic Redis Lua counters, owner-checked
   single-flight caching, fail-closed configuration guards, closed-vocabulary prompts, deterministic
   fallbacks. When adding new code, that is the standard — not the surrounding CRUD proxies.
@@ -124,9 +126,12 @@ reported success — was **fixed 2026-08-10 by `e4`** (TODO-1 closed; `docs/work
 `docs/debt-log.md` "Intake contract break" keeps the account of what was wrong). What is worth
 knowing before you touch intake or the gateway now is what holds it closed:
 `contracts/intake-registration.json` is the one payload declaration both suites assert against,
-`ConsentKind` is a test-pinned closed enum and a documented PHI control, and `proxy_intake` is the
-single gateway route on `_post_checked`. The other **thirteen** proxy routes are still on the
-error-swallowing `_post`/`_get` — the rest of D4's open half, scheduled as `e5`.
+`ConsentKind` is a test-pinned closed enum and a documented PHI control, and `proxy_intake` is on
+`_post_checked`. `e5` (2026-08-11) finished the job: the other thirteen routes are converted, the
+swallowing helpers are deleted, and the six portal read surfaces that coerced any non-list body to
+an empty result now distinguish failed from empty. What holds it closed is
+`tests/test_gateway_proxy_error_contract.py` — a per-route contract, a route-set closure case that
+reddens on an unconverted new route, and a structural scan with a positive control.
 
 ## 6. Testing
 
