@@ -590,6 +590,32 @@ the rule is prospective; the ambiguity is the fix round's new surface (`ec7d598`
 predicted B shape in document form. Fixed where the claim lives: the PR body now states
 the rule applies to future plans, not retroactively to the gated artifact.
 
+PR #75 r3 — 3 findings: **1 A / 2 B / 0 C**, 0 refuted · **the first round in this ledger
+where B outnumbers A**, and the round the round-3 rule was written for. (1) [medium] **B**
+— r2's merge precondition said the owner must call *wait / land without / defer* and never
+said where that call is recorded or in what words, so every future agent would invent a
+format; the under-specification is r2's own surface (`e6c9960`), which did not exist a
+round earlier. Fixed with a worked example carrying the exact disposition line and its
+three required fields (route, verbatim call, date). (2) [low] **A** — "both measured" for
+the diff-visible residual rule overstates n=2; the word ships in the original push
+`5e628f2` as "measured on e4" (n=1, thinner still), so r1 inherited the overclaim rather
+than creating it. Softened to "observed so far on two PRs", with §4 named as outranking
+the skill line if they diverge. (3) [low] **B** — r1's scan-summary rule landed in
+`plan-authoring`'s rules section while the Template's `## Context` block still showed the
+old shape, so learners read the rule and copied a form that ignores it; the divergence is
+`ec7d598`'s surface. Template mirrored.
+**Lesson, and the reason this round stopped the loop rather than closing it:** two of the
+three findings are defects the previous two fix rounds wrote — the §3.1 B mechanism
+reproduced in prose, where the "state" being altered is a rule rather than a counter. A
+process rule behaves exactly like stateful machinery under review: adding one creates a
+surface (where is it recorded? what wording? does it apply retroactively?) that the next
+round finds. **Generalizes: a fix that adds a rule owes the same design-gate question as a
+fix that adds state — what does this rule leave unspecified, and where will that show up?**
+The three rounds cost, in order, a termination semantics, a merge precondition, and a
+worked example, each answering the last one's gap. That is convergent, not divergent, but
+it is convergent because the artifacts are documents nobody executes; the same shape in
+code is PR #7.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`

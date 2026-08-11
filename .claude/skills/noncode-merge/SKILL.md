@@ -84,7 +84,8 @@ review pressure.
    artifact or lands without it. Merge precondition: before step 6, every stage-routed
    finding has, in a round disposition, its route on record (with the filing cite when
    the route is a registry) **and** the owner's explicit call — wait, land without, or
-   defer. A stage-routed finding with no recorded owner call blocks the merge.
+   defer. A stage-routed finding with no recorded owner call blocks the merge. The
+   worked example below fixes the wording so the record stays searchable.
 4. **Re-verify:** CI green; if a workflow artifact changed, re-check its stamps, round
    numbers, and cross-cites against the state decode tables in `docs/workflow/README.md`.
 5. **Close the round:** reply with the `rN:` disposition comment carrying the labels;
@@ -98,6 +99,35 @@ review pressure.
 6. **Round-3 rule:** unchanged from the implementation skill — a third round with any open
    finding stops the loop; the owner accepts as a named residual, overrules, or routes,
    per finding, and the next round honors recorded decisions rather than re-raising them.
+
+### Worked example — one finding, end to end
+
+Round 2 raises: *"the plan's mitigation for the double-book path contradicts the frozen
+spec's SPEC-9."*
+
+1. **Label** — `A`: a defect in the artifact as pushed, not something a fix round wrote.
+2. **Cluster** — one finding, nothing shares its root cause.
+3. **Route** — the claim is about `plan.md` design content, and that plan is `GATED`, so
+   the routing table sends it to **stage 3** (`plan-authoring` revises, `drift-gate`
+   re-stamps). It is *not* patched on this branch, and this PR's other findings are
+   unaffected.
+4. **Re-verify** — the branch did not change, so no stamp, round number or cross-cite
+   moved; CI is unaffected.
+5. **Close the round** — reply with the `rN:` disposition. **The owner call is recorded
+   there, in the PR comment, one line per routed finding**, in this form:
+
+   > **r2 F1 — [medium] A, routed to stage 3** (`plan-authoring` revises, `drift-gate`
+   > re-stamps; not patched here). **Owner call 2026-08-12: land without** — the plan
+   > revision ships with e6; this PR is not held for it.
+
+   Three fields make it count: the **route** (plus the filing cite when the route is a
+   registry), the **owner call** verbatim as one of *wait* / *land without* / *defer*,
+   and the **date**. A routing with no owner call is still an open finding — step 6's
+   round-3 rule applies to it, and the merge precondition in step 3 blocks on it.
+
+Then append the ledger line, commit it on this branch, and re-tag `@codex-review` —
+unless this was a third round with anything still open, in which case the loop stops
+here and the owner takes it per step 6.
 
 ## Refreshing stale branches (step 8)
 

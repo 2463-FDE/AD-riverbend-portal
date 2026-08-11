@@ -76,8 +76,9 @@ Deviation handling, per the pipeline:
   disclosure does and does not buy: it informs human readers and gives the fix session an
   anchored record to cite — it does **not** prevent rediscovery, because **the reviewer
   reads the diff, not the PR prose**. Expect a round for each residual **the changed
-  lines make visible**; a residual absent from the diff costs nothing (both measured —
-  `docs/review-loop-metrics.md` §4, PR #72 and #74 entries, is the source of truth).
+  lines make visible**; a residual absent from the diff costs nothing (observed so far on
+  two PRs — `docs/review-loop-metrics.md` §4, PR #72 and #74 entries, is the source of
+  truth, and two entries is thin enough that §4 outranks this line if they diverge).
   The only thing that reduces the visible-residual cost is accepting fewer of them.
 - **After push (an owned step, artifact-backed):** advance the `pr-body.md` `Status:`
   line to `PUSHED PR #<n> <date>`, then comment `@codex-review`. Each round is worked by

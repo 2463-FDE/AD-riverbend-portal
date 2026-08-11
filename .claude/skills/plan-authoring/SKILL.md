@@ -93,6 +93,9 @@ Run these against the finished draft; each has caught a real gap.
 
 ## Context
 
+<scan summary — three to five lines a cold reviewer orients on: what this changes, why
+now, what it must not touch. Detail and citations follow it, not above it.>
+
 <why this change, what gap it closes, what it must not touch. Cite debt IDs/TODOs.>
 
 **Decisions carried into this plan** (plan-stage, owner-confirmed <date>):
