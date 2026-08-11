@@ -21,6 +21,24 @@ const RECIPIENT_TYPES = [
   "Other",
 ];
 
+// Fixed, client-authored, non-PHI. A read that could not complete must never
+// render as "this patient has none" (E5-SPEC-5, E5-SPEC-6): the empty state
+// below is an answer, and this is the absence of one. Pattern copied from
+// records/page.tsx, the surface W2 landed.
+const REQUESTS_UNAVAILABLE =
+  "Release requests could not be loaded. This is not a statement that this patient has none — " +
+  "retry, and do not rely on this list until it loads.";
+
+// The read answers either a bare array or {items: [...]}. Anything else —
+// including the {"detail": ...} body a converted gateway sends on failure — is
+// a failed load, not an empty one. `?? []` here was the coercion that made an
+// outage indistinguishable from "no requests on file".
+function listOf(d: unknown): unknown[] | null {
+  if (Array.isArray(d)) return d;
+  const items = (d as { items?: unknown } | null)?.items;
+  return Array.isArray(items) ? items : null;
+}
+
 const PURPOSES = [
   "Continuity of care",
   "Insurance claim",
@@ -40,18 +58,29 @@ export default function RoiPage() {
   const [end, setEnd] = useState("");
 
   const [requests, setRequests] = useState<RoiRequest[] | null>(null);
+  // Three states, not two: null = loading, failed = could not load, [] = empty.
+  const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [busyFulfill, setBusyFulfill] = useState<number | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   const load = useCallback(async () => {
     setRequests(null);
+    setFailed(false);
     try {
       const r = await apiFetch(`/api/roi/requests?patient_id=${encodeURIComponent(patientId)}`);
-      const d = await r.json();
-      setRequests(Array.isArray(d) ? d : (d.items ?? []));
+      if (!r.ok) {
+        setFailed(true);
+        return;
+      }
+      const items = listOf(await r.json());
+      if (!items) {
+        setFailed(true);
+        return;
+      }
+      setRequests(items as RoiRequest[]);
     } catch {
-      setRequests([]);
+      setFailed(true);          // never setRequests([]) — that is the defect
     }
   }, [patientId]);
 
@@ -182,7 +211,11 @@ export default function RoiPage() {
 
         <Card title="Existing requests" icon={<IconRoi />}
           action={<button className="rb-btn rb-btn--ghost rb-btn--sm" onClick={load} type="button">Refresh</button>}>
-          {requests === null ? (
+          {failed ? (
+            <div className="rb-alert rb-alert--err" role="status">
+              {REQUESTS_UNAVAILABLE}
+            </div>
+          ) : requests === null ? (
             <div className="rb-loading">
               <span className="rb-spinner rb-spinner--dark" aria-hidden="true" /> Loading requests…
             </div>
