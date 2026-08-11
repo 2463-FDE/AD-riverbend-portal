@@ -270,7 +270,10 @@ def _call(route: Route):
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("route", ROUTES, ids=ROUTE_IDS)
 def test_a_successful_proxy_relays_the_downstream_status_and_body(monkeypatch, route):
-    """E5-SPEC-13. The regression floor: e5 is an error-path change only."""
+    """E5-SPEC-13, and the evidence for E5-SPEC-17: a converted read relays the
+    downstream body byte for byte, so it discloses neither more nor fewer
+    records, and no extra field, than it did before. (Four of these routes sit
+    in D11's exposure set. e5 neither fixes nor widens it.)"""
     body = {"items": [{"id": 1, "note": "downstream"}], "total": 1}
     _patch_transport(monkeypatch, response=_FakeResponse(200, body))
     _login_as(route.role)
@@ -508,6 +511,71 @@ def test_the_exclusion_lists_name_only_routes_that_exist():
 
 
 # --------------------------------------------------------------------------- #
+# 6b. Authorization is unchanged by the conversion (E5-SPEC-15, E5-SPEC-16)
+#
+# tests/test_gateway_authz.py owns the route->capability pin and the declared-
+# vs-enforced equality, and both stay green untouched — that is the primary
+# evidence. This adds the per-converted-route form of the same claim, because
+# the failure mode is specific: an error path that answers BEFORE the session
+# dependency runs would be a new route reachable without a session, and it
+# would be reachable on exactly the thirteen routes this branch edits.
+# --------------------------------------------------------------------------- #
+# Roles that hold none of the capabilities the converted routes require.
+DENIED_ROLE = {
+    "eligibility": "clinician",          # no eligibility.check
+    "patients": "clinician",             # holds patients.read — see below
+    "patient": "clinician",
+    "records": "front_desk",             # no chart access (minimum necessary)
+    "search": "front_desk",              # no records.search
+    "slots": "roi_clerk",                # no schedule.read
+    "list_appointments": "roi_clerk",
+    "roi_list": "front_desk",            # no disclosures.read
+    "book": "roi_clerk",                 # no appointments.write
+    "cancel": "roi_clerk",
+    "roi_create": "front_desk",          # no disclosures.write
+    "roi_fulfill": "front_desk",
+    "hl7": "front_desk",                 # no hl7.ingest
+}
+
+# clinician legitimately holds patients.read, so these two routes have no
+# denied-role case here; test_gateway_authz.py's closed route->capability pin
+# is what covers them.
+_NO_DENIED_ROLE = {"patients", "patient"}
+
+
+@pytest.mark.parametrize(
+    "route", [r for r in ROUTES if r.id not in _NO_DENIED_ROLE], ids=[
+        r.id for r in ROUTES if r.id not in _NO_DENIED_ROLE
+    ]
+)
+def test_a_denied_role_is_rejected_before_any_fan_out(monkeypatch, route):
+    """E5-SPEC-15, E5-SPEC-16. 403 before the downstream call, after the
+    conversion exactly as before it."""
+    calls = _patch_transport(monkeypatch, response=_FakeResponse(200, {"ok": True}))
+    _login_as(DENIED_ROLE[route.id])
+
+    r = _call(route)
+
+    assert r.status_code == 403
+    assert calls == [], "a denied request still fanned out downstream"
+
+
+@pytest.mark.parametrize("route", ROUTES, ids=ROUTE_IDS)
+def test_no_converted_route_answers_without_a_session(monkeypatch, route):
+    """E5-SPEC-16. With no session dependency override in place, require_session
+    runs for real and rejects an anonymous caller — including on the failure
+    paths this branch introduced."""
+    calls = _patch_transport(monkeypatch, exc=httpx.ConnectError("connection refused"))
+    gw.app.dependency_overrides.clear()
+    monkeypatch.setattr(gw, "get_session", lambda token: None)
+
+    r = _call(route)
+
+    assert r.status_code == 401
+    assert calls == []
+
+
+# --------------------------------------------------------------------------- #
 # 7. The error-swallowing helpers cannot come back (E5-SPEC-20, E5-SPEC-21)
 #
 # Re-homed from tests/test_gateway_review_queue.py, which proved the same claim
@@ -527,8 +595,9 @@ _SWALLOWING_DEF = re.compile(r"^def _(?:get|post)\(", re.M)
 
 
 def test_the_gateway_defines_no_error_swallowing_proxy_helper():
-    """E5-SPEC-20. Deletion, not disuse — CLAUDE.md §4's "do not add a
-    fifteenth" becomes structural rather than advisory."""
+    """E5-SPEC-20. Deletion, not disuse: while the helpers exist, "do not use
+    them" is advice a new route can ignore by copying a neighbour. CLAUDE.md §4
+    now states the rule structurally, and this is what enforces it."""
     assert not _SWALLOWING_DEF.search(_GATEWAY_SOURCE), (
         "services/gateway/app.py defines _get/_post again. These collapse every "
         "downstream and transport failure into a 200 OK {\"error\": ...} body; "
