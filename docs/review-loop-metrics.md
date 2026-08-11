@@ -574,6 +574,22 @@ wild. (2) plan scannability — accepted on premise, fixed as class not instance
 GATED e5 plan is a stamped record no post-delivery edit may rewrite, so `plan-authoring`
 gained a Context scan-summary rule for future plans instead.
 
+PR #75 r2 — 3 findings: **2 A / 1 B / 0 C**, 0 refuted · all three target the review
+mechanism this PR ships, which is the point of running it on itself. (1) [medium] A —
+step 5's every-round ledger commit read as a self-feeding loop (metrics commit → new
+round → new metrics commit); fixed by pinning the termination semantics in the skill:
+the ledger line is reviewable diff like any other hunk, but rounds start only on the
+re-tag that closes a round with findings — a dry round or `approve` has no re-tag, so
+its closing line lands with the merge as bookkeeping. (2) [low] A — the routing table's
+"a stage-routed finding does not block by default" named no merge precondition; fixed:
+before merge every stage-routed finding needs its route on record in a disposition
+(with the filing cite when the route is a registry) and the owner's explicit
+wait/land/defer call. (3) [low] **B, the ledger's first non-code B** — r1's class fix
+added the scan-summary rule beside a stamped e5 plan that predates it, and nothing said
+the rule is prospective; the ambiguity is the fix round's new surface (`ec7d598`), the
+predicted B shape in document form. Fixed where the claim lives: the PR body now states
+the rule applies to future plans, not retroactively to the gated artifact.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`

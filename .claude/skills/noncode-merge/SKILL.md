@@ -81,13 +81,20 @@ review pressure.
 
    A stage-routed finding does not block the rest of the PR by default: the disposition
    records the routing, and the owner decides whether the PR waits for the revised
-   artifact or lands without it.
+   artifact or lands without it. Merge precondition: before step 6, every stage-routed
+   finding has, in a round disposition, its route on record (with the filing cite when
+   the route is a registry) **and** the owner's explicit call — wait, land without, or
+   defer. A stage-routed finding with no recorded owner call blocks the merge.
 4. **Re-verify:** CI green; if a workflow artifact changed, re-check its stamps, round
    numbers, and cross-cites against the state decode tables in `docs/workflow/README.md`.
 5. **Close the round:** reply with the `rN:` disposition comment carrying the labels;
    append the ledger line to `docs/review-loop-metrics.md` §4 and **commit it on this same
    branch** — it is non-code and in scope, so unlike the code loop the round log lands
-   with the PR it describes; re-tag `@codex-review`.
+   with the PR it describes; re-tag `@codex-review`. The ledger line is part of the
+   reviewed diff — the next round may raise findings against it like any other hunk —
+   but it cannot feed the loop by itself: a new round starts only on the re-tag that
+   closes a round with findings, and after a dry round or `approve` there is no re-tag,
+   so the closing ledger line lands with the merge as bookkeeping.
 6. **Round-3 rule:** unchanged from the implementation skill — a third round with any open
    finding stops the loop; the owner accepts as a named residual, overrules, or routes,
    per finding, and the next round honors recorded decisions rather than re-raising them.
