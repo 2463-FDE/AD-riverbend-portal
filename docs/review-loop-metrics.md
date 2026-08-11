@@ -555,6 +555,13 @@ round per residual per PR, and the only thing that reduces it is accepting fewer
 writing the disclosure differently. Worth watching whether r2 re-raises it after the disposition —
 PR #69 r2 did honour a declined recommendation, which is the behaviour this relies on.
 
+PR #74 r1 — **0 findings**, clean, approved in one round. The PR carried three accepted residuals
+(pr-body §Accepted residuals), and none came back — which refines rather than contradicts the
+PR #72 lesson: all three are *absent from the diff* (out-of-scope `proxy_search`, untouched
+eligibility column, work not in the branch), whereas #72's rediscovered residual was a window the
+diff itself made reachable. The reviewer reads the diff, so a residual the diff does not exhibit
+costs no round; expect rediscovery only for residuals the changed lines make visible.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
