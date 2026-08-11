@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
+import pytest
 import yaml
 
 from conftest import load_module
@@ -381,23 +382,30 @@ def test_no_scoped_env_template_can_skew_the_catalog():
 # Either would set INTAKE_TIMEOUT_SECONDS below intake's own budget with the
 # whole suite green, and the gateway would abort a registration intake is still
 # legitimately processing.
-BOUND_KEY = "INTAKE_TIMEOUT_SECONDS"
+# Both halves of the same invariant as of e5 chunk 2: the gateway's bound is
+# pinned against intake's worst case, and that worst case is now
+# REGISTRATION_LOCK_WAIT_SECONDS + ELIGIBILITY_TIMEOUT_SECONDS (E5-SPEC-32/33) —
+# so a per-service override of the lock wait moves the number the budget test
+# checks just as invisibly as one of the bound itself.
+BOUND_KEYS = ("INTAKE_TIMEOUT_SECONDS", "REGISTRATION_LOCK_WAIT_SECONDS")
 
 
-def test_the_registration_bound_is_never_set_per_service():
+@pytest.mark.parametrize("bound_key", BOUND_KEYS)
+def test_the_registration_bound_is_never_set_per_service(bound_key):
     for name, svc in _all_services().items():
-        assert BOUND_KEY not in _environment_keys(svc), (
-            f"{name} must not pin {BOUND_KEY} in its own `environment:` block: the "
-            "invariant against intake's eligibility budget is enforced from "
+        assert bound_key not in _environment_keys(svc), (
+            f"{name} must not pin {bound_key} in its own `environment:` block: the "
+            "invariant against intake's registration budget is enforced from "
             ".env.example and the code default, and a per-service override defeats "
             "it invisibly"
         )
 
 
-def test_no_scoped_env_template_can_override_the_registration_bound():
+@pytest.mark.parametrize("bound_key", BOUND_KEYS)
+def test_no_scoped_env_template_can_override_the_registration_bound(bound_key):
     for template in COMPOSE.parent.glob(".env.*.example"):
-        assert not re.search(rf"^\s*{BOUND_KEY}\s*=", template.read_text(), re.MULTILINE), (
-            f"{template.name} must not set {BOUND_KEY}: the gateway loads its scoped "
+        assert not re.search(rf"^\s*{bound_key}\s*=", template.read_text(), re.MULTILINE), (
+            f"{template.name} must not set {bound_key}: the gateway loads its scoped "
             "templates after the shared .env, so a value here silently wins over the "
             "one the budget invariant checks"
         )

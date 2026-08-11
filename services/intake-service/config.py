@@ -95,6 +95,24 @@ class Settings:
         eligibility_degraded_slow_seconds,
     )
 
+    # How long a registration may wait on a concurrent submission carrying the
+    # same submission_id before giving up (e5, plan D-15; E5-SPEC-32/33). The
+    # loser of a collision blocks on the UNIQUE index until the winner commits,
+    # then re-reads the winner's registration and replays it; this bounds that
+    # wait, because an unbounded one converts a duplicate into a hang. Issued as
+    # Postgres `SET LOCAL lock_timeout` on the registration transaction — the
+    # knob is SECONDS and lock_timeout's unit is milliseconds, so app.py
+    # multiplies by 1000.
+    # INVARIANT: this plus ELIGIBILITY_TIMEOUT_SECONDS is intake's worst case on
+    # the registration path, and the gateway's INTAKE_TIMEOUT_SECONDS must stay
+    # at least 1s above that sum, or the gateway aborts a registration intake is
+    # still legitimately processing (E4-SPEC-17/18). Guarded by
+    # tests/test_eligibility_budget_alignment.py against this default and the
+    # .env.example value a fresh deploy seeds.
+    registration_lock_wait_seconds = float(
+        os.getenv("REGISTRATION_LOCK_WAIT_SECONDS", "5")
+    )
+
     # payer settings kept for parity with the legacy module; the real X12 270/271
     # round-trip is owned by eligibility-service.
     payer_api_url = os.getenv("PAYER_API_URL", "https://edi.example.com/v1/eligibility")

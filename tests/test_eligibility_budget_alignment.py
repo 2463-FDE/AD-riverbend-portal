@@ -306,20 +306,35 @@ def _registration_budget_sources():
     Both sources of truth, for the same reason as every invariant above: a code
     default that satisfies the bound proves nothing if `cp .env.example .env`
     seeds one that does not (PR #5 r5).
+
+    Intake's own budget is a SUM as of e5 chunk 2: a registration may now wait
+    up to REGISTRATION_LOCK_WAIT_SECONDS on a concurrent submission carrying the
+    same identifier (E5-SPEC-32/33) *before* it spends ELIGIBILITY_TIMEOUT_SECONDS
+    verifying coverage. Asserting against the eligibility bound alone would keep
+    this test passing while no longer describing what it guards.
     """
     raw = _env_example_values()
     missing = [
         name
-        for name in ("INTAKE_TIMEOUT_SECONDS", "ELIGIBILITY_TIMEOUT_SECONDS")
+        for name in (
+            "INTAKE_TIMEOUT_SECONDS",
+            "ELIGIBILITY_TIMEOUT_SECONDS",
+            "REGISTRATION_LOCK_WAIT_SECONDS",
+        )
         if name not in raw
     ]
     assert not missing, f".env.example is missing {missing} — a fresh deploy would not seed them"
     return [
-        ("config.py defaults", _gw.intake_timeout_seconds, _intake.eligibility_timeout_seconds),
+        (
+            "config.py defaults",
+            _gw.intake_timeout_seconds,
+            _intake.eligibility_timeout_seconds + _intake.registration_lock_wait_seconds,
+        ),
         (
             ".env.example",
             float(raw["INTAKE_TIMEOUT_SECONDS"]),
-            float(raw["ELIGIBILITY_TIMEOUT_SECONDS"]),
+            float(raw["ELIGIBILITY_TIMEOUT_SECONDS"])
+            + float(raw["REGISTRATION_LOCK_WAIT_SECONDS"]),
         ),
     ]
 
@@ -335,7 +350,8 @@ def test_the_gateway_registration_bound_never_preempts_intake():
     for label, gw_timeout, intake_timeout in _registration_budget_sources():
         assert gw_timeout >= intake_timeout + MARGIN_SECONDS, (
             f"[{label}] the gateway's INTAKE_TIMEOUT_SECONDS ({gw_timeout}s) must be at "
-            f"least {MARGIN_SECONDS}s above intake's own ELIGIBILITY_TIMEOUT_SECONDS "
+            f"least {MARGIN_SECONDS}s above intake's own worst case on the registration "
+            f"path — REGISTRATION_LOCK_WAIT_SECONDS + ELIGIBILITY_TIMEOUT_SECONDS "
             f"({intake_timeout}s) — below that the gateway aborts a registration that "
             "intake is still legitimately processing"
         )
