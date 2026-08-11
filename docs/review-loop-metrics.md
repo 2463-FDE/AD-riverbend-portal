@@ -562,6 +562,18 @@ eligibility column, work not in the branch), whereas #72's rediscovered residual
 diff itself made reachable. The reviewer reads the diff, so a residual the diff does not exhibit
 costs no round; expect rediscovery only for residuals the changed lines make visible.
 
+PR #75 r1 — the first non-code PR through the review loop (the skip rule was revoked
+2026-08-11) — 2 findings: **2 A / 0 B / 0 C**, 0 refuted. (1) [medium] the implementation
+skill's residual guidance overstated the measured rule: "one round per accepted residual
+per PR" was written from e4's n=1 before this PR's own #74 entry refined it to
+diff-visible residuals only. Both skill sites aligned; §4 named as the source of truth.
+Note the shape: the same PR carried the stale skill line and the ledger refinement that
+falsified it, and the reviewer caught the divergence — the CLAUDE.md §10 failure mode (a
+duplicated instruction where the stale copy wins) caught at review instead of in the
+wild. (2) plan scannability — accepted on premise, fixed as class not instance: the
+GATED e5 plan is a stamped record no post-delivery edit may rewrite, so `plan-authoring`
+gained a Context scan-summary rule for future plans instead.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`

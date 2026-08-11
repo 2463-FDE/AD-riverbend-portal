@@ -75,9 +75,10 @@ Deviation handling, per the pipeline:
   code branch — see step 6). The "Risk & landmines" section is required. Know what the
   disclosure does and does not buy: it informs human readers and gives the fix session an
   anchored record to cite — it does **not** prevent rediscovery, because **the reviewer
-  reads the diff, not the PR prose** (measured on e4, `docs/review-loop-metrics.md` §4).
-  Expect roughly one round per accepted residual per PR; the only thing that reduces that
-  count is accepting fewer residuals.
+  reads the diff, not the PR prose**. Expect a round for each residual **the changed
+  lines make visible**; a residual absent from the diff costs nothing (both measured —
+  `docs/review-loop-metrics.md` §4, PR #72 and #74 entries, is the source of truth).
+  The only thing that reduces the visible-residual cost is accepting fewer of them.
 - **After push (an owned step, artifact-backed):** advance the `pr-body.md` `Status:`
   line to `PUSHED PR #<n> <date>`, then comment `@codex-review`. Each round is worked by
   the fix-session procedure below; iterate until dry. On merge, advance `pr-body.md`
@@ -100,7 +101,8 @@ baseline analysis) — that file is the why, this section is the how.
    anchored comment pointing at the recorded acceptance (the pr-body residuals section,
    the plan's Landmines section, or the findings-round disposition that accepted it).
    This is expected, not a surprise — the reviewer reads the diff, not the prose, so
-   every accepted residual visible in the diff will come back as a finding. Reopening an
+   an accepted residual the diff makes visible tends to come back as a finding
+   (`docs/review-loop-metrics.md` §4 carries the measurements). Reopening an
    accepted residual is the owner's call only; the fix session neither re-accepts nor
    silently fixes it.
 3. **Cluster** findings that share one root cause; fix causes, not instances.
