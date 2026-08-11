@@ -14,6 +14,7 @@ services by the time this loads.
 """
 import logging
 import sys
+import uuid
 
 import pytest
 from sqlalchemy.dialects import postgresql
@@ -62,6 +63,12 @@ class _StubResult:
     def all(self):
         return list(self._rows)
 
+    def scalar_one_or_none(self):
+        # The submission-record lookup (e5, E5-SPEC-30) runs before the create,
+        # and on this stub it finds nothing: every request here is a first
+        # attempt, which is what makes the match key run at all.
+        return self._rows[0] if self._rows else None
+
 
 class _StubSession:
     """Session double that models the two things the hook depends on: the
@@ -84,6 +91,13 @@ class _StubSession:
         self._select_error = select_error
 
     # -- SQLAlchemy Session surface used by app.py -------------------------
+    def get_bind(self):
+        # Not Postgres, so the registration's bounded collision wait
+        # (`SET LOCAL lock_timeout`) is skipped here — this file's subject is
+        # the match key, and both halves of that dialect guard are pinned in
+        # tests/test_intake_idempotency.py.
+        return type("_Bind", (), {"dialect": type("_D", (), {"name": "sqlite"})()})()
+
     def add(self, obj):
         self.added.append(obj)
 
@@ -130,7 +144,15 @@ def _demographics(name="Maria Gonzalez", dob="1971-03-02", address="12 Elm St", 
 
 
 def _intake_request(**kwargs):
-    return schemas_mod.IntakeRequest(demographics=_demographics(**kwargs), insurance=None)
+    # A fresh identifier per request: submission_id names the submission ATTEMPT
+    # (E5-SPEC-27), and these tests register the same person repeatedly on
+    # purpose — reusing one would replay instead of forking the chart the match
+    # key exists to detect (E5-SPEC-36).
+    return schemas_mod.IntakeRequest(
+        submission_id=str(uuid.uuid4()),
+        demographics=_demographics(**kwargs),
+        insurance=None,
+    )
 
 
 def _queued_pairs(db):

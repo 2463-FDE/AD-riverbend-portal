@@ -46,7 +46,13 @@ for _name, _module in _saved.items():
         sys.modules.pop(_name, None)
 
 
+# Required on every request as of e5 (E5-SPEC-27). One constant is safe here
+# because each test gets a fresh in-memory database from the session_factory
+# fixture: a test that posted this body TWICE would exercise the replay path
+# (E5-SPEC-30), which is tests/test_intake_idempotency.py's subject, not this
+# file's.
 VALID_REQUEST = {
+    "submission_id": "6f1d1a2e-6e0f-4a3c-9a4c-0f8a5b2d7c31",
     "demographics": {
         "name": "Sample Patient",
         "dob": "1985-03-12",

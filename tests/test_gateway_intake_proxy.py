@@ -47,7 +47,12 @@ client = TestClient(gw.app, raise_server_exceptions=False)
 NAME = "Adversarial Q Testpatient"
 SSN = "123-45-6789"
 MEMBER_ID = "BCBS4471"
+SUBMISSION_ID = "6f1d1a2e-6e0f-4a3c-9a4c-0f8a5b2d7c31"
 PAYLOAD = {
+    # The gateway route takes `payload: dict` and validates nothing, so this
+    # field is not what makes the fixture pass — it is here so the fixture stays
+    # honest about what a real request carries (E5-SPEC-27).
+    "submission_id": SUBMISSION_ID,
     "demographics": {"name": NAME, "dob": "1990-01-31", "ssn": SSN},
     "insurance": {"payer_name": "BCBS", "member_id": MEMBER_ID},
     "consents": ["npp_ack", "treatment_consent"],
@@ -230,3 +235,31 @@ def test_a_role_without_patients_write_never_reaches_intake(monkeypatch):
         }
     assert r.status_code == 403
     assert calls == []
+
+
+def test_the_submission_identifier_reaches_intake_unchanged(monkeypatch):
+    """E5-SPEC-28. The identifier names the submission ATTEMPT, and only the
+    caller knows which attempt it is retrying. A gateway that minted, replaced
+    or dropped one would hand intake a different value on the retry and close
+    nothing — the idempotency would be silently off while every test about it
+    still passed against the service in isolation.
+    """
+    calls = _patch_post(monkeypatch, response=_FakeResponse(201, {"patient_id": 1}))
+    client.post("/intake", json=PAYLOAD)
+
+    assert calls[0]["json"]["submission_id"] == SUBMISSION_ID
+    # Verbatim: the whole body is forwarded as received, not rebuilt.
+    assert calls[0]["json"] == PAYLOAD
+
+
+def test_the_gateway_mints_no_identifier_of_its_own(monkeypatch):
+    """E5-SPEC-28, the negative half. A body arriving without the field must
+    reach intake without it — intake's 422 is the contract (E5-SPEC-40), and a
+    gateway that helpfully filled the gap would turn every portal bug into a
+    fresh registration on every retry."""
+    calls = _patch_post(monkeypatch, response=_FakeResponse(422, FASTAPI_422_BODY))
+    body = {k: v for k, v in PAYLOAD.items() if k != "submission_id"}
+
+    client.post("/intake", json=body)
+
+    assert "submission_id" not in calls[0]["json"]

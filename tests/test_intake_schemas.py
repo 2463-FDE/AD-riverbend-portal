@@ -7,9 +7,14 @@ from pydantic import ValidationError
 
 schemas = load_module("services/intake-service/schemas.py", "intake_schemas")
 
+# Every IntakeRequest carries one as of e5 (E5-SPEC-27): submission_id is a
+# required, UUID-validated root field, so a fixture without it fails validation
+# for a reason that has nothing to do with what the test is asserting.
+SUBMISSION_ID = "6f1d1a2e-6e0f-4a3c-9a4c-0f8a5b2d7c31"
+
 
 def test_minimal_valid_intake():
-    req = schemas.IntakeRequest(demographics={"name": "Jane Roe"})
+    req = schemas.IntakeRequest(submission_id=SUBMISSION_ID, demographics={"name": "Jane Roe"})
     assert req.demographics.name == "Jane Roe"
     assert req.demographics.created_via == "self_service"
     # default consents applied
@@ -18,6 +23,7 @@ def test_minimal_valid_intake():
 
 def test_full_intake_with_insurance():
     req = schemas.IntakeRequest(
+        submission_id=SUBMISSION_ID,
         demographics={"name": "John Doe", "dob": "1980-01-01", "ssn": "111-22-3333"},
         insurance={"payer_name": "Aetna", "member_id": "AET123", "plan_type": "PPO"},
         consents=["npp_ack"],
@@ -28,12 +34,12 @@ def test_full_intake_with_insurance():
 
 def test_blank_name_rejected():
     with pytest.raises(ValidationError):
-        schemas.IntakeRequest(demographics={"name": "   "})
+        schemas.IntakeRequest(submission_id=SUBMISSION_ID, demographics={"name": "   "})
 
 
 def test_missing_demographics_rejected():
     with pytest.raises(ValidationError):
-        schemas.IntakeRequest(consents=["npp_ack"])
+        schemas.IntakeRequest(submission_id=SUBMISSION_ID, consents=["npp_ack"])
 
 
 # --- consents is a closed enum: PHI can't be smuggled through it (Codex review) --
@@ -46,6 +52,7 @@ def test_missing_demographics_rejected():
 def test_consents_reject_free_text_phi():
     with pytest.raises(ValidationError):
         schemas.IntakeRequest(
+            submission_id=SUBMISSION_ID,
             demographics={"name": "Jane Roe"},
             consents=["npp_ack", "Jane Doe DOB 1985-03-12"],
         )
@@ -54,6 +61,7 @@ def test_consents_reject_free_text_phi():
 def test_consents_reject_unknown_identifier():
     with pytest.raises(ValidationError):
         schemas.IntakeRequest(
+            submission_id=SUBMISSION_ID,
             demographics={"name": "Jane Roe"},
             consents=["not_a_real_consent"],
         )
@@ -61,6 +69,7 @@ def test_consents_reject_unknown_identifier():
 
 def test_all_known_consent_kinds_accepted():
     req = schemas.IntakeRequest(
+        submission_id=SUBMISSION_ID,
         demographics={"name": "Jane Roe"},
         consents=[
             "npp_ack",
@@ -107,6 +116,7 @@ def test_consent_kind_members_are_pinned_to_five_literals():
 
 def test_log_metadata_contains_no_phi():
     req = schemas.IntakeRequest(
+        submission_id=SUBMISSION_ID,
         demographics={
             "name": "Jane Doe",
             "dob": "1985-03-12",
@@ -129,6 +139,7 @@ def test_log_metadata_contains_no_phi():
 
 def test_log_metadata_reports_allowlisted_structure():
     req = schemas.IntakeRequest(
+        submission_id=SUBMISSION_ID,
         demographics={"name": "Jane Roe", "ssn": "111-22-3333"},
         consents=["npp_ack"],
     )

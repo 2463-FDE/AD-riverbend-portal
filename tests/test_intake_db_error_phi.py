@@ -21,6 +21,7 @@ registration.
 """
 import logging
 import sys
+import uuid
 
 import pytest
 from sqlalchemy.exc import DataError
@@ -88,6 +89,12 @@ class _FailingSession:
         self.added = []
         self.rollbacks = 0
 
+    def get_bind(self):
+        # Not Postgres, so the registration's bounded collision wait is skipped:
+        # this file's subject is what a statement-level DB error puts in a log,
+        # and tests/test_intake_idempotency.py owns the dialect guard.
+        return type("_Bind", (), {"dialect": type("_D", (), {"name": "sqlite"})()})()
+
     def add(self, obj):
         self.added.append(obj)
 
@@ -121,6 +128,7 @@ def _assert_no_phi(caplog, exc_info):
 
 def _request(**kwargs):
     payload = {
+        "submission_id": str(uuid.uuid4()),
         "demographics": {"name": NAME, "dob": DOB, "ssn": SSN},
         "consents": ["npp_ack"],
     }

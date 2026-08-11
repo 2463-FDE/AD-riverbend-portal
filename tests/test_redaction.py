@@ -13,6 +13,11 @@ ai_redaction = load_module("services/ai-assistant/redaction.py", "ai_redaction")
 intake_redaction = load_module("services/intake-service/redaction.py", "intake_redaction")
 intake_schemas = load_module("services/intake-service/schemas.py", "intake_schemas_redaction_test")
 
+# Required on every IntakeRequest as of e5 (E5-SPEC-27). It is not PHI and is
+# not redacted — it is random and derived from no submitted value (E5-SPEC-38),
+# which is the property that makes it safe to log as a correlation key.
+SUBMISSION_ID = "6f1d1a2e-6e0f-4a3c-9a4c-0f8a5b2d7c31"
+
 SAMPLE = {
     "demographics": {
         "name": "Jane Doe",
@@ -83,6 +88,7 @@ def test_redact_text_leaves_clean_text_alone():
 
 def test_safe_log_payload_with_real_intake_request():
     req = intake_schemas.IntakeRequest(
+        submission_id=SUBMISSION_ID,
         demographics=intake_schemas.Demographics(
             name="Jane Doe", dob="1985-03-12", ssn="123-45-6789"
         ),
@@ -135,6 +141,7 @@ def test_safe_log_payload_masks_phi_in_every_field():
     a ConsentKind enum now — so the list-item smuggle vector is exercised on a
     raw dict in test_redact_scrubs_ssn_hidden_in_consents_list, not here."""
     req = intake_schemas.IntakeRequest(
+        submission_id=SUBMISSION_ID,
         demographics=intake_schemas.Demographics(
             name="Jane Doe", dob="1985-03-12", ssn="123-45-6789",
             email="jane@example.com", phone="555-867-5309",
