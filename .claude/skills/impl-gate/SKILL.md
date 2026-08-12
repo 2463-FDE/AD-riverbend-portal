@@ -40,7 +40,10 @@ Makefile):
    the branch: every cell filled with a real test id, and **no pinned test renamed,
    removed, or behaviourally rewritten without a matching owner decision ID in the
    register**. A changed pinned test with no decision is a red finding — the executable
-   half of the contract moves only the way the prose half does.
+   half of the contract moves only the way the prose half does. The lifecycle, so the two
+   are not confused: **filling a planned name with the final test id is the expected
+   motion of implementation, not a spec change**; renaming, removing, or rewriting a test
+   the spec already pinned is, and takes an owner decision.
 2. **Size budget** (the threshold and its rationale are the README's dated 2026-08-12
    shape decision — the check is owned here). `wc -l docs/workflow/<item>.md` — over the
    **400-line default budget** is a red finding unless a stage-tagged decision in the
