@@ -79,9 +79,18 @@ class RegistrationSubmission(Base):
     this row and replays the winner's result rather than creating a second
     chart.
 
+    ``payload_fingerprint`` is what makes a replay a replay (E5-SPEC-41): the
+    identifier alone says the caller means the same ATTEMPT, not that it carries
+    the same content, and an edited retry after a lost response would otherwise
+    be answered with a confirmation of a chart that never received the edit
+    (E5-SPEC-42).
+
     No PHI columns: ``submission_id`` is opaque and random, derived from no
-    submitted value (E5-SPEC-38), so it is safe to log as a correlation key.
-    Rows are kept forever — no expiry, no pruning (requirements D-7).
+    submitted value (E5-SPEC-38), so it is safe to log as a correlation key; the
+    fingerprint is a KEYED digest (HMAC-SHA256, app.py``_payload_fingerprint``),
+    never a plain hash — a plain hash over guessable fields (DOB, SSN) is a
+    dictionary-reversible confirmation oracle, and this column is persisted
+    state. Rows are kept forever — no expiry, no pruning (requirements D-7).
     """
 
     __tablename__ = "registration_submissions"
@@ -93,6 +102,7 @@ class RegistrationSubmission(Base):
 
     id = Column(Integer, primary_key=True)
     submission_id = Column(Text, nullable=False)
+    payload_fingerprint = Column(Text, nullable=False)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

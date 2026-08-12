@@ -213,14 +213,20 @@ CREATE TABLE IF NOT EXISTS match_evaluation_failures (
 -- transaction as the patient/coverage/consent rows: a record written outside
 -- that transaction reopens the window it exists to close. The UNIQUE index is
 -- the mechanism, not an optimization — it decides a concurrent collision and
--- makes replay lookup cheap as the table grows (requirements D-7). No PHI: an
--- opaque client-generated identifier, a patient id and a timestamp.
+-- makes replay lookup cheap as the table grows (requirements D-7).
+-- No PHI: an opaque client-generated identifier, a keyed non-reversible content
+-- fingerprint (E5-SPEC-41 — HMAC, never a plain hash: a plain hash of guessable
+-- fields is a dictionary-reversible confirmation oracle), a patient id and a
+-- timestamp. The fingerprint decides whether a request carrying a recorded
+-- identifier is a replay of the same attempt (answer the recorded registration)
+-- or a different payload under a reused key (answer 409, E5-SPEC-42).
 -- Rows are kept FOREVER. No expiry, no pruning (requirements D-7): a retention
 -- horizon is a date past which a late retry silently creates the duplicate this
 -- table exists to prevent. The unbounded growth is accepted and recorded.
 CREATE TABLE IF NOT EXISTS registration_submissions (
     id              SERIAL PRIMARY KEY,
     submission_id   TEXT NOT NULL,
+    payload_fingerprint TEXT NOT NULL,
     patient_id      INTEGER NOT NULL REFERENCES patients(id),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT uq_registration_submission_id UNIQUE (submission_id)
