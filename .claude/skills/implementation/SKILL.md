@@ -70,7 +70,8 @@ Owned here; every stage-4 record follows it:
    Delivery records why not.
 5. Run the plan's Verification section end-to-end, including its negative
    (break-then-revert) checks; record outcomes in `## Delivery` per the evidence rule.
-6. Write `## Delivery` (delivery `Status: DRAFT` on the header): deviations with
+6. Write `## Delivery` (advance the header's **delivery axis** to `delivery DRAFT`; every
+   header write moves one axis and leaves `plan GATED` standing — README): deviations with
    rationale; slices test-first vs not; any planned slice absent from the diff and why —
    an empty result is still recorded; live-run evidence; **residuals as registry IDs
    only** (below). The impl gate checks this section; the branch is not gate-ready
@@ -100,7 +101,8 @@ across the artifact, the PR body, and the registry — one home, cited.
   (`docs/review-loop-metrics.md` §4 carries the measurements and outranks this line if
   they diverge). The only thing that reduces the visible-residual cost is accepting fewer
   of them.
-- **After push:** advance the header to `delivery PUSHED PR #<n>`, commit, then comment
+- **After push:** advance the header's delivery axis to `delivery PUSHED PR #<n>` (the
+  `plan GATED` half is untouched), commit, then comment
   `@codex-review`. Work each round per "Addressing a round"; iterate until dry. On merge,
   the `delivery MERGED <sha>` stamp lands on `main` as the only `noncode-merge` edit
   (README landing rule). This skill owns the push→review→merge segment; the artifact, not

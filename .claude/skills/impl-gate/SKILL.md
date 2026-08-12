@@ -85,7 +85,9 @@ Makefile):
   (README owns the round format), SPEC-cited where applicable, one line each, disposition
   column empty for stage 4. Branch returns to stage 4; re-gate is a full re-run, fresh
   session.
-- **Clean → stamp.** Set the header to `delivery IMPLEMENTED <date>` and append a short
+- **Clean → stamp.** Advance the header's **delivery axis** to `delivery IMPLEMENTED
+  <date>` — one axis, never the whole line; `plan GATED` stays as the drift gate set it
+  (README) — and append a short
   gate record in `## Delivery`: date, "impl-gated fresh-context", branch and HEAD commit,
   baseline observed, `gate:` observations, residuals accepted here. The plan stamp stays
   exactly as the drift gate set it. Close with a dry `checked:` round line. The stamp

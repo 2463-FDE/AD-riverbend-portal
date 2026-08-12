@@ -162,7 +162,8 @@ Non-code branches (docs, `.claude/`) need steps 1–3 only.
 
 For a one-file item (`docs/workflow/<item>.md`, every item from e6 onward): the artifact
 rides its own code branch from branch cut and lands with the code PR, so **the only edit
-this skill ever lands for it is the post-merge status stamp** (`delivery MERGED <sha>`) —
+this skill ever lands for it is the post-merge status stamp** — the header's delivery axis
+advanced to `delivery MERGED <sha>`, `plan GATED` left standing —
 the README's landing rule. Pre-branch, the file is working-tree only and there is nothing
 to land. Do not land the artifact itself through this path; that produces the conflicting
 second copy the landing rule exists to prevent.
