@@ -88,7 +88,7 @@ authoring rules — this README owns only the shape-level rules below the table.
 | `## Requirements` | `Status: DRAFT \| AGREED <date>` · owner-decision table, `<item>-REQ-n` | `requirement-synthesis` |
 | `## Spec` | `Status: DRAFT \| FROZEN <date>` · EARS table with the check column | `spec-authoring` |
 | `## Plan` | `Status: DRAFT \| GATED <date>` · deltas only | `plan-authoring` |
-| `## Findings` | round log; one `### <Stage> — round N, <date>` per round, stages in pipeline order: **Req-review** (`requirement-synthesis`) · **Gate** (`drift-gate`) · **Impl gate** (`impl-gate`) · **Review** (`implementation`) | the stage skill |
+| `## Findings` | round log; one `### <Stage> — round N, <date>` per round, stages in pipeline order: **Req-review** (`requirement-synthesis`) · **Gate** (`drift-gate`) · **Impl gate** (`impl-gate`) · **Review** (`implementation`) | this README (round shape) · the stage skill (what it checks) |
 | `## Delivery` | PR #, merge sha, baseline movement, deviations from the gated plan, live-run evidence, residual IDs | `implementation` |
 
 Shape-level rules, owned here:
@@ -165,6 +165,19 @@ Status: requirements DRAFT → requirements AGREED → spec FROZEN → plan DRAF
 | latest Review round has empty dispositions | stage-4 fix pending |
 | Review dispositions filled, delivery still `PUSHED` | re-review pending |
 | `delivery MERGED <sha>` | delivered; the stamp is the post-merge `noncode-merge` edit |
+
+A round with findings is a table, one row per finding:
+
+```
+| # | anchor | finding | disposition |
+```
+
+— anchor is the SPEC/REQ/decision ID, or `path:line` for code; the finding is one line;
+the disposition cell is **empty when the round is written** and filled by the stage that
+addresses it, in the form `.claude/skills/implementation/` "Addressing a round" defines
+(label per `docs/review-loop-metrics.md` §1, then `fixed @<sha>` or
+`declined: <clause> → <ID>`). The decode table's "empty dispositions" rows key on exactly
+that cell.
 
 A round is numbered within its stage only. A dry round is one `checked:` line naming what
 it covered — a dry round's value is knowing what it checked. **Every gate run leaves a
