@@ -648,6 +648,33 @@ tooling PR (both key on an item's spec and plan; a skill file has none), so code
 adversarial reader and it misread the diff. Filed as TODO-64, not fixed inside the PR under
 review.
 
+PR #77 r2 — 3 findings: **2 A / 0 B / 0 C**, 1 refuted · the round r1's fix made possible.
+(1) [medium] **A** — four sites said "set/advance the header to `delivery X`", which reads as
+replacing the whole `Status:` line and dropping the `plan GATED` half an earlier stage earned;
+each now advances the *delivery axis* and says the plan stamp stands (`e25a0e5`). The reviewer
+asked for the literal two-axis string at each site; four copies of a grammar the README owns is
+the `CLAUDE.md` §10 shape, so the axis is named instead, and `noncode-merge`'s `MERGED` stamp —
+same wording, not in the finding — was fixed with them. (2) [medium] **A** — the gate skills
+write a dry `checked:` round on a clean run while the README said a stage with no finding has
+no rounds. Resolved by the decode table rather than by preference: it reads "no Gate round" as
+*the gate has not run*, which is only sound if a clean run records one, so the README sentence
+was the defective half (`f55592c`). (3) [low] **E** — "impl-gate's write boundary contradicts
+itself" quotes a rule whose next sentence is the carve-out. Refuted, and the wording tightened
+anyway (`56027ce`), since naming the protected Delivery content and the one permitted append
+costs three words and removes the misread.
+**Lesson: writing a rule down does not only create a surface for the next round to attack — it
+also makes latent defects findable, and the two are hard to tell apart from the finding
+counts.** Both A findings here are original-push wording (`2aecbbf`), not fix-round wording, so
+neither is a **B** — but neither was reachable until r1 wrote "the line carries both axes and a
+delivery transition never rolls back the plan stamp" into the README. The reviewer had a rule to
+measure four skill sites against, and found them. Compare PR #75 r3, where the rules added by
+r1 and r2 were themselves the defect surface: same mechanism, opposite sign. **Generalizes: an
+explicit rule converts ambiguity into findings, so expect the round after a state-model fix to
+raise more, and label them by whose text is wrong (original push vs fix round), never by which
+round could first see them.** Second: **when two documents contradict, look for the third thing
+that depends on one of them** — the decode table settled which half was wrong here, and settled
+it in one read, where arguing the merits of dry rounds would not have converged.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
