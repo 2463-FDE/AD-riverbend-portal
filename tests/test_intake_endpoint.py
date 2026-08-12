@@ -103,7 +103,13 @@ def fingerprint_key(monkeypatch):
     # NEVER repair this with a non-empty default in config.py: a default key is a
     # published key, and an unkeyed fingerprint of guessable fields is a
     # dictionary-reversible confirmation oracle over a persisted column.
-    monkeypatch.setattr(app_mod.settings, "registration_fingerprint_key", "e5-test-key")
+    # Must clear `_fingerprint_key`'s floor (32 chars, no placeholder
+    # sentinel) — PR #76 review round 3.
+    monkeypatch.setattr(
+        app_mod.settings,
+        "registration_fingerprint_key",
+        "e5-test-key-not-a-real-secret-0123456789",
+    )
 
 
 @pytest.fixture

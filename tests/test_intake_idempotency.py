@@ -104,12 +104,20 @@ def fingerprint_key(monkeypatch):
     # loaded settings object (config_mod is the same instance app.py holds).
     # Without a key _payload_fingerprint fails closed with a 503 before any read
     # or write, so every POST /intake in this module would 503 (E5-SPEC-41, plan
-    # D-19). The fail-closed test below defeats this fixture on purpose.
+    # D-19). The fail-closed tests below defeat this fixture on purpose.
     #
     # NEVER repair this with a non-empty default in config.py: a default key is a
     # published key, and an unkeyed fingerprint of guessable fields is a
     # dictionary-reversible confirmation oracle over a persisted column.
-    monkeypatch.setattr(config_mod.settings, "registration_fingerprint_key", "e5-test-key")
+    #
+    # The value must clear `_fingerprint_key`'s floor (32 chars, no placeholder
+    # sentinel) — that guard is why a shorter, friendlier literal cannot be used
+    # here (PR #76 review round 3).
+    monkeypatch.setattr(
+        config_mod.settings,
+        "registration_fingerprint_key",
+        "e5-test-key-not-a-real-secret-0123456789",
+    )
 
 
 @pytest.fixture
@@ -408,6 +416,120 @@ def test_an_unkeyed_service_refuses_to_register_at_all(
     assert _counts(session_factory) == before
 
 
+@pytest.mark.parametrize(
+    "key",
+    [
+        "dev-registration-fingerprint-key-change-me",
+        "changeme",
+        "CHANGEME",
+        "  change-me  ",
+        "placeholder",
+        "registration-fingerprint-key-placeholder-value",
+        "x" * 31,
+        "   ",
+    ],
+    ids=[
+        "the-value-the-template-shipped",
+        "changeme",
+        "case-insensitive",
+        "whitespace-padded",
+        "placeholder",
+        "placeholder-as-a-substring-of-a-long-value",
+        "one-char-short-of-the-floor",
+        "whitespace-only",
+    ],
+)
+def test_a_placeholder_or_too_short_key_is_refused_exactly_like_no_key(
+    client, session_factory, monkeypatch, key
+):
+    """E5-SPEC-41, fail-closed — PR #76 review round 3, owner decision 2026-08-12.
+
+    A bare presence check accepts anything non-empty, so the placeholder this
+    branch first shipped in `.env.example` would have keyed the fingerprints of
+    any deploy seeded by `cp .env.example .env` — including CI's
+    (`.github/workflows/ci.yml`). A key that is public is not a key: the
+    fingerprint is an HMAC over DOB, SSN and member id, all guessable, so a
+    published or brute-forceable key turns the persisted column into the
+    dictionary-reversible confirmation oracle E5-SPEC-41 exists to prevent.
+
+    The estate already answered this the other way once, on the same reasoning:
+    `services/ai-assistant/llm_client.py::_require_bearer_token` rejects
+    `_PLACEHOLDER_BEARER_TOKENS` so "a non-empty placeholder must NOT satisfy
+    the guard" (Codex review, PR #5 round 5).
+
+    Both halves are load-bearing and neither subsumes the other: the shipped
+    placeholder is 41 characters, so length alone would pass it, and a 31-char
+    random secret is no sentinel, so the list alone would pass that."""
+    submission_id = str(uuid.uuid4())
+    before = _counts(session_factory)
+
+    monkeypatch.setattr(config_mod.settings, "registration_fingerprint_key", key)
+    r = client.post("/intake", json=_request(submission_id))
+
+    assert r.status_code == 503
+    assert r.json()["detail"] == "registration store unavailable"
+    assert _counts(session_factory) == before
+
+
+def test_the_key_the_template_ships_fails_closed(client, session_factory, monkeypatch):
+    """E5-SPEC-41 against the state a fresh deploy actually boots into.
+
+    The case above pins the guard against a list this file chose; this one pins
+    it against the file CI copies (`cp .env.example .env`,
+    `.github/workflows/ci.yml`), so it keeps holding whatever value the template
+    grows next. It passes today because the template ships the key EMPTY, and it
+    reddens the moment anyone puts a usable-looking value back."""
+    template = pathlib.Path(__file__).resolve().parents[1] / ".env.example"
+    shipped = [
+        line.split("=", 1)[1].strip()
+        for line in template.read_text().splitlines()
+        if line.startswith("REGISTRATION_FINGERPRINT_KEY=")
+    ]
+    assert len(shipped) == 1, "the template must declare the key exactly once"
+
+    before = _counts(session_factory)
+    monkeypatch.setattr(config_mod.settings, "registration_fingerprint_key", shipped[0])
+    r = client.post("/intake", json=_request(str(uuid.uuid4())))
+
+    assert r.status_code == 503, (
+        ".env.example ships a REGISTRATION_FINGERPRINT_KEY the guard accepts — a "
+        "committed key is a published key, and CI seeds .env from this file"
+    )
+    assert _counts(session_factory) == before
+
+
+def test_a_real_key_registers(client, session_factory):
+    """The positive control for the two rejection tests above: the guard refuses
+    placeholders and short keys, not keys. Without this, deleting the whole
+    fingerprint path would leave both of them passing for the wrong reason."""
+    before = _counts(session_factory)
+
+    r = client.post("/intake", json=_request(str(uuid.uuid4())))
+
+    assert r.status_code == 201
+    assert _counts(session_factory) != before
+
+
+def test_the_refusal_never_carries_the_key(client, monkeypatch, caplog):
+    """docs/landmines.md §3. The key is a secret, and a guard that names the
+    value it rejected puts it in the log and the response body. The message
+    names the variable only — the same rule `_require_bearer_token` follows."""
+    key = "dev-registration-fingerprint-key-change-me"
+    monkeypatch.setattr(config_mod.settings, "registration_fingerprint_key", key)
+
+    with caplog.at_level(logging.ERROR):
+        r = client.post("/intake", json=_request(str(uuid.uuid4())))
+
+    assert r.status_code == 503
+    assert key not in r.text
+    # Guard against a vacuous pass: the scan below is only meaningful if the
+    # refusal actually logged something.
+    assert any(
+        "REGISTRATION_FINGERPRINT_KEY" in record.getMessage() for record in caplog.records
+    )
+    assert all(key not in record.getMessage() for record in caplog.records)
+
+
 def test_the_fingerprint_is_keyed_and_reveals_no_submitted_value():
     """E5-SPEC-41, docs/landmines.md §3. Two properties, both load-bearing: the
     digest carries none of the values it was computed over, and it depends on
@@ -428,9 +550,9 @@ def test_the_fingerprint_is_keyed_and_reveals_no_submitted_value():
 
     original = config_mod.settings.registration_fingerprint_key
     try:
-        config_mod.settings.registration_fingerprint_key = "key-one"
+        config_mod.settings.registration_fingerprint_key = "e5-fingerprint-key-one-0123456789abcdef"
         first = app_mod._payload_fingerprint(req)
-        config_mod.settings.registration_fingerprint_key = "key-two"
+        config_mod.settings.registration_fingerprint_key = "e5-fingerprint-key-two-0123456789abcdef"
         second = app_mod._payload_fingerprint(req)
     finally:
         config_mod.settings.registration_fingerprint_key = original

@@ -238,6 +238,65 @@ def _bound_the_collision_wait(db: Session) -> None:
     db.execute(text(f"SET LOCAL lock_timeout = '{milliseconds}ms'"))
 
 
+# A key that is committed, published or short is not a key. Templates ship
+# non-empty placeholders and CI seeds `.env` from them (`cp .env.example .env`,
+# .github/workflows/ci.yml), so a bare presence check would let a deploy that
+# never set a real value compute PHI-derived fingerprints under a value anyone
+# can read — dictionary-checkable from a database dump. The estate already
+# answered this once the same way, for the same reason: llm_client's
+# _PLACEHOLDER_BEARER_TOKENS (Codex review, PR #5 round 5). Matched
+# case-insensitively after stripping; the substrings catch the next template
+# value nobody thought to add here. PR #76 review round 3, owner decision
+# 2026-08-12.
+_PLACEHOLDER_FINGERPRINT_KEYS = frozenset({
+    "changeme",
+    "change-me",
+    "change_me",
+    "placeholder",
+    "dev-registration-fingerprint-key-change-me",
+    "your-key-here",
+    "todo",
+    "xxx",
+})
+_PLACEHOLDER_FINGERPRINT_MARKERS = ("changeme", "change-me", "change_me", "placeholder")
+# 32 characters of a randomly generated secret. The fingerprint's inputs (DOB,
+# SSN, member id) are guessable, so the key is the only thing standing between a
+# stolen column and an offline confirmation oracle, and a short key is brute
+# -forceable exactly there. Not a strength meter — a floor, in the one direction
+# that fails closed.
+_MIN_FINGERPRINT_KEY_CHARS = 32
+
+
+def _fingerprint_key() -> str:
+    """The configured fingerprint key, or a 503 if it is not a real one.
+
+    Absence, an empty or whitespace-only value, known placeholder sentinels and
+    anything under the length floor are all treated as "not configured". The
+    value is only compared — never logged, echoed in the response, or embedded
+    in the error.
+    """
+    key = (settings.registration_fingerprint_key or "").strip()
+    normalized = key.lower()
+    unusable = (
+        not key
+        or normalized in _PLACEHOLDER_FINGERPRINT_KEYS
+        or any(marker in normalized for marker in _PLACEHOLDER_FINGERPRINT_MARKERS)
+        or len(key) < _MIN_FINGERPRINT_KEY_CHARS
+    )
+    if unusable:
+        # Configuration, not content: no submitted value and no key material in
+        # this message. Deliberately does not say WHICH check refused — that
+        # would narrow the value for anyone reading the log.
+        log.error(
+            "intake: REGISTRATION_FINGERPRINT_KEY is not set to a real secret "
+            "(unset, a known placeholder, or under %d characters) — refusing to "
+            "register rather than fingerprint under a guessable key",
+            _MIN_FINGERPRINT_KEY_CHARS,
+        )
+        raise HTTPException(status_code=503, detail="registration store unavailable")
+    return key
+
+
 def _payload_fingerprint(req: IntakeRequest) -> str:
     """A keyed, non-reversible digest of what this submission asked for.
 
@@ -254,24 +313,18 @@ def _payload_fingerprint(req: IntakeRequest) -> str:
     patient by recomputing it — a dictionary-reversible oracle over PHI. HMAC
     with a secret the database does not carry makes the stored value inert.
 
-    FAIL-CLOSED on a missing key, in the /ai paths' style, and computed BEFORE
-    the replay lookup so a replay-shaped request cannot slip past the guard. The
-    answer is the existing store-unavailable 503: this is a deployment fault,
-    not something the desk can correct, and the portal already renders it in the
-    system-failure branch.
+    FAIL-CLOSED on a key that is not a real secret — unset, a known placeholder,
+    or under the length floor (`_fingerprint_key`) — in the /ai paths' style, and
+    computed BEFORE the replay lookup so a replay-shaped request cannot slip past
+    the guard. The answer is the existing store-unavailable 503: this is a
+    deployment fault, not something the desk can correct, and the portal already
+    renders it in the system-failure branch.
 
     Computed from the VALIDATED model, so spellings that validate identically
     (a braced identifier, a reordered consent list) fingerprint identically and
     a genuine re-submission still replays.
     """
-    key = settings.registration_fingerprint_key
-    if not key:
-        # Configuration, not content: no submitted value in this message.
-        log.error(
-            "intake: REGISTRATION_FINGERPRINT_KEY is not set — refusing to register "
-            "with an unkeyed content fingerprint"
-        )
-        raise HTTPException(status_code=503, detail="registration store unavailable")
+    key = _fingerprint_key()
     dump = req.model_dump(mode="json")
     # The identifier is the key this fingerprint is stored under, not part of
     # the content it describes.

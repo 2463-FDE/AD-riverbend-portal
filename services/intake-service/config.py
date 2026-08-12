@@ -125,6 +125,10 @@ class Settings:
     # dictionary-reversible confirmation oracle, which is not something to put in
     # a persisted column. Never "fix" a red suite by giving this a non-empty
     # default; tests set it on the loaded settings object instead.
+    # Presence is NOT the guard: app.py::_fingerprint_key also refuses known
+    # placeholder values and anything under 32 characters, because a committed
+    # template value is as published as a hardcoded default and CI seeds .env
+    # from .env.example (PR #76 review round 3). .env.example ships this EMPTY.
     # Rotating it invalidates every recorded fingerprint: a lost-confirmation
     # retry that straddles a rotation answers 409, the operator re-enters on a
     # fresh mount, and the duplicate pair is queued for human review — accepted
