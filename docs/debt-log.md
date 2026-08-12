@@ -147,7 +147,7 @@
      `try/finally` is untouched — it is still test-pinned for what it does
      guarantee (the breaker always settles, `tests/test_intake_breaker.py`).
      **Residual on the residual — CLOSED 2026-08-11 (`e5` chunk 2,
-     E5-SPEC-24..40).** Atomicity is per-request, not cross-service, so a
+     E5-SPEC-24..43).** Atomicity is per-request, not cross-service, so a
      registration that committed and then lost its response in transit left a
      row the operator never saw confirmed — and the retry forked a second chart
      with its own coverage and consent rows. `POST /intake` now takes a required
@@ -156,7 +156,14 @@
      (`registration_submissions`, UNIQUE, written inside the registration's own
      transaction). A concurrent collision is decided by that constraint: the
      loser waits, bounded by `REGISTRATION_LOCK_WAIT_SECONDS`, then replays the
-     winner. Deliberately **not** an MPI — nothing on this path reads
+     winner. A repeat is only a repeat if the CONTENT matches: the row carries a
+     keyed HMAC fingerprint of the submitted payload
+     (`REGISTRATION_FINGERPRINT_KEY`, fail-closed — E5-SPEC-41), and a recorded
+     identifier arriving with different content answers 409 rather than
+     confirming a chart that never received the edit (E5-SPEC-42, found by codex
+     review on PR #76). The portal re-mints the identifier on the first edit
+     after an unconfirmed submit (E5-SPEC-43), so the corrected registration is
+     a new attempt and the operator never meets that 409. Deliberately **not** an MPI — nothing on this path reads
      demographics, so two genuine registrations for one person still fork two
      charts and are still only queued for review (D5, below). Register-first /
      async re-verification is a different fix for the same class and stays open
