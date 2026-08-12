@@ -23,10 +23,11 @@ own drift (same lesson as `.claude/skills/drift-gate/`).
 1. **The gate never runs in the session that wrote or amended the implementation.** If
    this session wrote any of the branch's code, stop and tell the owner to invoke the
    gate in a new session.
-2. **The gate session never edits code or the Requirements/Spec/Plan/Delivery content.**
-   It writes exactly two things: Impl-gate rounds in `## Findings`, and — on a clean
-   run — the `delivery IMPLEMENTED` header stamp plus its short gate record. Fixes happen
-   in stage 4; the fixed branch gets a full fresh gate run.
+2. **The gate session never edits code, the Requirements/Spec/Plan sections, or anything
+   stage 4 wrote in `## Delivery`.** It writes exactly two things: Impl-gate rounds in
+   `## Findings`, and — on a clean run — the delivery-axis header stamp plus its short
+   gate record appended to `## Delivery`, which is this gate's only Delivery write. Fixes
+   happen in stage 4; the fixed branch gets a full fresh gate run.
 
 ## Process
 
