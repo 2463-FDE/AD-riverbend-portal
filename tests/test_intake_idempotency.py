@@ -1,10 +1,13 @@
-"""POST /intake is idempotent per submission attempt (E5-SPEC-24 … E5-SPEC-40).
+"""POST /intake is idempotent per submission attempt (E5-SPEC-24 … E5-SPEC-43).
 
 The defect this closes is the residual e4 made *reachable*: registration commits,
 the response is lost in transit, the portal correctly tells the operator nothing
 was saved (E4-SPEC-7), and the retry creates a second chart with its own coverage
 and consent rows. The caller now names the attempt, and a repeat of that attempt
-returns the registration the first one produced.
+returns the registration the first one produced — a repeat whose *content* matches,
+since a reused identifier carrying different content is a correction the operator
+must not have silently swallowed (E5-SPEC-41, E5-SPEC-42) and the portal re-mints
+on the first edit after an unconfirmed submit (E5-SPEC-43).
 
 TestClient over intake-service on in-memory SQLite, harness copied from
 tests/test_intake_endpoint.py. The match-key hook and the payer hop are faked for
