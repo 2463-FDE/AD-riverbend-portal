@@ -1,8 +1,8 @@
 # Staged delivery workflow
 
 Adopted 2026-08-06, replacing the free-form weekly specs now archived in
-`docs/specs-deprecated/`. Each work item (organized by week number) moves through a fixed
-pipeline; every stage leaves a reviewable artifact in this tree.
+`docs/specs-deprecated/`. Each work item moves through a fixed pipeline; every stage
+leaves a reviewable record in this tree.
 
 ## Pipeline
 
@@ -22,10 +22,10 @@ requirement synthesis → spec (EARS) → code plan
 - **Codex review** is the existing PR loop: comment `@codex-review`, answer each round with
   an `rN:` disposition comment (A/B/C/E labels, defined in `docs/review-loop-metrics.md`
   §1), iterate until dry. The push→review→merge segment is artifact-backed and owned by
-  the implementation skill: `pr-body.md` carries the delivery `Status:` (PUSHED PR #n →
-  MERGED sha) and `findings.md` §Review is the round log. No separate skill owns it. The
-  fix-session procedure (label → cluster → route: state-touching fixes back to stage 3,
-  repeat findings get the class fix, rest patched on branch) is the implementation
+  the implementation skill: the delivery `Status:` (PUSHED PR #n → MERGED sha) and the
+  Findings round log live where the Layout section below puts them. No separate skill owns
+  it. The fix-session procedure (label → cluster → route: state-touching fixes back to
+  stage 3, repeat findings get the class fix, rest patched on branch) is the implementation
   skill's "Addressing a round" section — decided 2026-08-07 on first reach with e1
   PR #49, rebuilt from scratch informed by `docs/review-loop-metrics.md` §3.
   **Non-code PRs run the same loop** (decided 2026-08-11 — codex does review docs; the
@@ -43,88 +43,112 @@ requirement synthesis → spec (EARS) → code plan
   2026-08-07, codified from the e1 fresh-context prototype run of 2026-08-06), impl gate
   (`.claude/skills/impl-gate/`, decided 2026-08-07, ahead of first reach). Each gate
   runs only in a fresh session that did not author the artifact it checks: the drift
-  gate stamps the plan `Status: GATED` (required by the implement skill at entry); the impl
-  gate checks the finished branch against plan and spec pre-push and stamps `pr-body.md`
-  `Status: IMPLEMENTED` — the plan header stays `GATED`, delivery state lives on `pr-body.md`
-  (push stays human-gated). All six stages are now defined. One optional stage input is
+  gate stamps the plan section `GATED` (required by the implement skill at entry); the
+  impl gate checks the finished branch against plan and spec pre-push and stamps the
+  delivery `Status:` `IMPLEMENTED` — the plan stamp is untouched (push stays
+  human-gated). All six stages are defined. One optional stage input is
   also defined: a spec-anchored mockup for items whose spec names the portal as a system
   element (`.claude/skills/mockup/`, decided 2026-08-07 on first reach with W3) — plan-stage
   evidence only, kept scratch outside the repo, never a tracked artifact; items without a
   UI surface skip it.
+- **One artifact-shape decision is recorded the same way (decided 2026-08-12, engagement
+  owner): every item from e6 onward carries all six stages in a single file** — the
+  one-file shape below. Items landed before it stay in the five-file shape as delivered.
+  The pipeline itself is unchanged: same six stages, same gates, same codex loop on every
+  PR.
 
 ## Layout
 
+Two shapes coexist; the split is by item (decided 2026-08-12, above):
+
 ```
 docs/workflow/
-  wN/
-    requirements.md   ← requirement synthesis output
-    spec.md           ← EARS spec (contract)
-    plan.md           ← code plan. Status: DRAFT | GATED — plan maturity ONLY, never
-                        delivery state.
-    pr-body.md        ← delivery artifact + PR-body draft (working-tree, not committed on
-                        the code branch; lands on main via noncode-merge). Carries the
-                        delivery Status: header (DRAFT → IMPLEMENTED → PUSHED → MERGED);
-                        deviations, test-first split, residuals, Risk & landmines.
-    findings.md       ← round log for all three gated stages, one `## ` section each,
-                        created on that stage's first finding:
-                          ## Gate       drift-gate skill writes; stage 3 fills dispositions
-                          ## Impl gate  impl-gate skill writes; stage 4 fills dispositions
-                          ## Review     implementation skill writes; the stage-4 fix
-                                        session fills dispositions
-                        Rounds are `### Round N — <date>` inside their section. Findings
-                        only — it carries no Status: header of its own.
+  <item>.md   ← one file per item, all six stages — every item from e6 onward, wN and
+                eN alike
+  wN/, eN/    ← five-file dirs (requirements / spec / plan / pr-body / findings) —
+                every item before e6 (w1–w3, e1, e2, e4, e5). Closed record, cited by
+                path, stays untouched. e2 alone is undelivered (parked at
+                requirements-DRAFT); whether it converts or continues five-file is an
+                owner call at resume.
 ```
 
-Workflow state is derivable from these files alone — no session memory required:
-**plan `Status:`** (plan maturity: DRAFT | GATED) + **`pr-body.md` `Status:`** (delivery
-lifecycle: DRAFT → IMPLEMENTED → PUSHED PR #n → MERGED sha) + the **three round-log
-sections of `findings.md`**. A stage that has never produced a finding has no section, so
-an absent section reads exactly as an absent file did before the 2026-08-09 merge. The
-decode tables are below.
+The five-file shape's per-file rules and its three state-decode tables live in this
+README's pre-2026-08-12 history (`git log -- docs/workflow/README.md`); nothing still
+moving uses them.
 
-## State decode tables
+### The one-file shape (`docs/workflow/<item>.md`)
 
-The cold-handover entry point: from these tables plus the artifacts above, derive any
-item's exact state without `gh` or session memory. Three stages, three tables.
+Sections in order. Each stage's skill authors its section and owns that section's
+authoring rules — this README owns only the shape-level rules below the table.
 
-Each table reads its own `findings.md` section; "latest round" means the last
-`### Round N` under that section only, never one from a neighbouring stage.
+| Section | Content | Rules owned by |
+|---|---|---|
+| header | `Status:` line (decode table below) · one-line item description · `Baseline at branch:` — the **single site** for the item's suite count, filled when the impl branch is cut | this README |
+| `## Decisions` | the item's single decision register | this README |
+| `## Requirements` | `Status: DRAFT \| AGREED <date>` · owner-decision table, `<item>-REQ-n` | `requirement-synthesis` |
+| `## Spec` | `Status: DRAFT \| FROZEN <date>` · EARS table with the check column | `spec-authoring` |
+| `## Plan` | `Status: DRAFT \| GATED <date>` · deltas only | `plan-authoring` |
+| `## Findings` | round log; one `### <Stage> — round N, <date>` per round, stages in pipeline order: **Req-review** (`requirement-synthesis`) · **Gate** (`drift-gate`) · **Impl gate** (`impl-gate`) · **Review** (`implementation`) | the stage skill |
+| `## Delivery` | PR #, merge sha, baseline movement, deviations from the gated plan, live-run evidence, residual IDs | `implementation` |
 
-**Gate stage** (`findings.md` §Gate, plan `Status:`):
+Shape-level rules, owned here:
 
-| Observation | State |
+- **Decision register.** One per item, stage-tagged (`req` / `spec` / `plan`), IDs
+  `<item>-D-n` allocated once and **never renumbered** — withdrawn or revised entries stay
+  visible (strike-through, primes), same id discipline as `docs/todo.md`. Rationale that
+  outgrows a table cell lives in the register; every other section — and every round
+  disposition — cites the ID instead of restating the argument.
+- **Stable-ID citation.** Workflow artifacts are cited by stable ID — `e6-D-2`,
+  `e5-SPEC-32`, `E-3` — **never by an artifact's line numbers**, within an item, across
+  items, and from the registries. Artifact lines move; IDs do not. Code is still cited
+  `path:line`.
+- **`E-n` evidence blocks.** A dated measurement with no durable ref (live API state,
+  CI-run timings, click-ops config) is recorded **once**, as an `E-n` row in a dated table
+  in whichever section it grounds; everything else cites the ID. Where a durable ref
+  exists — a sha, a tracked file — cite that instead. Recording is for what git cannot
+  replay.
+- **Landing.** Before the impl branch is cut, the file is **working-tree only** (as
+  `pr-body.md` was). From branch cut, it **rides the code branch** and lands with the code
+  PR — the codex loop reviews it with the diff it describes. The post-merge status stamp
+  (`delivery MERGED <sha>`) is the only `noncode-merge` edit.
+
+### State decode (one table)
+
+The header `Status:` line carries the furthest stage reached, one line, updated in place:
+
+```
+Status: requirements DRAFT → requirements AGREED → spec FROZEN → plan DRAFT → plan GATED
+        → plan GATED · delivery DRAFT → IMPLEMENTED → PUSHED PR #n → MERGED <sha>
+```
+
+| `Status:` line + Findings rounds observed | State |
 |---|---|
-| plan `DRAFT`, no §Gate section | gate not yet run |
-| latest §Gate round has findings with empty dispositions | stage-3 revision pending |
-| dispositions filled, plan still `DRAFT` | re-gate pending |
-| plan `GATED` | plan gated; §Gate closed |
+| `requirements DRAFT` | stage 1 in progress; a Req-review round with empty dispositions = owner findings pending fold-in |
+| `requirements AGREED` | stage 2 may start |
+| `spec FROZEN` | stage 3 may start |
+| `plan DRAFT`, no Gate round | gate not yet run |
+| `plan DRAFT`, latest Gate round has empty dispositions | stage-3 revision pending |
+| `plan DRAFT`, Gate dispositions filled | re-gate pending (full fresh re-run) |
+| `plan GATED`, no delivery axis | implementation not started |
+| `delivery DRAFT`, branch complete, no Impl-gate round | impl gate not yet run |
+| latest Impl-gate round has empty dispositions | stage-4 fix pending |
+| Impl-gate dispositions filled, delivery still `DRAFT` | re-gate pending |
+| `delivery IMPLEMENTED` | push-ready; push is human-gated |
+| `delivery PUSHED PR #n`, no Review round | pushed; codex not yet run |
+| latest Review round has empty dispositions | stage-4 fix pending |
+| Review dispositions filled, delivery still `PUSHED` | re-review pending |
+| `delivery MERGED <sha>` | delivered; the stamp is the post-merge `noncode-merge` edit |
 
-**Impl-gate stage** (`findings.md` §Impl gate, plan `Status:`, `pr-body.md` `Status:`):
-
-| Observation | State |
-|---|---|
-| plan `GATED`, no branch diff | implementation not started |
-| plan `GATED`, branch complete, no §Impl gate section | impl gate not yet run |
-| latest §Impl gate round has findings with empty dispositions | stage-4 fix pending |
-| dispositions filled, `pr-body.md` still `DRAFT` | re-gate pending |
-| `pr-body.md` `IMPLEMENTED` | push-ready; §Impl gate closed |
-
-**Review stage** (`findings.md` §Review, `pr-body.md` `Status:`):
-
-| Observation | State |
-|---|---|
-| `pr-body.md` `IMPLEMENTED`, not pushed | awaiting human push gate |
-| `pr-body.md` `PUSHED PR #n`, no §Review section | pushed; codex not yet run |
-| latest §Review round has findings with empty dispositions | stage-4 fix pending |
-| dispositions filled, `pr-body.md` still `PUSHED` | re-review pending |
-| `pr-body.md` `MERGED <sha>` | delivered; all sections closed |
+A round is numbered within its stage only. A dry round is one `checked:` line naming what
+it covered — a dry round's value is knowing what it checked. A stage that has produced no
+finding has no rounds.
 
 ## Ground rules
 
 - Requirements come fresh from the engagement owner each week; the deprecated specs are
   archive, not input.
 - `eN` items are internal enablers (source: engagement team, not the client) — same
-  pipeline, same artifacts, numbered separately so `wN` stays client asks only.
+  pipeline, same artifact, numbered separately so `wN` stays client asks only.
   (Decided 2026-08-06 with `e1`.)
 - Repo-wide rules still bind every stage: `docs/landmines.md` (approval-gated zones,
   change safety, negative tests), `CONTRIBUTING.md` (branching, commits, PR process).

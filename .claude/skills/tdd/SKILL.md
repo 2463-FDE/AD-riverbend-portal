@@ -29,10 +29,12 @@ test a slice, that is a stage-3 gap, not an invitation.
 
 One cycle = one vertical slice = one EARS clause from the plan's scope map.
 
-1. Take the next SPEC id from `docs/workflow/<item>/plan.md`, in plan order.
-2. Write **one** failing test at the seam the plan names for it. Test name carries the
-   clause id: `test_w4_spec_3_booking_rejects_taken_slot`. Run it; watch it fail for the
-   expected reason (assertion, not import error).
+1. Take the next SPEC id from the item's `## Plan` section (`docs/workflow/<item>.md`),
+   in plan order.
+2. Write **one** failing test at the seam the plan names for it. The test takes the name
+   the spec's `test:` cell planned (it carries the clause id:
+   `test_w4_spec_3_booking_rejects_taken_slot`). Run it; watch it fail for the expected
+   reason (assertion, not import error).
 3. Write the minimal code to pass. Run the same test file, not the world.
 4. Repeat. No refactoring inside the cycle — refactor under green at review, as its own
    commit.

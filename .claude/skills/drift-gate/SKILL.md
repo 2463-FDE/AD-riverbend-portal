@@ -1,16 +1,17 @@
 ---
 name: drift-gate
-description: Gate stage of the delivery workflow (docs/workflow/README.md) — fresh-context adversarial check of a DRAFT code plan against its frozen EARS spec. Stamps the plan GATED or returns findings to stage 3. Use when a plan draft is complete and the user says "run the gate", "gate the plan", or invokes /drift-gate.
+description: Gate stage of the delivery workflow (docs/workflow/README.md) — fresh-context adversarial check of a DRAFT plan against its frozen EARS spec, both sections of docs/workflow/<item>.md. Stamps the Plan section GATED or returns findings to stage 3. Use when a plan draft is complete and the user says "run the gate", "gate the plan", or invokes /drift-gate.
 ---
 
 # Plan/spec drift gate
 
-Input: `docs/workflow/<item>/spec.md` with `Status: AGREED` (frozen) and
-`docs/workflow/<item>/plan.md` with `Status: DRAFT`.
-Output: either the plan stamped `Status: GATED <date>`, or a findings round appended to
-the `## Gate` section of `docs/workflow/<item>/findings.md` and the plan back to stage 3 (spec unchanged,
-per the pipeline). The round log — not chat history or session memory — is what carries
-findings between sessions; workflow state must always be derivable from the docs alone.
+Input: `docs/workflow/<item>.md` with `## Spec` at `Status: FROZEN` and `## Plan` at
+`Status: DRAFT`.
+Output: either the Plan section stamped `Status: GATED <date>` (header `Status:` line
+advanced to match), or a `### Gate — round N, <date>` round appended to `## Findings`
+and the plan back to stage 3 (spec unchanged, per the pipeline). The round log — not
+chat history or session memory — carries findings between sessions; item state must
+always be derivable from the file alone.
 
 The mechanism is codified from the e1 prototype run (2026-08-06): a fresh-context read of
 the plan against the spec caught real gaps the authoring session could not see. The fresh
@@ -19,101 +20,68 @@ context is the mechanism, not a nicety.
 ## Two hard rules
 
 1. **The gate never runs in the session that authored or amended the plan.** If this
-   session wrote any part of the plan text, stop and tell the owner to invoke the gate in
-   a new session. Authoring bias is exactly what the gate exists to remove.
-2. **The gate session never edits the plan.** It reports findings; revisions happen in
-   stage 3 (`.claude/skills/plan-authoring/`), and the revised plan gets a full fresh
-   gate run against its final text. No stamping a plan amended mid-gate — the e1 lesson:
-   analyze-and-amend in one motion leaves the final text never checked as a whole.
+   session wrote any part of the Plan section, stop and tell the owner to invoke the gate
+   in a new session.
+2. **The gate session never edits the Requirements, Spec, or Plan content.** It writes
+   exactly two things: Gate rounds in `## Findings`, and — on a clean run — the Plan
+   `Status:` stamp (plus the matching header line). Revisions happen in stage 3
+   (`.claude/skills/plan-authoring/`), and the revised plan gets a full fresh gate run
+   against its final text. No stamping a plan amended mid-gate — analyze-and-amend in one
+   motion leaves the final text never checked as a whole (the e1 lesson).
 
 ## Process
 
-1. **Read the spec first, alone.** Before opening the plan, list every SPEC id and note
-   what you would expect a plan to do about each. This ordering is deliberate: form
-   expectations from the contract, then test the plan against them — not the reverse.
-2. **Read the requirements' out-of-scope section** — the plan must carry it verbatim.
-   Locate it by heading, never by a section number: `.claude/skills/requirement-synthesis/`
-   owns that document's numbering and it moves per item (§7 in `docs/workflow/e4/`, §6 in
-   `w1`–`w3`, `e1` and `e2`). A plan citing the wrong number is itself a finding.
-3. **Read the plan and close the scope map both ways:** every SPEC id appears in the map;
-   every planned change traces to a SPEC id or is named registry upkeep. An unmapped SPEC
-   or an untraceable change is a finding.
-4. **Spot-verify plan facts in-repo.** Sample the file paths, symbols, ports, and config
-   values the plan asserts — read them from the working tree this session. Any wrong fact
-   is a finding (the plan-authoring rule says verify-before-writing; the gate checks it
-   held).
-5. **Run the three checks** from `.claude/skills/plan-authoring/` (self-consistency, gate
-   interaction, residual honesty) against the final text. They are authoring checks; the
-   gate re-runs them cold.
-6. **Per-SPEC verdict**, every id, one of: **satisfied** / **residual-named** (partial,
-   with the residual written in Landmines/risk) / **FINDING**. A partial whose residual
-   is not written down is a finding, not a residual.
-7. **Check the guard sections:** Verification is numbered, SPEC-cited, and includes
-   negative (break-then-revert) checks; Landmines names the `docs/landmines.md` §1 zones
-   touched or "none touched", with required human approvals recorded.
+**Mechanical half** (each check is a lookup, scriptable later):
+
+1. **Check map complete:** every SPEC row carries exactly one `test:` / `cmd:` / `gate:`
+   mechanism (`.claude/skills/spec-authoring/` owns the column's rules).
+2. **⚠ coverage:** every ⚠ row is covered by an approval recorded in the plan's
+   Landmines block, citing a decision ID (`.claude/skills/plan-authoring/` owns the
+   block's rules). A zone entered with no recorded approval is a finding, always.
+3. **Freeze scope:** the frozen set contains no SPEC rows for requirements marked
+   `DEFERRED → <item>`.
+4. **Cites resolve:** every SPEC and decision ID the plan cites exists in this file;
+   spot-verify the plan's in-repo facts (paths, symbols, config values) against the
+   working tree — a wrong fact is a finding.
+
+**Judgment half:**
+
+5. **Read the Spec section first, alone.** List every SPEC id and note what you would
+   expect a plan to do about each — expectations from the contract, then the plan tested
+   against them, not the reverse.
+6. **Close the change list both ways:** every SPEC id is served by a change (or by an
+   existing behavior the plan names); every change traces to a SPEC id, a decision ID, or
+   named registry upkeep. Unmapped either way is a finding.
+7. **Run the three checks** from `.claude/skills/plan-authoring/` (self-consistency, gate
+   interaction, residual honesty) against the final text, cold.
+8. **Per-SPEC verdict**, every id: **satisfied** / **residual-named** (partial, residual
+   written in the Landmines block) / **FINDING**. A partial whose residual is not written
+   down is a finding, not a residual.
+9. **Verification is runnable:** numbered commands with expected output, SPEC-cited,
+   including negative (break-then-revert) checks.
 
 ## Outcome
 
-- **Any finding → no stamp.** Append a round to the `## Gate` section of
-  `docs/workflow/<item>/findings.md` (create the section on the first-ever gate finding,
-  and the file too if this is the item's first finding of any stage; templates below),
-  findings SPEC-cited, one line each. Plan returns to stage 3; spec unchanged. Re-gate is
-  a full re-run, fresh session.
-- **Clean → stamp.** Set the plan header to `Status: GATED <date>` and append a short
-  gate record under it: date, "gated fresh-context", and the residual-named SPECs (so
-  implementation and review inherit the accepted residuals without re-deriving them).
-  If a `## Gate` section exists, close it with a final `### Round N — <date>` reading
-  `Clean — stamped.` so the round log agrees with the plan header.
-  The stamp is what `.claude/skills/implementation/` checks at entry.
+- **Any finding → no stamp.** Append `### Gate — round N, <date>` to `## Findings`
+  (README owns the round format), findings SPEC-cited, one line each, disposition column
+  empty for stage 3. Plan returns to stage 3; spec unchanged. Re-gate is a full re-run,
+  fresh session.
+- **Clean → stamp.** Set the Plan section to `Status: GATED <date>`, advance the header
+  `Status:` line, and close with a dry round: one `checked:` line naming the scope
+  covered (ids checked, map state, ⚠ coverage) — a dry round's value is knowing what it
+  checked.
 
-## Round log (`findings.md` §Gate)
-
-One `findings.md` per item holds all three stages' rounds, one `## ` section each; this
-skill owns `## Gate` and writes nothing else in the file. Gate sessions append rounds;
-the stage-3 revision session fills dispositions. The round number is the last round
-**in this section** plus one (1 for a new section) — never count a neighbouring stage's
-rounds. The gate-stage state decode table lives in `docs/workflow/README.md` ("State
-decode tables"), next to the files it decodes.
-
-File template, used only when `findings.md` does not exist yet:
-
-```markdown
-# <item> findings
-
-> Round log for this item's three gated stages: the drift gate
-> (`.claude/skills/drift-gate/`), the impl gate (`.claude/skills/impl-gate/`), and the
-> `@codex-review` loop (owned by `.claude/skills/implementation/`). Each stage appends
-> rounds under its own heading, created on that stage's first finding; the next-stage
-> session fills the dispositions. Findings only — plan maturity lives in `plan.md`,
-> delivery status in `pr-body.md`.
-```
-
-Section template, appended on the first-ever gate finding. Sections stay in pipeline
-order — `## Gate`, `## Impl gate`, `## Review`:
-
-```markdown
-## Gate
-
-### Round 1 — <date>
-
-<n> findings, no stamp.
-
-| # | SPEC | Finding | Disposition (stage 3) |
-|---|------|---------|-----------------------|
-| 1 | <id> | <one line> | |
-```
-
-**Round-3 rule:** a third round with any open finding stops the loop. Report to the
-owner, who decides per finding: accept it as a named residual, overrule it, or change
-the spec (stage 2, explicit decision). Record each decision in that finding's
-disposition cell; the next gate run honors recorded owner decisions rather than
-re-flagging them.
+Round numbers count this stage's rounds only. **Round-3 rule:** a third round with any
+open finding stops the loop. Report to the owner, who decides per finding: accept as a
+named residual, overrule, or change the spec (stage 2, explicit decision). Each call is
+recorded in that finding's disposition cell; the next gate run honors recorded owner
+decisions rather than re-flagging them.
 
 ## Never
 
 - Never gate a plan this session helped write.
-- Never edit plan or spec from the gate session — the round log and the stamp are the
-  only files a gate session writes.
+- Never edit Requirements/Spec/Plan content from the gate session — Gate rounds and the
+  clean-run stamp are the only writes.
 - Never stamp with an open finding, however minor — minor goes back to stage 3 cheaply.
 - Never hand findings off through chat or memory alone — if it isn't in the round log,
   the next session doesn't know it.
