@@ -239,6 +239,24 @@ def test_two_identifiers_for_one_person_still_fork_two_charts(
         (lambda body: body.update(submission_id="not-a-uuid"), "malformed"),
         (lambda body: body.update(submission_id=""), "blank"),
         (lambda body: body.update(submission_id=None), "null"),
+        # Not-v4 is not well-formed for this field (Codex review, PR #76): the
+        # contract declares a UUIDv4, and the nil / v1 / v5 spellings are the
+        # accidental ways a caller reuses one identifier across patients, which
+        # would replay the first patient's chart. Schema-level cases and the
+        # limit of this check are in tests/test_intake_schemas.py.
+        (
+            lambda body: body.update(
+                submission_id="00000000-0000-0000-0000-000000000000"
+            ),
+            "nil uuid",
+        ),
+        (lambda body: body.update(submission_id=str(uuid.uuid1())), "v1 uuid"),
+        (
+            lambda body: body.update(
+                submission_id=str(uuid.uuid5(uuid.NAMESPACE_DNS, "Sample Patient"))
+            ),
+            "v5 uuid",
+        ),
     ],
 )
 def test_a_missing_or_malformed_identifier_is_rejected_and_writes_nothing(

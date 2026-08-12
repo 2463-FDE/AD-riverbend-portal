@@ -1,5 +1,6 @@
 """Validation tests for the multi-step intake payload (intake-service/schemas.py)."""
 import json
+import uuid
 
 from conftest import load_module
 import pytest
@@ -105,6 +106,48 @@ def test_consent_kind_members_are_pinned_to_five_literals():
         "financial_responsibility_ack",
         "communications_opt_in",
     }
+
+
+# --- submission_id is a v4 UUID, not merely UUID-shaped (Codex review, PR #76) --
+# The validator used to accept anything UUID() parses, so the nil UUID, a v1
+# (timestamp/MAC) value and a v5 (name-derived) value all passed. Two of those are
+# identifiers a caller can arrive at without meaning to: the nil UUID is what an
+# uninitialized field serializes to, and a v5 derived from patient values is what a
+# "make the key deterministic" convenience commit produces — and either one, sent
+# for two different patients, replays the FIRST patient's chart (E5-SPEC-36) while
+# a v5 also puts derived-from-PHI bits in a log line, a response and a column
+# (E5-SPEC-38/39). What this check does NOT buy is randomness: a constant v4 such
+# as 11111111-1111-4111-8111-111111111111 still passes, because no syntactic test
+# can prove a value was drawn at random. The portal's mint (frontend/app/intake/
+# payload.ts) is what makes it random; this narrows the accidental cases only.
+
+_DERIVED_FROM_PATIENT_VALUES = uuid.uuid5(uuid.NAMESPACE_DNS, "Jane Roe|1985-03-12|111223333")
+
+
+@pytest.mark.parametrize(
+    "value, label",
+    [
+        ("00000000-0000-0000-0000-000000000000", "nil"),
+        (str(uuid.uuid1()), "v1 (timestamp/MAC)"),
+        (str(_DERIVED_FROM_PATIENT_VALUES), "v5 (name-derived)"),
+    ],
+)
+def test_a_uuid_that_is_not_v4_is_rejected(value, label):
+    with pytest.raises(ValidationError):
+        schemas.IntakeRequest(
+            submission_id=value, demographics={"name": "Jane Roe"}
+        )
+
+
+def test_a_v4_identifier_is_accepted_and_canonicalized():
+    """The narrowing must not cost E5-SPEC-40's canonicalization: two spellings of
+    one v4 identifier still have to collapse to one value, or both could claim a
+    registration row."""
+    minted = str(uuid.uuid4())
+    req = schemas.IntakeRequest(
+        submission_id="{" + minted.upper() + "}", demographics={"name": "Jane Roe"}
+    )
+    assert req.submission_id == minted
 
 
 # --- log_metadata emits only allowlisted, non-PHI facts (the D1 log fix) --------

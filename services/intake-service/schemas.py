@@ -77,17 +77,37 @@ class IntakeRequest(BaseModel):
     @field_validator("submission_id")
     @classmethod
     def submission_id_well_formed(cls, v: str) -> str:
-        """Canonicalize through UUID, or reject.
+        """Canonicalize through UUID and require version 4, or reject.
 
         Canonicalizing normalizes case and bracing, so two spellings of one
         identifier cannot both claim a registration row. A rejection here is a
         pydantic 422 — a rejection by the submitted values, which is e4's
         correctable-at-the-desk branch (E4-SPEC-6, E5-SPEC-40).
+
+        The version check is the contract's own word (``contracts/
+        intake-registration.json``: "a client-generated UUIDv4") held to. Without
+        it the nil UUID, a v1 and a v5 all parse, and the first two of those are
+        identifiers a caller reaches by accident rather than by choice — an
+        uninitialized field serializes to the nil UUID, and a v5 is what a "make
+        the key deterministic" change produces. One identifier reused across two
+        patients replays the FIRST patient's chart (E5-SPEC-36), and a v5 derived
+        from patient values also carries those bits into a log line, a response
+        and a stored column (E5-SPEC-38, E5-SPEC-39).
+
+        Know its limit: this narrows the accidental cases, it does not prove
+        randomness. A constant v4 passes, because the version and variant bits are
+        four bits of self-report, not evidence. What makes the identifier random
+        is the portal's mint (``frontend/app/intake/payload.ts``), and what makes
+        the reused-key case survivable at all is that the caller is inside the
+        gateway's session boundary.
         """
         try:
-            return str(UUID(v))
+            parsed = UUID(v)
         except (ValueError, AttributeError, TypeError):
             raise ValueError("submission_id must be a UUID")
+        if parsed.version != 4:
+            raise ValueError("submission_id must be a version 4 UUID")
+        return str(parsed)
 
 
 class IntakeResponse(BaseModel):
