@@ -616,6 +616,38 @@ worked example, each answering the last one's gap. That is convergent, not diver
 it is convergent because the artifacts are documents nobody executes; the same shape in
 code is PR #7.
 
+PR #77 r1 — 4 findings: **2 A / 0 B / 0 C**, **2 refuted** · the first round where half the
+findings asserted that work in the diff was absent. (1) [medium] **A** — the README claimed
+header ownership but never said which stage may write which field, and the `plan DRAFT`
+advance was assigned by no file at all (six skills state their own header write;
+`plan-authoring` stated none). Fixed with a field→writer table (`9fb793d`). The conflict the
+finding actually named — `delivery IMPLEMENTED` vs `## Plan` status — was not real; the
+grammar block already carried both axes. (2) [medium] **E** — "the frozen spec contradicts
+the mutable `test:` cell" is resolved by the delegation the section table sets up:
+`spec-authoring` owns Spec rules and carves the column out at `SKILL.md:26-27` and `:43-45`.
+Declined rather than duplicated into the README (`CLAUDE.md` §10). (3) [high] **E** — "the
+diff does not show the README update", against a diff whose README change is 160 lines and
+the largest file in the PR; all six items named as missing were cited back by line.
+(4) [medium] **A/E, split** — the 400-line budget was genuinely homeless (one hit repo-wide,
+marked "owned here", no dated decision, no rationale), and is now a dated shape decision with
+its basis and its `CLAUDE.md` §11 advisory ceiling; the pinned-test diff in the same finding
+was **not** homeless — the rule is `spec-authoring` step 6's freeze scope, and only the gate's
+"(owned here)" label was wrong.
+**Lesson: a finding that asserts absence is the cheapest kind to check and the most expensive
+kind to comply with.** Both E findings here were absence claims, and complying with the second
+would have copied a 160-line contract section into the skills that delegate to it — manufacturing
+exactly the duplicate-source-of-truth failure the one-file shape exists to remove. The check is
+one command (`git diff main...HEAD --stat`) and it ran before any editing. **Generalizes: triage
+an absence claim with a diff command before it earns a fix, and when it survives, ask whether
+the missing thing is missing or delegated — a review that cannot see the contract file reports
+delegation as absence.** Second, smaller: **an "(owned here)" annotation is a claim and grep
+settles it** — the same finding covered one rule that was homeless and one that was homed
+elsewhere and mislabeled, and only reading both against the tree separated them.
+**Process note:** this round had no fresh-context gate available — neither gate can run on a
+tooling PR (both key on an item's spec and plan; a skill file has none), so codex was the only
+adversarial reader and it misread the diff. Filed as TODO-64, not fixed inside the PR under
+review.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
