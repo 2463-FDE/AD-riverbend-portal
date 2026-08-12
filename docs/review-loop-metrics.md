@@ -675,6 +675,33 @@ round could first see them.** Second: **when two documents contradict, look for 
 that depends on one of them** — the decode table settled which half was wrong here, and settled
 it in one read, where arguing the merits of dry rounds would not have converged.
 
+PR #77 r3 — 6 findings: **1 A / 0 B / 0 C**, 5 refuted · **the round the absence claim came
+back**, and the round-3 rule's first application to a non-code PR. The headline finding is r1's
+F3 restated — "the README isn't shown carrying those definitions" — against a README that is
+the largest file in the diff and had grown twice since, by the reviewer's own two prior rounds
+(`9fb793d`, `f55592c`). Two more were the same shape: the branch/merge lifecycle it asked the
+README to state is the README's Landing rule, and the pinned-test lifecycle it asked for is
+`spec-authoring` step 6. (3) [medium] **A** — both gates say "README owns the round format"
+while the section table assigned `## Findings` rules to the stage skill and the README carried
+only the heading and numbering; with the inline templates removed, the pointer led to half a
+rule. README now carries the row shape and the empty-disposition convention the decode table
+keys on (`cab5e5b`). (4) [low] **E**, edit taken (`6cd8bc4`) — the pinned-test lifecycle was
+intact in `spec-authoring` and asked about twice, which is a discoverability defect even when
+the rule is not. Two suggestions declined with cites: deltas-only wants a worked example (five
+delivered plans are the examples), residuals-by-ID wants summaries (`docs/todo.md`'s line format
+already guarantees a self-contained line per id).
+**Lesson: a reviewer that cannot see the artifact will keep reporting delegation as absence,
+and each repetition costs a round even when the answer is a citation.** Three of six findings
+this round, and two of four in r1, were absence claims about a file in the diff; every one was
+closed by quoting line numbers, and none moved the code. That is not a reviewer defect to
+route around — it is the measured cost of this PR class having **no fresh-context gate**: both
+gates key on an item's spec and plan, a tooling PR has neither, so the only adversarial reader
+is the one worst placed to check the contract (TODO-64). **Generalizes: when the same absence
+claim survives a refutation with line cites, stop answering it and fix the reachability instead
+— r3's one real finding was exactly that, a pointer that led to half a rule — and count the
+repeat rounds as evidence for the missing gate rather than as review noise to absorb.** Cost
+here: three rounds, of which one produced two real defects (r2) and one produced one (r3).
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
