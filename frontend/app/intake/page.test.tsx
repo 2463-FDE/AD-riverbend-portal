@@ -276,6 +276,98 @@ describe("intake submission identifier (E5-SPEC-26, E5-SPEC-35, E5-SPEC-38)", ()
     expect(second).not.toBe(first);
   });
 
+  // E5-SPEC-43, plan D-20. The pair to "same attempt": an edited form is a
+  // DIFFERENT attempt. Without this the operator who lost a response, corrected
+  // a typo and resubmitted would keep sending the original attempt's identifier
+  // — answered, before the service-side fix, with a confirmation of the chart
+  // that never got the correction (codex PR #76 round 2), and after it with a
+  // 409 the form would resubmit forever. The re-mint is the operator-facing
+  // resolution; the 409 is defence in depth for non-portal callers.
+  const submittedIds = () =>
+    apiFetch.mock.calls.map(
+      (call) => JSON.parse((call[1] as { body: string }).body).submission_id,
+    );
+
+  // The review step has no fields, so an edit is what the operator actually
+  // does: Back to the consents step, toggle one, Continue.
+  function editOneField(label: RegExp) {
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+    fireEvent.click(screen.getByLabelText(label));
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+  }
+
+  async function resubmit(response: () => void) {
+    response();
+    fireEvent.click(screen.getByRole("button", { name: /submit intake/i }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /submit intake/i })?.hasAttribute("disabled"))
+        .not.toBe(true),
+    );
+  }
+
+  it("treats an edit after a failed submit as a new attempt (E5-SPEC-43)", async () => {
+    render(<IntakePage />);
+    await submitWith(503, { detail: "registration store unavailable" });
+
+    editOneField(/release of information/i);
+    await resubmit(() => apiFetch.mockResolvedValueOnce(jsonResponse(201, { patient_id: 5001 })));
+
+    const ids = submittedIds();
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it("mints once for several edits between two submits (E5-SPEC-43)", async () => {
+    // The flag is cleared by the first edit, so the second does not mint again:
+    // one unconfirmed submit plus any number of corrections is ONE new attempt,
+    // and the retry of that attempt still has to be replayable.
+    render(<IntakePage />);
+    await submitWith(503, { detail: "registration store unavailable" });
+
+    editOneField(/release of information/i);
+    editOneField(/financial responsibility/i);
+    await resubmit(() =>
+      apiFetch.mockResolvedValueOnce(jsonResponse(503, { detail: "registration store unavailable" })),
+    );
+    await resubmit(() => apiFetch.mockResolvedValueOnce(jsonResponse(201, { patient_id: 5001 })));
+
+    const ids = submittedIds();
+    expect(ids).toHaveLength(3);
+    expect(ids[1]).not.toBe(ids[0]);
+    // Two edits, one new identifier; and the unedited retry of the second
+    // attempt still carries it, or a lost response could not be replayed.
+    expect(ids[2]).toBe(ids[1]);
+  });
+
+  it("counts a submit that never reached the portal as unconfirmed (E5-SPEC-43)", async () => {
+    // The network-error catch is exactly the lost window E5-SPEC-24 names: the
+    // request may have registered. An edit after it must still be a new attempt.
+    render(<IntakePage />);
+    await fillWizard();
+    apiFetch.mockRejectedValueOnce(new Error("network down"));
+    fireEvent.click(screen.getByRole("button", { name: /submit intake/i }));
+    await screen.findByText(/could not reach the portal/i);
+
+    editOneField(/release of information/i);
+    await resubmit(() => apiFetch.mockResolvedValueOnce(jsonResponse(201, { patient_id: 5001 })));
+
+    const ids = submittedIds();
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it("keeps the identifier when a rejected submission is retried unchanged", async () => {
+    // A correctable rejection recorded nothing, so the unedited retry creates
+    // the registration rather than replaying — and reusing the identifier keeps
+    // the guarantee if the rejection was in fact a lost success.
+    render(<IntakePage />);
+    await submitWith(422, { detail: "submission_id must be a version 4 UUID" });
+
+    await resubmit(() => apiFetch.mockResolvedValueOnce(jsonResponse(201, { patient_id: 5001 })));
+
+    const ids = submittedIds();
+    expect(ids[1]).toBe(ids[0]);
+  });
+
   it("derives the identifier from nothing the operator typed (E5-SPEC-38)", async () => {
     // A key hashed from name/DOB/SSN would put PHI in a log line, a response
     // body and a stored column at once — and would collide for two genuine
