@@ -57,6 +57,12 @@ SSN = "123-45-6789"
 MEMBER_ID = "BCBS4471"
 GROUP = "GRP-77812"
 PHI = (NAME, DOB, SSN, MEMBER_ID, GROUP)
+# These four cases call _create_registration directly, below the fail-closed key
+# guard in create_intake, so no key fixture is needed — the function takes the
+# already-computed fingerprint as its third argument (E5-SPEC-41). A literal
+# stands in for it: what is under test here is that a failing write logs no
+# submitted value, and the fingerprint is never reached by the failure path.
+FINGERPRINT = "e5-fingerprint-literal"
 
 
 NEW_ID = 4242
@@ -144,7 +150,7 @@ def test_patient_insert_failure_does_not_leak_row(caplog):
     )
     with caplog.at_level(logging.ERROR):
         with pytest.raises(app_mod.HTTPException) as exc_info:
-            app_mod._create_registration(db, _request())
+            app_mod._create_registration(db, _request(), FINGERPRINT)
     assert exc_info.value.status_code == 503
     _assert_no_phi(caplog, exc_info)
 
@@ -158,7 +164,9 @@ def test_coverage_insert_failure_does_not_leak_member_id(caplog):
     with caplog.at_level(logging.ERROR):
         with pytest.raises(app_mod.HTTPException) as exc_info:
             app_mod._create_registration(
-                db, _request(insurance={"member_id": MEMBER_ID, "group_number": GROUP})
+                db,
+                _request(insurance={"member_id": MEMBER_ID, "group_number": GROUP}),
+                FINGERPRINT,
             )
     assert exc_info.value.status_code == 503
     _assert_no_phi(caplog, exc_info)
@@ -177,7 +185,7 @@ def test_consent_insert_failure_logs_class_only(caplog):
     )
     with caplog.at_level(logging.ERROR):
         with pytest.raises(app_mod.HTTPException):
-            app_mod._create_registration(db, _request())
+            app_mod._create_registration(db, _request(), FINGERPRINT)
     errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
     assert errors, "consent failure must log an ERROR record"
     for msg in errors:
@@ -197,6 +205,6 @@ def test_consent_insert_failure_is_no_longer_swallowed(caplog):
     )
     with caplog.at_level(logging.ERROR):
         with pytest.raises(app_mod.HTTPException) as exc_info:
-            app_mod._create_registration(db, _request())
+            app_mod._create_registration(db, _request(), FINGERPRINT)
     assert exc_info.value.status_code == 503
     assert db.rollbacks == 1

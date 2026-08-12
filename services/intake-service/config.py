@@ -113,6 +113,25 @@ class Settings:
         os.getenv("REGISTRATION_LOCK_WAIT_SECONDS", "5")
     )
 
+    # The key for the submission content fingerprint (e5, plan D-19;
+    # E5-SPEC-41/42). The fingerprint decides whether a request carrying an
+    # already-recorded submission_id is a replay of the same attempt or an
+    # EDITED retry that must not be answered with a confirmation of content the
+    # chart never received.
+    # Empty by default and FAIL-CLOSED, in the /ai paths' style: with no key set,
+    # POST /intake answers 503 rather than fingerprinting unkeyed. The default is
+    # deliberately not a real value — a hardcoded default key is a published key,
+    # and an unkeyed hash over guessable fields (DOB, SSN, member id) is a
+    # dictionary-reversible confirmation oracle, which is not something to put in
+    # a persisted column. Never "fix" a red suite by giving this a non-empty
+    # default; tests set it on the loaded settings object instead.
+    # Rotating it invalidates every recorded fingerprint: a lost-confirmation
+    # retry that straddles a rotation answers 409, the operator re-enters on a
+    # fresh mount, and the duplicate pair is queued for human review — accepted
+    # (plan Landmines), and recorded in .env.example.
+    # Not a timeout: the budget invariants above are untouched by it.
+    registration_fingerprint_key = os.getenv("REGISTRATION_FINGERPRINT_KEY", "")
+
     # payer settings kept for parity with the legacy module; the real X12 270/271
     # round-trip is owned by eligibility-service.
     payer_api_url = os.getenv("PAYER_API_URL", "https://edi.example.com/v1/eligibility")

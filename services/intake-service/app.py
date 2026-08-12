@@ -35,13 +35,19 @@ Inherited shortcomings (left as-is from the handoff):
     a fault mid-sequence left a half-registered patient behind a 201. Atomicity
     is per-request, not cross-service: a commit whose response is lost in
     transit still leaves a row the operator never sees confirmed. That is closed
-    as of 2026-08-11 (e5, E5-SPEC-24..40) — the caller names the submission
+    as of 2026-08-11 (e5, E5-SPEC-24..43) — the caller names the submission
     attempt (submission_id), the record binds it to the registration inside the
     same transaction, and a repeat of the attempt replays that registration
-    instead of forking a second chart. Register-first / async re-verification is
+    instead of forking a second chart. A repeat is only a repeat if the content
+    matches the recorded keyed fingerprint (E5-SPEC-41): an edited retry after a
+    lost response is a different attempt and is refused (409, E5-SPEC-42),
+    never answered with a confirmation of content the chart never received.
+    Register-first / async re-verification is
     the other half of the same class and is still open (above): this makes the
     retry safe, register-first shrinks the window that makes it necessary.
 """
+import hashlib
+import hmac
 import json
 import os
 import time
@@ -140,18 +146,26 @@ def create_intake(req: IntakeRequest, db: Session = Depends(get_db)):
     # demographics, so the same human submitted twice with two identifiers still
     # forks two charts and is still only queued for review. That is D5, and it
     # stays open by design.
+    #
+    # The identifier alone names the ATTEMPT, not its content. Computed here,
+    # before the lookup, so the fail-closed key guard cannot be bypassed by a
+    # replay-shaped request (E5-SPEC-41, plan D-19).
+    fingerprint = _payload_fingerprint(req)
     replayed = _find_registration(db, req.submission_id)
     if replayed is not None:
-        patient_id = replayed
+        patient_id = _match_or_conflict(replayed, fingerprint)
     else:
         try:
-            patient_id = _create_registration(db, req)
+            patient_id = _create_registration(db, req, fingerprint)
         except _SubmissionAlreadyRecorded:
             # A concurrent request carrying the same identifier won the race
             # (E5-SPEC-32). It has committed by definition — that is what
             # released the lock our insert was waiting on — so one re-read is
-            # enough and nothing polls.
-            patient_id = _require_registration(db, req.submission_id)
+            # enough and nothing polls. The loser's content is compared too: it
+            # may differ from the winner's, and answering the winner's
+            # patient_id for different content is the same silent confirmation
+            # E5-SPEC-42 exists to refuse.
+            patient_id = _require_registration(db, req.submission_id, fingerprint)
         else:
             # D5 (partly remediated, ADR 0005 / W2): still no MPI, and every
             # intake inserts a brand new chart even for a returning patient — W2
@@ -224,36 +238,114 @@ def _bound_the_collision_wait(db: Session) -> None:
     db.execute(text(f"SET LOCAL lock_timeout = '{milliseconds}ms'"))
 
 
-def _find_registration(db: Session, submission_id: str) -> Optional[int]:
-    """The patient this submission identifier already registered, if any."""
+def _payload_fingerprint(req: IntakeRequest) -> str:
+    """A keyed, non-reversible digest of what this submission asked for.
+
+    The submission identifier names the ATTEMPT; it says nothing about the
+    content. Without this, an operator who lost a response, corrected a typo'd
+    DOB or member id and resubmitted was answered 201 for the ORIGINAL chart —
+    the desk saw a confirmation while the edit was silently dropped (codex
+    review round 2 on PR #76, spec D-18). So a replay is a replay only when the
+    content matches (E5-SPEC-30); a mismatch is E5-SPEC-42's 409.
+
+    KEYED, never a plain hash (E5-SPEC-41): the input is DOB, SSN, member id and
+    a handful of other guessable fields, and the digest is persisted. A plain
+    SHA-256 of that would let anyone holding the column confirm a guessed
+    patient by recomputing it — a dictionary-reversible oracle over PHI. HMAC
+    with a secret the database does not carry makes the stored value inert.
+
+    FAIL-CLOSED on a missing key, in the /ai paths' style, and computed BEFORE
+    the replay lookup so a replay-shaped request cannot slip past the guard. The
+    answer is the existing store-unavailable 503: this is a deployment fault,
+    not something the desk can correct, and the portal already renders it in the
+    system-failure branch.
+
+    Computed from the VALIDATED model, so spellings that validate identically
+    (a braced identifier, a reordered consent list) fingerprint identically and
+    a genuine re-submission still replays.
+    """
+    key = settings.registration_fingerprint_key
+    if not key:
+        # Configuration, not content: no submitted value in this message.
+        log.error(
+            "intake: REGISTRATION_FINGERPRINT_KEY is not set — refusing to register "
+            "with an unkeyed content fingerprint"
+        )
+        raise HTTPException(status_code=503, detail="registration store unavailable")
+    dump = req.model_dump(mode="json")
+    # The identifier is the key this fingerprint is stored under, not part of
+    # the content it describes.
+    dump.pop("submission_id", None)
+    # use_enum_values makes these plain strings; order is a form artefact, not a
+    # difference in what was consented to.
+    dump["consents"] = sorted(dump.get("consents") or [])
+    canonical = json.dumps(dump, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hmac.new(key.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+
+
+def _match_or_conflict(recorded: tuple[int, str], fingerprint: str) -> int:
+    """The recorded registration if this really is a replay of it, else a 409.
+
+    E5-SPEC-42. Nothing is created and nothing is modified: the recorded row and
+    the chart it names are exactly as the original attempt left them. The detail
+    is a constant — a mismatch is a statement about content, and echoing any of
+    it would put submitted values in a response and a log line.
+
+    When the portal's re-mint holds (E5-SPEC-43) this is unreachable from the
+    portal: an edited form is a new attempt with a new identifier. It is the
+    service-side guarantee for every other caller.
+    """
+    patient_id, recorded_fingerprint = recorded
+    if not hmac.compare_digest(recorded_fingerprint or "", fingerprint):
+        # The patient id only — the same value the 201 line already carries.
+        # Never the differing fields, never either fingerprint: one is a keyed
+        # digest of PHI and the pair would say which request changed what.
+        log.warning(
+            "intake: a recorded submission was replayed with different content, "
+            "refusing (patient_id=%s)",
+            patient_id,
+        )
+        raise HTTPException(status_code=409, detail="registration submission conflict")
+    return patient_id
+
+
+def _find_registration(db: Session, submission_id: str) -> Optional[tuple[int, str]]:
+    """The registration this submission identifier already produced, if any.
+
+    Returns the patient id AND the fingerprint recorded with it: whether a
+    request naming this identifier is a replay is decided by the content, not
+    by the identifier alone (E5-SPEC-41).
+    """
     try:
-        return db.execute(
-            select(RegistrationSubmission.patient_id).where(
-                RegistrationSubmission.submission_id == submission_id
-            )
-        ).scalar_one_or_none()
+        row = db.execute(
+            select(
+                RegistrationSubmission.patient_id,
+                RegistrationSubmission.payload_fingerprint,
+            ).where(RegistrationSubmission.submission_id == submission_id)
+        ).one_or_none()
     except SQLAlchemyError as e:
         db.rollback()
         # Class only, same rule as _create_registration below.
         log.error("intake: failed to read the submission record (%s)", type(e).__name__)
         raise HTTPException(status_code=503, detail="registration store unavailable")
+    return None if row is None else (row[0], row[1])
 
 
-def _require_registration(db: Session, submission_id: str) -> int:
+def _require_registration(db: Session, submission_id: str, fingerprint: str) -> int:
     """The winner's registration after we lost the race, or a 503.
 
     Missing here means the row that rejected our insert has vanished, which is
     not a state a caller can act on — it is the store misbehaving, so it takes
     the same answer as any other store failure.
     """
-    patient_id = _find_registration(db, submission_id)
-    if patient_id is None:
+    recorded = _find_registration(db, submission_id)
+    if recorded is None:
         log.error("intake: submission record vanished after a unique violation")
         raise HTTPException(status_code=503, detail="registration store unavailable")
-    return patient_id
+    return _match_or_conflict(recorded, fingerprint)
 
 
-def _create_registration(db: Session, req: IntakeRequest) -> int:
+def _create_registration(db: Session, req: IntakeRequest, fingerprint: str) -> int:
     """Patient + coverage + consents, or nothing (E4-SPEC-4).
 
     One transaction, one commit. The three writes used to commit separately —
@@ -266,7 +358,9 @@ def _create_registration(db: Session, req: IntakeRequest) -> int:
     to: a record written outside it would either claim an identifier for a
     registration that then failed — so the retry replays a chart that does not
     exist — or leave a committed registration unclaimed, which is the window
-    this whole path exists to close.
+    this whole path exists to close. The content fingerprint is written with it,
+    in the same transaction and for the same reason (E5-SPEC-41): a record that
+    cannot say WHAT was registered cannot tell a replay from an edited retry.
     """
     try:
         _bound_the_collision_wait(db)
@@ -300,7 +394,11 @@ def _create_registration(db: Session, req: IntakeRequest) -> int:
             db.add(Consent(patient_id=patient_id, kind=kind))
         # Same transaction, same commit (E5-SPEC-29).
         db.add(
-            RegistrationSubmission(submission_id=req.submission_id, patient_id=patient_id)
+            RegistrationSubmission(
+                submission_id=req.submission_id,
+                payload_fingerprint=fingerprint,
+                patient_id=patient_id,
+            )
         )
         db.commit()
         return patient_id

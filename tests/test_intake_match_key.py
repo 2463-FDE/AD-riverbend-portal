@@ -69,6 +69,11 @@ class _StubResult:
         # attempt, which is what makes the match key run at all.
         return self._rows[0] if self._rows else None
 
+    def one_or_none(self):
+        # Same lookup, since the replay decision reads two columns — the patient
+        # id and the recorded content fingerprint (E5-SPEC-41).
+        return self._rows[0] if self._rows else None
+
 
 class _StubSession:
     """Session double that models the two things the hook depends on: the
@@ -135,6 +140,21 @@ class _StubSession:
             self.queue.append(pair)
             return _StubResult([])
         return _StubResult([])
+
+
+@pytest.fixture(autouse=True)
+def fingerprint_key(monkeypatch):
+    # These tests call create_intake directly, and it computes the content
+    # fingerprint before anything else (E5-SPEC-41, plan D-19) — with no key set
+    # it fails closed with a 503 and no registration happens at all. config.py
+    # reads os.getenv in the CLASS BODY, so the environment is read at import
+    # time and setenv cannot reach it; patch the loaded settings object app.py
+    # holds instead.
+    #
+    # NEVER repair this with a non-empty default in config.py: a default key is a
+    # published key, and an unkeyed fingerprint of guessable fields is a
+    # dictionary-reversible confirmation oracle over a persisted column.
+    monkeypatch.setattr(app_mod.settings, "registration_fingerprint_key", "e5-test-key")
 
 
 def _demographics(name="Maria Gonzalez", dob="1971-03-02", address="12 Elm St", ssn=SSN):

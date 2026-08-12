@@ -91,6 +91,21 @@ def session_factory():
     engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def fingerprint_key(monkeypatch):
+    # config.py reads os.getenv in the CLASS BODY, so the environment is already
+    # read by import time and a monkeypatch.setenv here cannot reach it — patch
+    # the loaded object app.py holds (`from config import settings` makes it the
+    # same instance). Without a key _payload_fingerprint fails closed with a 503
+    # before any read or write, so every POST /intake here would 503 instead of
+    # registering (E5-SPEC-41, plan D-19).
+    #
+    # NEVER repair this with a non-empty default in config.py: a default key is a
+    # published key, and an unkeyed fingerprint of guessable fields is a
+    # dictionary-reversible confirmation oracle over a persisted column.
+    monkeypatch.setattr(app_mod.settings, "registration_fingerprint_key", "e5-test-key")
+
+
 @pytest.fixture
 def client(session_factory, monkeypatch):
     def _override():

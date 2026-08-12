@@ -46,6 +46,7 @@ app_mod = load_module("services/intake-service/app.py", "intake_app_idem")
 config_mod = sys.modules["config"]
 db_mod = sys.modules["db"]
 models_mod = sys.modules["models"]
+schemas_mod = sys.modules["schemas"]
 for _name, _module in _saved.items():
     if _module is not None:
         sys.modules[_name] = _module
@@ -53,7 +54,14 @@ for _name, _module in _saved.items():
         sys.modules.pop(_name, None)
 
 
-def _request(submission_id, name="Sample Patient", ssn="000000000", dob="1985-03-12"):
+def _request(
+    submission_id,
+    name="Sample Patient",
+    ssn="000000000",
+    dob="1985-03-12",
+    member_id="EXMP000001",
+    consents=("npp_ack", "treatment_consent"),
+):
     return {
         "submission_id": submission_id,
         "demographics": {
@@ -68,11 +76,11 @@ def _request(submission_id, name="Sample Patient", ssn="000000000", dob="1985-03
         },
         "insurance": {
             "payer_name": "Example Health",
-            "member_id": "EXMP000001",
+            "member_id": member_id,
             "group_number": "GRP-0001",
             "plan_type": "PPO",
         },
-        "consents": ["npp_ack", "treatment_consent"],
+        "consents": list(consents),
     }
 
 
@@ -84,6 +92,21 @@ def session_factory():
     db_mod.Base.metadata.create_all(engine)
     yield sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
     engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def fingerprint_key(monkeypatch):
+    # config.py reads os.getenv in the CLASS BODY, so the environment is already
+    # read by import time and a monkeypatch.setenv cannot reach it — patch the
+    # loaded settings object (config_mod is the same instance app.py holds).
+    # Without a key _payload_fingerprint fails closed with a 503 before any read
+    # or write, so every POST /intake in this module would 503 (E5-SPEC-41, plan
+    # D-19). The fail-closed test below defeats this fixture on purpose.
+    #
+    # NEVER repair this with a non-empty default in config.py: a default key is a
+    # published key, and an unkeyed fingerprint of guessable fields is a
+    # dictionary-reversible confirmation oracle over a persisted column.
+    monkeypatch.setattr(config_mod.settings, "registration_fingerprint_key", "e5-test-key")
 
 
 @pytest.fixture
@@ -194,7 +217,7 @@ def test_a_failed_registration_records_no_submission(client, session_factory, mo
     registration that did not survive leaves no identifier claimed — otherwise a
     retry of a submission that never registered anything would replay a chart
     that does not exist."""
-    def _boom(db, req):
+    def _boom(db, req, fingerprint):
         db.rollback()
         raise app_mod.HTTPException(status_code=503, detail="registration store unavailable")
 
@@ -207,6 +230,238 @@ def test_a_failed_registration_records_no_submission(client, session_factory, mo
         "consents": 0,
         "submissions": 0,
     }
+
+
+# --------------------------------------------------------------------------- #
+# a replay must match the recorded content (E5-SPEC-41, E5-SPEC-42)
+# --------------------------------------------------------------------------- #
+CONFLICT_DETAIL = "registration submission conflict"
+
+
+def _stored_patient(session_factory):
+    session = session_factory()
+    try:
+        patient = session.query(models_mod.Patient).one()
+        coverage = session.query(models_mod.InsuranceCoverage).one()
+        return {"dob": patient.dob, "member_id": coverage.member_id}
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize(
+    "edited, changed_value, label",
+    [
+        ({"dob": "1985-03-21"}, "1985-03-21", "demographics"),
+        ({"member_id": "EXMP000999"}, "EXMP000999", "insurance"),
+        (
+            {"consents": ("npp_ack", "treatment_consent", "roi_consent")},
+            "roi_consent",
+            "consents",
+        ),
+    ],
+)
+def test_a_recorded_identifier_with_different_content_is_refused(
+    client, session_factory, caplog, edited, changed_value, label
+):
+    """E5-SPEC-42. The identifier names the ATTEMPT; it does not say the content
+    is the same. Answering 201 for an edited retry confirms a chart that never
+    received the edit — the defect codex found on PR #76 round 2, where the desk
+    saw success and the stored DOB was still the typo.
+
+    The refusal must also be silent about content: the detail is a constant, and
+    nothing in the response or the log echoes what changed."""
+    submission_id = str(uuid.uuid4())
+    first = client.post("/intake", json=_request(submission_id))
+    assert first.status_code == 201
+    before = _counts(session_factory)
+    stored_before = _stored_patient(session_factory)
+
+    with caplog.at_level(logging.INFO):
+        retry = client.post("/intake", json=_request(submission_id, **edited))
+
+    assert retry.status_code == 409, label
+    assert retry.json()["detail"] == CONFLICT_DETAIL
+    # Nothing created, nothing modified: the recorded row and the chart it names
+    # are exactly as the original attempt left them.
+    assert _counts(session_factory) == before
+    assert _stored_patient(session_factory) == stored_before
+    assert changed_value not in retry.text
+    # The refusal's own log records, not the request-metadata line: that line is
+    # the D1 projection, and it carries the consent kinds by design (a closed,
+    # pinned vocabulary — schemas.ConsentKind). What must never appear is what
+    # the refusal knows and nothing else does: the differing values, or either
+    # fingerprint, which together would say which request changed what.
+    refusal = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert refusal, "the refusal must log something — an unexplained 409 is unoperable"
+    for record in refusal:
+        message = record.getMessage()
+        assert changed_value not in message
+        assert "fingerprint=" not in message
+
+
+def test_an_edited_retry_after_a_lost_response_is_refused_and_the_chart_stands(
+    client, session_factory
+):
+    """E5-SPEC-42, codex PR #76 round 2, end to end. The scenario as reported:
+    the registration commits, the response is lost, the operator corrects a
+    typo'd DOB and member id and resubmits. It used to answer 201 for the
+    original chart in 0.03s while `SELECT dob, member_id` still returned the
+    originals — the same query proves the fix."""
+    submission_id = str(uuid.uuid4())
+    first = client.post(
+        "/intake", json=_request(submission_id, dob="1985-03-12", member_id="EXMP000201")
+    )
+    assert first.status_code == 201
+
+    corrected = client.post(
+        "/intake", json=_request(submission_id, dob="1985-03-21", member_id="EXMP000999")
+    )
+
+    assert corrected.status_code == 409
+    assert _stored_patient(session_factory) == {
+        "dob": "1985-03-12",
+        "member_id": "EXMP000201",
+    }
+    assert _counts(session_factory)["patients"] == 1
+    # The 409 must not echo the edited insurance either. The old behaviour
+    # re-verified eligibility on the REQUEST's insurance, so the 201 confirmed a
+    # member id the chart never received.
+    assert "EXMP000999" not in corrected.text
+
+
+def test_a_reordered_consent_list_is_the_same_attempt(client, session_factory):
+    """E5-SPEC-30, plan D-19. The fingerprint is computed over the VALIDATED
+    payload with the consents sorted, so a genuine re-submission whose form
+    happened to serialize the same consents in another order still replays. A
+    later "optimization" to hashing the raw body reddens here — and would turn
+    every such retry into a 409 the operator cannot get past."""
+    submission_id = str(uuid.uuid4())
+    first = client.post(
+        "/intake", json=_request(submission_id, consents=("npp_ack", "treatment_consent"))
+    )
+    second = client.post(
+        "/intake", json=_request(submission_id, consents=("treatment_consent", "npp_ack"))
+    )
+
+    assert second.status_code == 201
+    assert second.json()["patient_id"] == first.json()["patient_id"]
+    assert _counts(session_factory)["patients"] == 1
+
+
+def test_a_collision_loser_carrying_different_content_is_refused(
+    client, session_factory, monkeypatch
+):
+    """E5-SPEC-32 x E5-SPEC-42. The loser of the race compares too. Its payload
+    may differ from the winner's, and answering the winner's patient_id for
+    different content is the same silent confirmation the mismatch path exists
+    to refuse — just reached by the concurrent route rather than the sequential
+    one."""
+    submission_id = str(uuid.uuid4())
+    winner = client.post("/intake", json=_request(submission_id))
+    assert winner.status_code == 201
+    before = _counts(session_factory)
+
+    real_find = app_mod._find_registration
+    lookups = {"n": 0}
+
+    def _blind_on_the_first_look(db, sid):
+        lookups["n"] += 1
+        return None if lookups["n"] == 1 else real_find(db, sid)
+
+    monkeypatch.setattr(app_mod, "_find_registration", _blind_on_the_first_look)
+
+    loser = client.post("/intake", json=_request(submission_id, dob="1985-03-21"))
+
+    assert loser.status_code == 409
+    assert loser.json()["detail"] == CONFLICT_DETAIL
+    assert _counts(session_factory) == before
+
+
+# --------------------------------------------------------------------------- #
+# the fingerprint key (E5-SPEC-41, plan D-19)
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("recorded", [False, True], ids=["fresh", "recorded"])
+def test_an_unkeyed_service_refuses_to_register_at_all(
+    client, session_factory, monkeypatch, recorded
+):
+    """E5-SPEC-41, fail-closed. An unkeyed fingerprint of guessable fields is a
+    dictionary-reversible confirmation oracle, and it reaches a persisted
+    column — so with no key the service refuses rather than degrading to a plain
+    hash or skipping the comparison. The guard runs BEFORE the replay lookup, so
+    a request naming an already-recorded identifier cannot slip past it either.
+
+    This test defeats the autouse key fixture on purpose: it is the one case
+    whose whole subject is the missing key."""
+    submission_id = str(uuid.uuid4())
+    if recorded:
+        assert client.post("/intake", json=_request(submission_id)).status_code == 201
+    before = _counts(session_factory)
+
+    monkeypatch.setattr(config_mod.settings, "registration_fingerprint_key", "")
+    r = client.post("/intake", json=_request(submission_id))
+
+    assert r.status_code == 503
+    assert r.json()["detail"] == "registration store unavailable"
+    assert _counts(session_factory) == before
+
+
+def test_the_fingerprint_is_keyed_and_reveals_no_submitted_value():
+    """E5-SPEC-41, docs/landmines.md §3. Two properties, both load-bearing: the
+    digest carries none of the values it was computed over, and it depends on
+    the key — a refactor to a plain `hashlib.sha256(...)` of the same payload
+    would still pass the first check while making the column a reversible oracle
+    over DOB/SSN/member id, and only the second catches it."""
+    req = schemas_mod.IntakeRequest(
+        submission_id=str(uuid.uuid4()),
+        demographics={
+            "name": ADVERSARIAL["name"],
+            "ssn": ADVERSARIAL["ssn"],
+            "dob": ADVERSARIAL["dob"],
+            "notes": "smuggled Quentin Gonzalez 123456789",
+        },
+        insurance={"member_id": "EXMP000777"},
+        consents=["npp_ack"],
+    )
+
+    original = config_mod.settings.registration_fingerprint_key
+    try:
+        config_mod.settings.registration_fingerprint_key = "key-one"
+        first = app_mod._payload_fingerprint(req)
+        config_mod.settings.registration_fingerprint_key = "key-two"
+        second = app_mod._payload_fingerprint(req)
+    finally:
+        config_mod.settings.registration_fingerprint_key = original
+
+    assert first != second, "the fingerprint does not depend on the key — is it a plain hash?"
+    for value in (*ADVERSARIAL.values(), "EXMP000777", "smuggled"):
+        assert value not in first
+        assert value not in second
+
+
+def test_the_stored_fingerprint_carries_no_submitted_value(client, session_factory):
+    """E5-SPEC-41 as persisted. The column is the artefact a later reader (or a
+    database dump) meets, so the scan runs against what is actually stored, not
+    only against what the helper returns."""
+    body = _request(
+        str(uuid.uuid4()),
+        name=ADVERSARIAL["name"],
+        ssn=ADVERSARIAL["ssn"],
+        dob=ADVERSARIAL["dob"],
+        member_id="EXMP000777",
+    )
+    assert client.post("/intake", json=body).status_code == 201
+
+    session = session_factory()
+    try:
+        stored = session.execute(
+            select(models_mod.RegistrationSubmission.payload_fingerprint)
+        ).scalar_one()
+    finally:
+        session.close()
+
+    assert len(stored) == 64 and all(c in "0123456789abcdef" for c in stored)
+    for value in (*ADVERSARIAL.values(), "EXMP000777", "1 Example Way"):
+        assert value not in stored
 
 
 # --------------------------------------------------------------------------- #
@@ -553,4 +808,50 @@ def test_no_code_path_expires_or_prunes_a_submission_record():
     assert offenders == [], (
         "a submission record is deleted, pruned or truncated somewhere — "
         f"E5-SPEC-34 keeps them forever: {offenders}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# the DDL the collision path keys on (E5-SPEC-29, E5-SPEC-32, E5-SPEC-41)
+# --------------------------------------------------------------------------- #
+_DDL_FILES = ("db/migrations/010_registration_submissions.sql", "db/schema.sql")
+
+
+def _ddl_text(name):
+    root = pathlib.Path(__file__).resolve().parent.parent
+    return (root / name).read_text()
+
+
+@pytest.mark.parametrize("name", _DDL_FILES)
+def test_the_unique_constraint_is_named_the_name_the_collision_path_matches(name):
+    """E5-SPEC-32. `_is_submission_collision` matches the constraint BY STRING,
+    and nothing in these SQLite tests can tell whether the real DDL issues that
+    name: an inline `submission_id TEXT NOT NULL UNIQUE` makes Postgres name it
+    `registration_submissions_submission_id_key`, which matches neither the
+    constraint name nor the SQLite spelling. _SubmissionAlreadyRecorded would
+    then never be raised, a routine concurrent collision would fall through to
+    the 503 branch instead of replaying, and E5-SPEC-33's imprecise answer would
+    swallow the evidence — visible only against real Postgres."""
+    text_ = _ddl_text(name)
+    assert app_mod._SUBMISSION_CONSTRAINT in text_, (
+        f"{name} does not name the constraint {app_mod._SUBMISSION_CONSTRAINT}"
+    )
+    for line in text_.splitlines():
+        stripped = line.strip().lower()
+        if stripped.startswith("submission_id") or stripped.startswith("submission_id "):
+            assert "unique" not in stripped, (
+                f"{name} spells the constraint inline on the column — Postgres would "
+                "name it registration_submissions_submission_id_key and the collision "
+                "path would stop recognising it"
+            )
+
+
+@pytest.mark.parametrize("name", _DDL_FILES)
+def test_both_ddl_files_carry_the_fingerprint_column(name):
+    """E5-SPEC-41, docs/landmines.md §2 (schema.sql and the migration are
+    hand-synced). The replay comparison reads this column; a file that lacks it
+    means a fresh volume and an upgraded one disagree about whether a replay can
+    be checked at all."""
+    assert "payload_fingerprint" in _ddl_text(name), (
+        f"{name} is missing payload_fingerprint — the two files have drifted"
     )
