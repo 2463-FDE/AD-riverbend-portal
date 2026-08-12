@@ -167,8 +167,10 @@ Status: requirements DRAFT → requirements AGREED → spec FROZEN → plan DRAF
 | `delivery MERGED <sha>` | delivered; the stamp is the post-merge `noncode-merge` edit |
 
 A round is numbered within its stage only. A dry round is one `checked:` line naming what
-it covered — a dry round's value is knowing what it checked. A stage that has produced no
-finding has no rounds.
+it covered — a dry round's value is knowing what it checked. **Every gate run leaves a
+round**: its findings when it has them, a dry `checked:` round when it is clean. The
+decode table reads "no Gate round" as *the gate has not run*, which is only sound if a
+clean run still records one. A stage that has not run has no rounds.
 
 ## Ground rules
 
