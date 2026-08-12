@@ -93,6 +93,33 @@ authoring rules — this README owns only the shape-level rules below the table.
 
 Shape-level rules, owned here:
 
+- **Header fields and their writers.** Three fields; each transition has exactly one
+  writing stage, and no other stage edits the header.
+
+  | Header field / transition | Written by |
+  |---|---|
+  | one-line item description | `requirement-synthesis`, at file creation |
+  | `Baseline at branch:` | `implementation`, once, at branch cut |
+  | `Status:` → `requirements DRAFT` → `requirements AGREED` | `requirement-synthesis` |
+  | `Status:` → `spec FROZEN` | `spec-authoring` |
+  | `Status:` → `plan DRAFT` | `plan-authoring` |
+  | `Status:` → `plan GATED` | `drift-gate` |
+  | `Status:` → `delivery DRAFT` → `delivery PUSHED PR #n` | `implementation` |
+  | `Status:` → `delivery IMPLEMENTED` | `impl-gate` |
+  | `Status:` → `delivery MERGED <sha>` | `noncode-merge` |
+
+  Once delivery starts the line carries **both axes** (`plan GATED · delivery DRAFT`): a
+  delivery transition never rolls back the plan stamp, and a section's own `Status:` and
+  the header always agree. Each writing stage advances the header in the same edit that
+  stamps its own section — the two never diverge across sessions.
+- **Size budget (decided 2026-08-12 with the shape).** Default cap **400 lines** per
+  `docs/workflow/<item>.md`, checked at the impl gate (`.claude/skills/impl-gate/`),
+  raised only by a stage-tagged decision in the item's own register that says why. Basis:
+  e5 carried ~2,600 artifact lines across five files and the shape targets roughly an
+  order of magnitude less, so 400 is that target plus headroom — a backstop, not a target
+  to fill. The authoring rules (deltas only, evidence by reference, ≤5-line notes) do the
+  real work. Skill-run, so **advisory by construction** (`CLAUDE.md` §11): it fails no
+  build unless the owner moves it into CI or the `Makefile`.
 - **Decision register.** One per item, stage-tagged (`req` / `spec` / `plan`), IDs
   `<item>-D-n` allocated once and **never renumbered** — withdrawn or revised entries stay
   visible (strike-through, primes), same id discipline as `docs/todo.md`. Rationale that

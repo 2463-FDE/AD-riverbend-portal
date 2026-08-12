@@ -34,16 +34,16 @@ own drift (same lesson as `.claude/skills/drift-gate/`).
 advisory by construction — `CLAUDE.md` §11 — until the owner moves one into CI or the
 Makefile):
 
-1. **Pinned-test diff (owned here).** Diff the frozen spec table's `test:` cells against
+1. **Pinned-test diff** (the rule is the freeze scope in `.claude/skills/spec-authoring/`
+   step 6 — the check is owned here). Diff the frozen spec table's `test:` cells against
    the branch: every cell filled with a real test id, and **no pinned test renamed,
    removed, or behaviourally rewritten without a matching owner decision ID in the
    register**. A changed pinned test with no decision is a red finding — the executable
    half of the contract moves only the way the prose half does.
-2. **Size budget (owned here).** `wc -l docs/workflow/<item>.md` — over the **400-line
-   default budget** is a red finding unless a stage-tagged decision in the item's own
-   register raises the budget and says why. The cap is a backstop against prose regrowth,
-   not a target; the authoring rules (deltas only, evidence by reference, ≤5-line notes)
-   do the real work and this catches what slips.
+2. **Size budget** (the threshold and its rationale are the README's dated 2026-08-12
+   shape decision — the check is owned here). `wc -l docs/workflow/<item>.md` — over the
+   **400-line default budget** is a red finding unless a stage-tagged decision in the
+   item's own register raises the budget and says why.
 3. **`cmd:` checks.** Run every `cmd:` cell in the spec table; expected output must
    match.
 4. **`gate:` checks.** Execute every `gate:` cell (hand-run assertions, click-ops state

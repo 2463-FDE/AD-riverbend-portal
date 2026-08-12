@@ -7,7 +7,8 @@ description: Stage 3 of the delivery workflow (docs/workflow/README.md). Turn a 
 
 Input: `docs/workflow/<item>.md` with `## Spec` at `Status: FROZEN`. Refuse to start from
 a DRAFT — the spec changes only through stage 2 by explicit owner decision.
-Output: the `## Plan` section at `Status: DRAFT`, ready for the drift gate.
+Output: the `## Plan` section at `Status: DRAFT` (header `Status:` advanced), ready for
+the drift gate.
 
 **The plan is deltas only — nothing the diff will show.** Its contents, in full:
 
