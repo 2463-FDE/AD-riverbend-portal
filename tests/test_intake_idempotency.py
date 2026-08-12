@@ -194,7 +194,18 @@ def test_the_replay_is_indistinguishable_from_the_original(client):
     """E5-SPEC-31. No replay marker, no new status: the retry is the confirmation
     the operator lost, so the response model and status must be the ones the
     first attempt answered with (requirements D-5). Only elapsed_seconds, a
-    measurement, may differ."""
+    measurement, may differ.
+
+    Scope of the eligibility assertion, which is narrower than the test's name:
+    it holds because the payer stub here is deterministic. What the service
+    guarantees is the *registration* — the identifier replays a chart, never a
+    recorded verdict. The replay re-runs the live, bounded, breaker-guarded hop
+    (`_verify_eligibility_guarded`), so a payer that genuinely changed state,
+    timed out or tripped the breaker between attempts answers differently. That
+    is accepted residual 5 (plan D-14), and it is open because the verdict
+    reaches no column at all (docs/debt-log.md D4 residual 3). Raised twice by
+    codex review on PR #76 (rounds 3 and 4); persisting the verdict is the fix,
+    and it is new state, so it is stage-3 work rather than a line here."""
     body = _request(str(uuid.uuid4()))
 
     first = client.post("/intake", json=body)
