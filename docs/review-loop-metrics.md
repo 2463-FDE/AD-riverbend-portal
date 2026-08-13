@@ -702,6 +702,179 @@ claim survives a refutation with line cites, stop answering it and fix the reach
 repeat rounds as evidence for the missing gate rather than as review noise to absorb.** Cost
 here: three rounds, of which one produced two real defects (r2) and one produced one (r3).
 
+PR #76 r1 — 1 finding: **1 A / 0 B / 0 C**, 0 refuted · **[high] A, fixed, with the
+reviewer's claim scoped down.** `submission_id` was validated as "parses as a UUID", so the
+nil UUID, a v1 and a v5 all passed; the recommendation was to require v4. The observation is
+right and was confirmed at runtime before touching the code — a v5 built from `name|dob|ssn`
+registered `201` and its derived value landed in the `POST /intake meta=` log line — so the
+version check landed (7 tests, all red first; live: nil/v1/v5 → 422 writing nothing, a v4
+pair → one chart). **What did not land is the reviewer's account of what it buys.** The
+finding credits the check with closing "a client that sends a constant key replays the first
+patient's chart", and it does not: `11111111-1111-4111-8111-111111111111` is a valid v4, and
+v4 bits can be stamped on a hash of patient values, so the check proves neither randomness
+nor non-derivation. It closes the *accidental* class only (an uninitialized field serializes
+to the nil UUID; a "make the key deterministic" change produces a v5). Taking the fix while
+restating the guarantee cost one extra paragraph in the validator docstring, a scoping clause
+on the PHI register row, and residual 7 in the pr-body.
+**Lesson: accepting a fix and accepting its rationale are separable, and the second is where
+the damage is.** Had the version check shipped described as the reviewer described it, the
+next reader of the PHI register would have found "the boundary rejects derived identifiers"
+and stopped checking the mint — a control that reads stronger than it is, sited in exactly
+the register that exists to be trusted. Fixing the code was one line; not letting the code
+carry a false guarantee was the rest of the round. **Generalizes: when a review recommends a
+syntactic check for a semantic property (random, fresh, unguessable, owned-by), take the
+check if the accidental cases are worth closing, and write down which property it did not
+establish — in the artifact a later reader will consult, not only in the reply.**
+
+PR #76 r2 — 1 finding: **1 A / 0 B / 0 C**, 0 refuted · **[high] A, accepted and
+routed back through stage 2 and stage 3 rather than patched in the round.** The
+replay was keyed on `submission_id` alone, so a lost response followed by a
+*corrected* resubmit answered `201` for the original chart and dropped the edit;
+confirmed at runtime before any decision, and worse than reported — the replay
+re-verified eligibility on the *request's* insurance, so the response echoed the
+edited member id while the chart kept the old one. The code implemented
+E5-SPEC-30 exactly as written, so the defect was the **spec's**: D-5 decided
+"the replay is indistinguishable from the original success" for identical
+content and was never weighed against the edit-after-failure case. The fix is a
+persisted keyed fingerprint — new state, the skill's structural trigger — so it
+went spec amendment → plan revision → fresh-context re-gate (round 9) → this
+implementation, which added 14 tests and cost one extra day rather than one
+review round.
+**Lesson: a finding can be about the diff and still not be fixable in the diff.**
+The routing test that worked here was not severity, it was *whose statement is
+wrong*: the code matched its clause, so patching the code would have put the
+branch out of sync with a frozen spec, and the fingerprint would have arrived as
+unplanned persisted state in a review round — which is how every B round in this
+baseline started. **Generalizes: when the code correctly implements a clause the
+review has just shown to be wrong, the round's output is an amendment, not a
+patch; say so in the disposition and name the stage it went back to, so the next
+round reads the 409 in the diff as planned work rather than as improvisation.**
+Cost of doing it properly, measured: spec amendment 2, plan rounds 7–9, and a
+second implementation session; the visible-residual count in the pr-body went
+from 7 to 10, which is the price of the new state being real.
+
+PR #76 r3 — 2 findings: **1 A / 0 B / 0 C**, 0 refuted, 1 answered from the
+record · **[high] restated residual, closed from the record** — "a replay
+re-runs live eligibility instead of replaying the original verdict" is accepted
+residual 5 verbatim (plan D-14). No code change, closed with an anchored comment;
+the reviewer's remedy is `debt-log` D4 residual 3, already open and the reason
+the residual exists. **[high] A, fixed at full scope** — the fingerprint guard
+was a bare presence check while `.env.example` shipped a marked dev placeholder,
+so a deploy seeded by CI's `cp .env.example .env` would have keyed PHI-derived
+fingerprints with a committed value. Now: placeholder sentinels + a 32-character
+floor, template shipped empty, +11 tests.
+**Lesson: an accepted residual can be narrower than what was delivered, and only
+the diff shows the gap.** The pr-body accepted "the fingerprint is PHI-derived
+and must stay keyed" and the plan (D-19) explicitly chose a template placeholder;
+both were written about the *mechanism*, and neither noticed that the guard's
+whole strength was `if not key`. **Generalizes: when a residual's safety rests on
+a guard, the residual text must state what the guard actually checks, not what it
+is for — "keyed" hid a presence check for two rounds.** Also the first entry
+where the estate's own precedent was the whole argument: `llm_client`'s
+`_PLACEHOLDER_BEARER_TOKENS` answered this exact question in PR #5 r5, its
+rationale sits fourteen lines below the contradicting value in the same
+`.env.example`, and nothing in the pipeline reads one guard against its
+neighbours — the plan stage, three gate rounds and two impl-gate rounds all
+passed over it.
+**On the round-3 rule**, which fired here: it earned its place. The two findings
+wanted opposite dispositions — one reaffirmed at no cost, one a real PHI-path
+defect fixed in full — and both were [high], so severity would not have sorted
+them. That per-finding split is the call the rule reserves for the owner.
+
+PR #76 r4 — 1 finding: **0 A / 0 B / 0 C**, 0 refuted, 1 answered from the
+record · **the same finding as r3 #1, re-raised verbatim after a dry re-tag** —
+"a replay re-runs live eligibility instead of returning a recorded verdict",
+same anchor, same remedy. No code change; the owner decision of the previous day
+was honoured and cited rather than re-argued. r3's other finding (the
+fingerprint-key guard) did not return, so the branch is **dry on new findings**
+at r4.
+**Lesson: an accepted residual that the diff makes visible does not stop coming
+back — it is not paid once.** The pipeline's own line (`.claude/skills/implementation/`
+"Landing") says to expect *a* round per visible residual; this is the first
+measurement of a residual billed **twice**, and the second answer cost the same
+work as the first. §4's earlier reading — two entries, PR #72 and #74 — should now be
+read as: the reviewer re-derives from the diff every round, so the cost of a
+visible residual is per-round, not per-PR, for as long as the loop runs. That
+raises the price of accepting a residual on a *long* review loop specifically,
+and it is the strongest argument yet for the "the only thing that reduces the
+cost is accepting fewer of them" line, since nothing written in prose reaches
+the reviewer at all.
+**On dryness:** a round that returns only a restated residual is the loop's
+terminal state, not progress — re-tagging again would buy another copy of the
+same paragraph. The test worth applying is the one used here — *did this round
+name any mechanism the previous round did not?* — and at r4 the answer was no.
+**Owner decision 2026-08-12: re-tag anyway**, on the reasoning that the round is
+cheap, the docstring commit gives the reviewer new lines, and the branch's other
+mechanisms (fingerprint path, collision loser, bounded wait, portal re-mint, the
+r3 key guard) have each been read fewer times than the eligibility hop has. The
+disposition comment says out loud which finding is settled and which surfaces
+are open — worth watching whether steering the reviewer that way changes what
+r5 returns, since nothing else in this ledger has tried it.
+**One thing the repeat did earn**, and the reason a restated residual is not
+pure waste: it pointed at the only delivered artifact that read stronger than
+the residual — a test named `test_the_replay_is_indistinguishable_from_the_original`
+whose eligibility assertion holds only because the stub is deterministic. Taken
+as a docstring scope (`383be97`), assertions untouched, suite unchanged.
+**Generalizes: an accepted residual should be audited against the test *names*
+on its path, not only the prose that records it** — a test name is a claim, and
+it is the claim a reader meets first.
+
+PR #76 r5 — 1 finding: **0 A / 1 B / 0 C**, 0 refuted · **the first B of the
+post-baseline era**, and the r4 bet paid: the eligibility residual did not come
+back a third time, and steering the reviewer at the branch's unread surfaces
+returned a real defect on one of them. The finding is on the path r3's fix
+wrote — emptying `REGISTRATION_FINGERPRINT_KEY` in `.env.example` left a
+template-seeded stack reporting healthy while every registration answered 503,
+because `/healthz` does not exercise the key. Fixed on the branch (`958d46c`),
++8 tests.
+**This B does not fit §3.1.** Every baseline B came from *stateful machinery
+invented mid-review*; this one came from a two-line change to a guard's
+**default**, with no state anywhere near it. The design-gate trigger ("the fix
+introduces or alters state") would not have fired on r3's fix and should not
+have — routing it to stage 3 would have bought nothing. So §3.1's claim stands
+as written about the *baseline*, and this is a second, cheaper B class it does
+not cover: **a fix that changes what a guard refuses by default changes what a
+default deployment can do, and the blast radius is the boot path, not the code
+path.** The tell is available without a design stage — ask "what does a fresh
+checkout / template-seeded deploy now do?" — which is one question, not a gate.
+**Worth watching** whether that question belongs in the fix session's step 4 as
+a checklist item for guard/default changes specifically. One instance is not a
+rule; a second B of this shape would make it one.
+**Cheaper than the baseline's Bs by a wide margin**: found in one round, fixed
+in one commit, no follow-on round attacking the fix — because the fix was a
+*copy of a solved shape in this estate* (`.env.redis`'s generate-at-`make up`),
+not a new mechanism. That is the second time in this item that the winning move
+was "the estate already answered this once, the same way" — r3's own fix cited
+`llm_client::_PLACEHOLDER_BEARER_TOKENS` for exactly the same reason. **Generalizes:
+before designing a fix for a configuration or guard finding, grep the estate for
+the same shape already solved** — it is faster than designing, and it lands a
+consistent answer instead of a second convention.
+
+PR #76 r6 — 1 finding: 1 A / 0 B / 0 C, 0 refuted · **[high] A, fixed** (`a04a02b`) — a
+`pgdata` volume created before the migration never receives `registration_submissions`
+(nothing applies `db/migrations/*.sql`, compose mounts `db/schema.sql` into initdb, which
+runs on a fresh volume only), so `_find_registration` catches the missing relation and
+every registration answers 503. Confirmed in a scratch container seeded from `main`'s
+schema before any decision. **First round of this item to leave the request path** — five
+rounds attacked replay semantics, key material and boot wiring; this one attacked *the
+database that already exists*. **The r5 lesson repeated and now holds twice**: the estate
+had already answered it — `db/schema.sql` is `CREATE TABLE IF NOT EXISTS` throughout, so
+the upgrade needed *exposing* (`make schema-apply`), not building, and the reviewer's two
+suggestions (migrate inside `make up`; fail startup) were both new mechanism. **The new
+lesson is narrower and sharper: verify the obvious answer before recommending it.** The
+one-line reply here was "run `make seed`" — the command `docs/runbook.md` advertised for
+exactly this case. Running it against a populated database showed it skips the explicit-id
+inserts and gives every serial-id table a second copy pointing at the original patients
+(`consents` 403→806, `patients` unchanged), i.e. the recommended remedy corrupts the
+fixture that teaches D5a. A second, pre-existing defect found only because the disposition
+was tested rather than asserted; both are now `docs/debt-log.md` cross-cutting rows.
+**Scope note worth keeping**: the finding was true of `main` before this branch existed
+(three earlier migrations have the same latent break), and the disposition neither
+declined it as out-of-scope nor let it grow into a migration runner — it shipped the
+operator path and filed the runner. Class-closing tests over a one-instance integration
+test: +24 structural, including the hand-sync parity that reddens if any future migration
+and the flattened schema drift.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
@@ -741,3 +914,97 @@ The stop happened, so the line stays; the next entry here will use whatever the 
 riverbend-demo loses all rules after parent rename → rebase-or-retire required; a2 `brief`
 dropped from the /dashboard stage enum; a3 dry-run ledger tag); OD-1 track `.claude/` with
 exclusions, OD-2 fence rewrite + Lens-4 traceability check, OD-3 ledger sited here.
+
+PR #76 r7 — 2 findings: 1 A / 0 B / 0 C · **[high] the round-6 finding re-raised, and the
+first re-raise this item did not answer from the record.** Round 6 accepted the mechanism,
+shipped the operator path and declined both enforcement options; round 7 restated it with
+the same anchor and the same two remedies, and the owner reversed the health half. Fixed in
+`27a05d8`: `/healthz` refuses while any table `Base.metadata` declares is missing, so the
+condition presents as an unhealthy container rather than a green one answering 503 to every
+registration. **The ledger-worthy part is what the re-raise cost and what it bought.** Cost:
+one round. Bought: a fix the disposition-from-the-record path would not have produced —
+round 6's reasoning ("a startup guard converts a fixable operational state into a service
+that will not boot") was sound about *process exit* and was quietly load-bearing for a
+weaker claim, that the signal should stay silent too. The reviewer never distinguished the
+two either; the owner did. **Reading for the loop:** the "answer it from the record" rule
+(fix-session step 2) is right when the record already weighed the remedy the reviewer names,
+and this round is the boundary case — round 6 weighed *both* named remedies and rejected
+them, so the rule fired correctly and the owner overruled it anyway, on a narrower option
+neither the reviewer nor round 6 had put on the table. That is not a rule failure; it is why
+step 2 routes to the owner past round 3 rather than to the fix session. Watch for the
+opposite error next: a re-raise answered from a record that only *looks* like it covered the
+remedy. **[medium] A, accepted as a residual** — the portal's retry id is lost on remount
+(`docs/todo.md` TODO-66). Not patched: the form persists no draft, so persisting the
+identifier alone would attach an old attempt to freshly typed content and refuse a genuinely
+new registration — worse than the gap — and the complete fix writes PHI to browser storage,
+a landmines §1 decision of its own. Second finding this item where the reviewer's stated
+remedy rested on a premise (a draft store; a persisted eligibility verdict) the codebase
+does not have, which is a cheaper thing to check than to argue: read the premise first, then
+the finding. +18 tests; suite 1333 → 1351.
+
+PR #76 r8 — 1 finding: 0 A / 0 B / 0 C, 0 refuted, 1 answered from the record · the remount
+residual accepted at r7 (`docs/todo.md` TODO-66), re-raised at the same anchor with the same
+remedy and **escalated from [medium] to [high] no-ship** with no new evidence and no change
+on that path — `frontend/` is untouched since round 2. Round 7's finding 1 did not return,
+so the owner's overrule landed. **The escalation is the entry worth keeping.** This log's
+§3.4 records that the reviewer never objects to complexity; this round adds that it also
+does not track its own prior severity — the same mechanism, argued the same way, came back
+one round later as a merge blocker. Nothing in the loop reconciles the two, so a severity
+label is a statement about a round, not about a defect, and a disposition that answers "why
+this is accepted" does not lower it. Second measurement of the same shape at r3→r4 (that
+one held its severity and was dropped after two restatements). **What it costs and what to
+watch:** two of this item's eight rounds have now been spent restating settled residuals,
+against one round (r5) where continuing found a real B. The bet is still positive, but the
+tell to watch is a re-raise whose *premise* has already been measured absent — here, a draft
+store the portal does not have, named in both restatements and in the reviewer's own
+suggested test. When a finding's remedy depends on a component that does not exist, checking
+the premise is cheaper than arguing the finding, and it is the same check both times.
+
+**Outcome (2026-08-13): PR #76 closed unmerged, owner decision.** A ninth review arrived —
+the remount finding a third time, still no-ship — and was never dispositioned; the owner
+closed the PR instead and restarted the work as successor item e5b under the current
+staged workflow. The scoreboard at close: eight dispositioned rounds, **5 A / 1 B / 0 C**
+on code, three of the eight spent restating settled residuals. The close is itself the
+entry worth keeping: every surface the reviewer would not let go — the eligibility-replay
+contract, the deploy/health story for a new table, the remount/draft lifecycle — was a
+question the frozen spec had never decided, so the loop was doing spec work at review
+prices (one spec amendment mid-review, D-18, plus a re-gate, plus the restatement rounds).
+The successor starts from a spec that pre-encodes those decisions; whether its review loop
+shortens is the measurable prediction this section can be checked against.
+
+**PR #78 (the e5 close-record docs PR) r1 — 2026-08-13.** 2 findings, **0 A / 0 B / 0 C /
+2 E**, no diff change. Both were improve-suggestions answered with evidence, the W2-r2
+shape: (1) a `make seed` refusal guardrail / `schema-apply` target is runtime code, which
+the noncode path's scope guard excludes and the routing table sends to the registry — the
+filing is in this diff (the seed row's "Fix if taken" clause; the no-runner row naming the
+closed branch's mitigation as cherry-pickable), and the owner call (2026-08-13, land
+without) queues the cherry-pick as a candidate for the restarted e6 defect batch;
+(2) restructuring the debt rows and this ledger into rule-first blocks was declined on the
+documents' own contracts — the register's fast-read surface is its Status column and the
+new rows match every existing cross-cutting row's shape, while this file is append-only
+and compressing its history would rewrite the record it exists to keep; the operator-facing
+current rule lives in `docs/runbook.md`, the change the same review called the best here.
+
+**PR #78 r2 — 2026-08-13.** 2 findings + 1 restatement, **2 A / 0 B / 0 C**, both fixed on
+the branch: (1) [medium] the runbook's manual psql commands used bare `$DB_USER`/`$DB_NAME`
+where the Makefile carries defaults — an operator in a clean shell would connect wrong or
+fail; both commands now mirror the Makefile's own `:-riverbend_app`/`:-riverbend` defaults;
+(2) [low] "delete the `pgdata` volume" named no command — now the exact reset
+(`docker compose down -v`; verified `pgdata` is compose's only named volume, so `-v` is
+bounded). The density suggestion is r1's F2 restated and is answered from that record. The
+r2 [medium] is the round's lesson: **a runbook command is code that runs in the reader's
+shell, not prose** — it inherits none of the Makefile's defaults, so copying a recipe out
+of the Makefile into a doc must copy its environment assumptions too.
+
+**PR #78 r3 — 2026-08-13, loop closed by the round-3 rule.** 2 findings, **1 A / 0 B /
+0 C**, plus the density suggestion's third consecutive restatement, which engaged the
+rule. F1 (the PR summary could read as if seeding were now safe): A, fixed in the PR
+description — one explicit line, "documents the foot-guns, does not remove them,
+guardrail deferred to the restarted e6 batch". F2 (density, r1-F2/r2-F3 restated with a
+concrete variant): **owner disposition 2026-08-13, partial accept** — the two new debt
+rows gain a one-line "Operator action today:" lead (they are new rows, no history
+rewritten; the runbook stays the deep home), the metrics ledger stays as-is per its
+append-only contract, and the full-restructure variant stays declined per the r1/r2
+record. Lesson: a reviewer restating a dispositioned style finding converges when the
+third round's variant is concrete enough to accept partially — the round-3 rule turned
+a stalemate into a bounded improvement, at the cost of the owner's time to decide it.
