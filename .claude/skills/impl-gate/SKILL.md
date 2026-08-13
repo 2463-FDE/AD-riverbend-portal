@@ -1,20 +1,17 @@
 ---
 name: impl-gate
-description: Pre-push gate of the delivery workflow (docs/workflow/README.md) — fresh-context adversarial check of an implementation branch against its GATED plan and frozen EARS spec, before push and codex review. Stamps pr-body.md IMPLEMENTED (the plan header is untouched) or returns findings to stage 4. Use when implementation is complete and the user says "run the impl gate", "pre-push review", or invokes /impl-gate.
+description: Pre-push gate of the delivery workflow (docs/workflow/README.md) — fresh-context adversarial check of an implementation branch against its GATED plan and frozen EARS spec in docs/workflow/<item>.md, before push and codex review. Stamps delivery IMPLEMENTED (the plan stamp is untouched) or returns findings to stage 4. Use when implementation is complete and the user says "run the impl gate", "pre-push review", or invokes /impl-gate.
 ---
 
 # Implementation gate (pre-push)
 
-Input: `docs/workflow/<item>/spec.md` with `Status: AGREED` (frozen),
-`docs/workflow/<item>/plan.md` with `Status: GATED`, and a completed implementation
-branch (unpushed or pushed but pre-review).
-Output: either `docs/workflow/<item>/pr-body.md` stamped `Status: IMPLEMENTED <date>`
-(the delivery artifact carries delivery state — the plan header is not touched by this
-gate), or a findings round appended to the `## Impl gate` section of
-`docs/workflow/<item>/findings.md` and the
-branch back to stage 4 (spec and plan unchanged). The round log — not chat history or
-session memory — carries findings between sessions; workflow state must always be
-derivable from the docs alone.
+Input: `docs/workflow/<item>.md` with `## Spec` `FROZEN` and `## Plan` `GATED`, and a
+completed implementation branch (unpushed, or pushed but pre-review) carrying the
+artifact.
+Output: either the header stamped `delivery IMPLEMENTED <date>` (the plan stamp is not
+touched), or an `### Impl gate — round N, <date>` round appended to `## Findings` and
+the branch back to stage 4 (spec and plan unchanged). The round log — not chat history
+or session memory — carries findings between sessions.
 
 This gate covers what codex review cannot: codex sees the diff but never the spec, the
 plan, or the repo's landmine rules. The impl gate anchors the diff to those artifacts.
@@ -26,115 +23,91 @@ own drift (same lesson as `.claude/skills/drift-gate/`).
 1. **The gate never runs in the session that wrote or amended the implementation.** If
    this session wrote any of the branch's code, stop and tell the owner to invoke the
    gate in a new session.
-2. **The gate session never edits code, plan, or spec.** It reports findings; fixes
-   happen in stage 4 (`.claude/skills/implementation/`), and the fixed branch gets a
-   full fresh gate run. The `## Impl gate` section of `findings.md` and the `pr-body.md`
-   stamp are the only things a gate session writes — never another stage's section.
-   **The impl gate never touches `plan.md`** —
-   plan maturity is stage-3 state; delivery state lives on `pr-body.md`.
+2. **The gate session never edits code, the Requirements/Spec/Plan sections, or anything
+   stage 4 wrote in `## Delivery`.** It writes exactly two things: Impl-gate rounds in
+   `## Findings`, and — on a clean run — the delivery-axis header stamp plus its short
+   gate record appended to `## Delivery`, which is this gate's only Delivery write. Fixes
+   happen in stage 4; the fixed branch gets a full fresh gate run.
 
 ## Process
 
-1. **Read the spec first, alone.** List every SPEC id and note what implemented behaviour
-   you would expect for each. Then read the plan's scope map and Landmines section.
-   Expectations come from the contract, then the diff is tested against them — not the
-   reverse.
-2. **Close the diff against the scope map both ways.** `git diff main...HEAD --stat`,
-   then the full diff. Every changed file traces to a scope-map slice; every planned
-   slice appears in the diff or the PR-body draft (`docs/workflow/<item>/pr-body.md`, a
-   working-tree artifact read from the working tree — not committed on the code branch;
-   it lands on `main` via `noncode-merge` — implementation skill step 6) records why not.
-   A missing
-   pr-body.md is itself a finding. An untraceable file is a finding — unplanned scope,
+**Mechanical half** (each check is a command or lookup, scriptable later; skill-run, so
+advisory by construction — `CLAUDE.md` §11 — until the owner moves one into CI or the
+Makefile):
+
+1. **Pinned-test diff** (the rule is the freeze scope in `.claude/skills/spec-authoring/`
+   step 6 — the check is owned here). Diff the frozen spec table's `test:` cells against
+   the branch: every cell filled with a real test id, and **no pinned test renamed,
+   removed, or behaviourally rewritten without a matching owner decision ID in the
+   register**. A changed pinned test with no decision is a red finding — the executable
+   half of the contract moves only the way the prose half does. The lifecycle, so the two
+   are not confused: **filling a planned name with the final test id is the expected
+   motion of implementation, not a spec change**; renaming, removing, or rewriting a test
+   the spec already pinned is, and takes an owner decision.
+2. **Size budget** (the threshold and its rationale are the README's dated 2026-08-12
+   shape decision — the check is owned here). `wc -l docs/workflow/<item>.md` — over the
+   **400-line default budget** is a red finding unless a stage-tagged decision in the
+   item's own register raises the budget and says why.
+3. **`cmd:` checks.** Run every `cmd:` cell in the spec table; expected output must
+   match.
+4. **`gate:` checks.** Execute every `gate:` cell (hand-run assertions, click-ops state
+   reads); the observation is recorded — quote it in the round or, on a clean run, note
+   it for `## Delivery` via the stage-4 session. A `gate:` row with no recordable
+   observation is a finding.
+
+**Judgment half:**
+
+5. **Read the Spec section first, alone** — expected behaviour per SPEC id — then the
+   plan's change list and Landmines block. Expectations from the contract, then the diff
+   tested against them.
+6. **Close the diff against the change list both ways:** `git diff main...HEAD --stat`,
+   then the full diff. Every changed file traces to a planned change; every planned
+   change appears in the diff or `## Delivery` records why not. A missing Delivery
+   section is itself a finding. An untraceable file is a finding — unplanned scope,
    however helpful-looking, goes back to stage 4.
-3. **Planted-defect check.** For any diff hunk near known defects (`docs/debt-log.md`,
+7. **Planted-defect check.** For any hunk near known defects (`docs/debt-log.md`,
    `docs/landmines.md` §1, the phi-logging register), confirm the change does not
-   silently repair or disturb a teaching artifact. A "helpful" fix of a planted defect
-   is a finding, always.
-4. **Traceability.** Every SHALL clause in the plan's scope map has a test naming its
-   SPEC id, or the plan records why not. Run the branch's own tests if cheap; otherwise
-   verify they exist and assert the behaviour, not just execution.
-5. **Baseline.** Confirm the full-suite result against the pinned baseline in
-   `CLAUDE.md` §6: passed grows by exactly the tests this branch adds; xfailed and
-   deselected must not move. Prefer re-running (`make test-docker` or the 3.12 venv);
-   accept the implementation session's recorded counts only if re-running is impossible,
-   and say so in the record.
-6. **Idiom and rule sweep over the diff only:**
-   - new gateway routes using `_post`/`_get` instead of `_post_checked` (CLAUDE.md §4)
-   - exception logging that includes `str(e)` or PHI-bearing fields on touched paths
-     (`docs/phi-logging-policy.md`)
-   - `Co-Authored-By` trailers in the branch's commits (`CONTRIBUTING.md:53`)
-   - landmine §1 zones touched by the diff without the human approval recorded in the
-     plan's Landmines section
-7. **Verification evidence.** The plan's Verification section was run end-to-end,
-   including negative (break-then-revert) checks — evidence in the implementation
-   session's notes or reproducible now. The PR-body draft
-   (`docs/workflow/<item>/pr-body.md`) discloses which slices ran test-first and which
-   didn't, records every plan deviation with rationale, and copies the plan's accepted
-   residuals.
+   silently repair or disturb a teaching artifact. A "helpful" fix of a planted defect is
+   a finding, always.
+8. **Baseline.** Full-suite result against the header's `Baseline at branch:`: passed
+   grows by exactly the tests the branch adds; xfailed and deselected must not move.
+   Prefer re-running (`make test-docker` or the 3.12 venv); accept recorded counts only
+   if re-running is impossible, and say so in the record.
+9. **Idiom and rule sweep over the diff only:** gateway routes not on
+   `_get_checked`/`_post_checked` (CLAUDE.md §4); exception logging with `str(e)` or
+   PHI-bearing fields on touched paths (`docs/phi-logging-policy.md`); `Co-Authored-By`
+   trailers (`CONTRIBUTING.md:53`); §1 zones in the diff without a recorded approval in
+   the Landmines block.
+10. **Delivery evidence.** The plan's Verification ran end-to-end including negatives,
+    recorded per the stage-4 evidence rule (references and ≤5-line notes, isolation
+    clause present for landmine-adjacent live runs); deviations and test-first
+    disclosures present; residuals are registry IDs only.
 
 ## Outcome
 
-- **Any finding → no stamp.** Append a round to the `## Impl gate` section of
-  `docs/workflow/<item>/findings.md` (create the section on the first-ever impl-gate
-  finding, and the file too if this is the item's first finding of any stage; templates
-  below), findings SPEC-cited where applicable, one line each. Branch returns to stage 4;
-  plan and spec unchanged. Re-gate is a full re-run, fresh session.
-- **Clean → stamp.** On `pr-body.md` (not the plan), set `Status: IMPLEMENTED <date>`
-  and append a short impl-gate record beneath it: date, "impl-gated fresh-context",
-  branch name and HEAD commit, baseline counts observed, and any residuals accepted at
-  this gate. The plan header is left exactly as the drift gate set it (`GATED`). If
-  a `## Impl gate` section exists, close it with a final `### Round N — <date>` reading
-  `Clean — stamped.` The stamp means push-ready; **push itself stays human-gated** per
+- **Any finding → no stamp.** Append `### Impl gate — round N, <date>` to `## Findings`
+  (README owns the round format), SPEC-cited where applicable, one line each, disposition
+  column empty for stage 4. Branch returns to stage 4; re-gate is a full re-run, fresh
+  session.
+- **Clean → stamp.** Advance the header's **delivery axis** to `delivery IMPLEMENTED
+  <date>` — one axis, never the whole line; `plan GATED` stays as the drift gate set it
+  (README) — and append a short
+  gate record in `## Delivery`: date, "impl-gated fresh-context", branch and HEAD commit,
+  baseline observed, `gate:` observations, residuals accepted here. The plan stamp stays
+  exactly as the drift gate set it. Close with a dry `checked:` round line. The stamp
+  means push-ready; **push itself stays human-gated** per
   `.claude/skills/implementation/`.
 
-## Round log (`findings.md` §Impl gate)
-
-One `findings.md` per item holds all three stages' rounds, one `## ` section each; this
-skill owns `## Impl gate` and writes nothing else in the file. Gate sessions append
-rounds; the stage-4 fix session fills dispositions. Round number is the last **in this
-section** plus one (1 for a new section) — never count a neighbouring stage's rounds. The
-impl-gate-stage state decode table lives in `docs/workflow/README.md` ("State decode
-tables"), next to the files it decodes.
-
-File template, used only when `findings.md` does not exist yet:
-
-```markdown
-# <item> findings
-
-> Round log for this item's three gated stages: the drift gate
-> (`.claude/skills/drift-gate/`), the impl gate (`.claude/skills/impl-gate/`), and the
-> `@codex-review` loop (owned by `.claude/skills/implementation/`). Each stage appends
-> rounds under its own heading, created on that stage's first finding; the next-stage
-> session fills the dispositions. Findings only — plan maturity lives in `plan.md`,
-> delivery status in `pr-body.md`.
-```
-
-Section template, appended on the first-ever impl-gate finding. Sections stay in pipeline
-order — `## Gate`, `## Impl gate`, `## Review`:
-
-```markdown
-## Impl gate
-
-### Round 1 — <date>
-
-<n> findings, no stamp.
-
-| # | SPEC | Finding | Disposition (stage 4) |
-|---|------|---------|-----------------------|
-| 1 | <id or —> | <one line> | |
-```
-
-**Round-3 rule:** a third round with any open finding stops the loop. Report to the
-owner, who decides per finding: accept as a named residual, overrule it, or send the
-item back to stage 3 (plan revision, re-gated). Record each decision in the disposition
-cell; the next gate run honors recorded owner decisions rather than re-flagging them.
+Round numbers count this stage's rounds only. **Round-3 rule:** a third round with any
+open finding stops the loop; the owner accepts as a named residual, overrules, or sends
+the item back to stage 3, per finding, recorded in the disposition cell; the next gate
+run honors recorded decisions rather than re-flagging them.
 
 ## Never
 
 - Never gate a branch this session helped write.
-- Never edit code, plan, or spec from the gate session — `findings.md` §Impl gate and the
-  `pr-body.md` stamp are the only things it writes. The plan header is never touched.
+- Never edit code or the artifact's other sections — Impl-gate rounds and the clean-run
+  stamp + gate record are the only writes.
 - Never stamp with an open finding, however minor — minor goes back to stage 4 cheaply.
 - Never fix a finding in-line "while you're there" — analyze-and-amend in one motion
   leaves the final state never checked as a whole.

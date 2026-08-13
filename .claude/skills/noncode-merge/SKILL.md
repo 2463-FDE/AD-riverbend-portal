@@ -65,17 +65,18 @@ review pressure.
 1. **Label** each finding A/B/C/E. A refutation takes evidence from the document's own
    sources (code, git history, the registries) and closes with an anchored comment, no
    edit. A finding that restates a recorded owner decision or an accepted residual is
-   answered from the record (pr-body residuals, plan Landmines section, a findings-round
-   disposition) — not re-litigated; reopening is the owner's call only.
+   answered from the record (the delivery record's residual IDs, the plan's Landmines
+   block, a findings-round disposition) — not re-litigated; reopening is the owner's call
+   only.
 2. **Cluster** findings that share one root cause; fix causes, not instances.
 3. **Route** each cluster by the document that owns the claim:
 
    | Finding target | Route |
    |---|---|
    | Wording, cites, registry upkeep, factual slip in a mutable doc (`docs/**`, ADR body, `.claude/` skill text) | Patch on this branch. |
-   | `requirements.md` content (`AGREED`) | Stage 1: `requirement-synthesis` revises; the owner re-stamps. |
-   | `spec.md` content (frozen) | Owner decision first — a frozen spec never changes silently mid-loop. An accepted amendment runs `spec-authoring` re-freeze, and a downstream `GATED` plan takes a `drift-gate` re-run. |
-   | `plan.md` design content (`GATED`) | Stage 3: `plan-authoring` revises; `drift-gate` re-stamps. |
+   | Requirements content (`AGREED`) — the `## Requirements` section of `docs/workflow/<item>.md`, or `requirements.md` in a five-file item | Stage 1: `requirement-synthesis` revises; the owner re-stamps. |
+   | Spec content (frozen) — `## Spec` section, or `spec.md` | Owner decision first — a frozen spec never changes silently mid-loop. An accepted amendment runs `spec-authoring` re-freeze, and a downstream `GATED` plan takes a `drift-gate` re-run. |
+   | Plan design content (`GATED`) — `## Plan` section, or `plan.md` | Stage 3: `plan-authoring` revises; `drift-gate` re-stamps. |
    | The **code the docs describe**, not the docs | Out of this PR. The record stays faithful to what shipped; file the code finding where the registry contract puts it (`debt-log` risk / `todo` loose end / next item's requirements) and cite the filing in the disposition. |
    | `docs/landmines.md` §1 zone content, `docs/specs-deprecated/**` | Owner only — this skill never touches them (see Never). |
 
@@ -87,7 +88,7 @@ review pressure.
    defer. A stage-routed finding with no recorded owner call blocks the merge. The
    worked example below fixes the wording so the record stays searchable.
 4. **Re-verify:** CI green; if a workflow artifact changed, re-check its stamps, round
-   numbers, and cross-cites against the state decode tables in `docs/workflow/README.md`.
+   numbers, and cross-cites against the state decode table in `docs/workflow/README.md`.
 5. **Close the round:** reply with the `rN:` disposition comment carrying the labels;
    append the ledger line to `docs/review-loop-metrics.md` §4 and **commit it on this same
    branch** — it is non-code and in scope, so unlike the code loop the round log lands
@@ -149,32 +150,26 @@ after landing, not an exception. For each open PR branch from step 0:
    If the branch was never pushed, no gate is needed — just rebase.
 4. **Re-verify code branches.** Rebasing a code branch onto a new `main` invalidates the
    verification behind it. Re-run the suite (`make test-docker`) and confirm the baseline
-   count still holds. If the item's `pr-body.md` carries an `IMPLEMENTED` stamp from
-   `/impl-gate` (the stamp lives on `pr-body.md`, not the branch), it covered the
-   pre-rebase tree — say so, and re-run `/impl-gate` if `main` gained anything that
-   touches the branch's surface.
+   count still holds. If the item carries a `delivery IMPLEMENTED` stamp from
+   `/impl-gate` (on the `docs/workflow/<item>.md` header), it covered the pre-rebase
+   tree — say so, and re-run `/impl-gate` if `main` gained anything that touches the
+   branch's surface.
 5. **Report** per branch: rebased / conflicted / deferred, new head SHA, suite result.
 
 Non-code branches (docs, `.claude/`) need steps 1–3 only.
 
-## Ordering against an open code PR
+## Workflow artifacts on this path
 
-The trap this repo hits: workflow artifacts for a work item (`docs/workflow/<item>/plan.md`,
-`findings.md` — the round log for all three gated stages — and `pr-body.md`, which carries
-the delivery `Status:`) are non-code and qualify for this fast path, so they land on `main`
-while the item's code PR is still open. Result: `main` documents an
-implementation that has not merged, and the code branch does not contain its own
-paperwork.
+For a one-file item (`docs/workflow/<item>.md`, every item from e6 onward): the artifact
+rides its own code branch from branch cut and lands with the code PR, so **the only edit
+this skill ever lands for it is the post-merge status stamp** — the header's delivery axis
+advanced to `delivery MERGED <sha>`, `plan GATED` left standing —
+the README's landing rule. Pre-branch, the file is working-tree only and there is nothing
+to land. Do not land the artifact itself through this path; that produces the conflicting
+second copy the landing rule exists to prevent.
 
-That is acceptable — the stages are decoupled on purpose — but state it explicitly rather
-than letting it happen silently:
-
-- Say, before step 6, which open code PR the artifacts describe and that `main` will
-  briefly claim work that is not yet merged.
-- Do **not** cherry-pick the artifacts onto the code branch; they belong to `main` once,
-  and duplicating them produces a conflicting second copy at that branch's merge.
-- If the artifacts would contradict a still-changing branch (a stamp for a plan whose
-  implementation is still being revised), hold them and land them after the code PR.
+Five-file items are all delivered (their artifacts are on `main`); if one's record ever
+needs a dated correction it comes through here as an ordinary docs patch.
 
 ## Never
 
