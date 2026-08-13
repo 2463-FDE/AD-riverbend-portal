@@ -36,8 +36,12 @@ second copy** — measured 2026-08-13: `consents` 403→806, `insurance_coverage
 255→510, `appointments` 209→418, `roi_requests` 16→32, `audit_logs` 22→44,
 `disclosures` 8→16. The result is a half-duplicated corpus, which is worse than
 either outcome on its own: the new coverage and consent rows point at the
-original patients. To start over, `make down`, delete the `pgdata` volume,
-`make up`.
+original patients. To start over:
+
+```bash
+docker compose down -v    # -v removes pgdata, compose's only named volume
+make up                   # fresh volume → schema + seed run automatically
+```
 
 To regenerate the seed file (deterministic; writes a temp file and renames on
 success, so a failed generator run never truncates the live seed):
@@ -63,7 +67,8 @@ After pulling a change that adds a table, against a running stack, re-apply the
 flattened schema **without** the seed:
 
 ```bash
-docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" < db/schema.sql
+docker compose exec -T postgres psql -U "${DB_USER:-riverbend_app}" \
+  -d "${DB_NAME:-riverbend}" < db/schema.sql
 ```
 
 Every table in `db/schema.sql` is `CREATE TABLE IF NOT EXISTS` (14/14 today),
@@ -76,8 +81,8 @@ migration that changes one — `ALTER TABLE ... ADD COLUMN`, a new constraint �
 is **not** applied by re-running the schema. Apply that migration file by hand:
 
 ```bash
-docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" \
-  < db/migrations/00N_whatever.sql
+docker compose exec -T postgres psql -U "${DB_USER:-riverbend_app}" \
+  -d "${DB_NAME:-riverbend}" < db/migrations/00N_whatever.sql
 ```
 
 Nothing tracks which migrations a given database has already had, so read the

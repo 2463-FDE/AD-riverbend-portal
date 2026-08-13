@@ -984,3 +984,14 @@ documents' own contracts — the register's fast-read surface is its Status colu
 new rows match every existing cross-cutting row's shape, while this file is append-only
 and compressing its history would rewrite the record it exists to keep; the operator-facing
 current rule lives in `docs/runbook.md`, the change the same review called the best here.
+
+**PR #78 r2 — 2026-08-13.** 2 findings + 1 restatement, **2 A / 0 B / 0 C**, both fixed on
+the branch: (1) [medium] the runbook's manual psql commands used bare `$DB_USER`/`$DB_NAME`
+where the Makefile carries defaults — an operator in a clean shell would connect wrong or
+fail; both commands now mirror the Makefile's own `:-riverbend_app`/`:-riverbend` defaults;
+(2) [low] "delete the `pgdata` volume" named no command — now the exact reset
+(`docker compose down -v`; verified `pgdata` is compose's only named volume, so `-v` is
+bounded). The density suggestion is r1's F2 restated and is answered from that record. The
+r2 [medium] is the round's lesson: **a runbook command is code that runs in the reader's
+shell, not prose** — it inherits none of the Makefile's defaults, so copying a recipe out
+of the Makefile into a doc must copy its environment assumptions too.
