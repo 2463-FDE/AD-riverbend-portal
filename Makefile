@@ -1,4 +1,4 @@
-.PHONY: up down logs ps build seed seed-gen psql test test-docker frontend-dev config eval
+.PHONY: up down logs ps build seed schema-apply seed-gen psql test test-docker frontend-dev config eval
 
 # Scoped gateway->ai-assistant secret file. Compose refuses to parse when a
 # listed env_file is missing, so every compose target depends on this. The
@@ -47,9 +47,26 @@ ps: .env.ai-proxy .env.redis .env.registration   ## service status
 build: .env.ai-proxy .env.redis .env.registration ## build all images
 	docker compose build
 
-seed: .env.ai-proxy .env.redis .env.registration ## load schema + demo data (re-runs against a running db)
+seed: .env.ai-proxy .env.redis .env.registration ## load schema + demo data (FRESH db only — see schema-apply)
 	docker compose exec -T postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend} < db/schema.sql
 	docker compose exec -T postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend} < db/seed/seed.sql
+
+# The upgrade path for a volume that predates a migration. db/migrations/*.sql
+# has no runner and compose only mounts db/schema.sql into initdb, which runs on
+# a FRESH volume — so a database created before a migration never receives it and
+# the first service reading the new table answers 503 on every request (PR #76
+# review round 6). Re-applying the flattened schema is what fixes that: every
+# table is CREATE TABLE IF NOT EXISTS, so this creates what is missing and no-ops
+# what is not.
+#
+# Deliberately NOT `make seed`: that target's second half re-runs db/seed/seed.sql,
+# which has no ON CONFLICT anywhere, so on a populated volume the explicit-id
+# inserts error and every serial-id table doubles. Bound, stated in the runbook
+# and pinned by tests/test_schema_upgrade_path.py: IF NOT EXISTS skips an existing
+# table whole, so a migration that ALTERs one (ADD COLUMN) is not applied here and
+# still needs applying by hand.
+schema-apply: .env.ai-proxy .env.redis .env.registration ## apply db/schema.sql to a RUNNING db (adds missing tables, keeps data)
+	docker compose exec -T postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend} < db/schema.sql
 
 # Written through a temp file, not redirected onto the target: since the
 # generator started reading the fixture CSVs it has failure paths (missing

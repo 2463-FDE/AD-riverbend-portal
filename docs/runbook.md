@@ -21,12 +21,23 @@ Endpoints once up:
 ## First-boot data
 
 On a fresh volume Postgres runs `db/schema.sql` then `db/seed/seed.sql`
-automatically (mounted into `/docker-entrypoint-initdb.d`). To reload demo data
-into an already-running DB:
+automatically (mounted into `/docker-entrypoint-initdb.d`). To load schema and
+demo data into a **freshly created, empty** DB:
 
 ```bash
 make seed
 ```
+
+⚠️ **Not an upgrade command, and not a reload.** `db/seed/seed.sql` carries no
+`ON CONFLICT` anywhere, so against a database that already holds the demo data
+the inserts that name their ids (`users`, `patients`, `encounters`, `records`,
+`slots`) error and are skipped, while **every table whose ids are serial gets a
+second copy** — measured 2026-08-13: `consents` 403→806, `insurance_coverages`
+255→510, `appointments` 209→418, `roi_requests` 16→32, `audit_logs` 22→44,
+`disclosures` 8→16. The result is a half-duplicated corpus, which is worse than
+either outcome on its own: the new coverage and consent rows point at the
+original patients. To start over, `make down`, delete the `pgdata` volume,
+`make up`.
 
 To regenerate the seed file (deterministic; writes a temp file and renames on
 success, so a failed generator run never truncates the live seed):
@@ -34,6 +45,41 @@ success, so a failed generator run never truncates the live seed):
 ```bash
 make seed-gen
 ```
+
+## Upgrading a database that predates a migration
+
+`db/migrations/*.sql` has **no runner**, and compose only mounts
+`db/schema.sql` into `/docker-entrypoint-initdb.d`, which Postgres runs on a
+*fresh* volume only. So a `pgdata` volume created before a migration never
+receives it: the first service that reads the new table catches the error and
+answers `503` on **every** request, not just the new path. Registration on an
+old volume without `registration_submissions` is the worked example (e5, PR #76
+round 6); `insurance_coverages`, `roi_requests` and `duplicate_review_queue` are
+the same shape from earlier migrations.
+
+After pulling a change that adds a table, against a running stack:
+
+```bash
+make schema-apply     # applies db/schema.sql; no seed data is touched
+```
+
+Every table in the flattened schema is `CREATE TABLE IF NOT EXISTS`, so this
+creates what is missing and no-ops what is not — existing rows are untouched
+(verified 2026-08-13 against a volume seeded from the pre-migration schema:
+table plus its unique constraint created, `patients` 255→255).
+
+**What it does not do:** `IF NOT EXISTS` skips an existing table *whole*, so a
+migration that changes one — `ALTER TABLE ... ADD COLUMN`, a new constraint —
+is **not** applied by re-running the schema. Apply that migration file by hand:
+
+```bash
+docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" \
+  < db/migrations/00N_whatever.sql
+```
+
+Nothing tracks which migrations a given database has already had, so read the
+file before running it. That gap is `docs/debt-log.md` cross-cutting, "No
+migration runner".
 
 ## Demo accounts
 
