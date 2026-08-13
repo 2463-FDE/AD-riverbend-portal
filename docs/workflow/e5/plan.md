@@ -1,7 +1,55 @@
 # E5 Code Plan — the gateway/portal error contract, and registration idempotency
 
 > Status: GATED 2026-08-11
-> Gate record: gated fresh-context 2026-08-11, round 4 (`findings.md` §Gate) — full re-run
+> Gated fresh-context 2026-08-11, round 9 (`findings.md` §Gate) — full re-run of the
+> round-8-revised plan against the twice-amended spec (E5-SPEC-1..43); branch A verified against
+> the delivered state (chunk 1 merged, PR #74/#75). Residual-named SPECs, accepted and carried
+> into implementation: E5-SPEC-30/31 (a replay re-verifies eligibility — one extra payer hop,
+> D-14), E5-SPEC-33 (the bounded-wait expiry answers imprecisely, D-11; `lock_timeout` proven at
+> verification step 12, `statement_timeout` fallback recorded as a decision if taken),
+> E5-SPEC-34 (submission identifiers retained forever, D-7), E5-SPEC-38 (the v4 boundary check
+> narrows the accidental class only — randomness rests on the portal's mint, D-21), E5-SPEC-40
+> (a portal-bug rejection renders in the correctable-at-the-desk branch, D-10; TODO-62),
+> E5-SPEC-41 (key rotation invalidates recorded fingerprints; the fingerprint is PHI-derived and
+> must stay keyed, D-19).
+> Revised 2026-08-11 after gate round 8 (`findings.md` §Gate), both findings addressed: the v4
+> constraint review round 1 landed (`a1cf9bb`) is now planned text — D-21 records the decision
+> and its named limit, §11's validator block and prose carry the version check, §13 inventories
+> the seven cases, the E5-SPEC-38/40 scope-map rows and Files touched name them, and
+> verification step 14 gains the v5 case with a break-then-revert negative; and two stale cites
+> in remaining-work text are corrected (`config_mod` at `:46`, the confirmation screen at
+> `page.tsx:170-242`). No other text moved.
+> Revised 2026-08-11 after gate round 7 (`findings.md` §Gate), all three findings addressed:
+> §7's DDL is brought to the delivered text — the named `uq_registration_submission_id`
+> constraint `_is_submission_collision` matches, plus the fingerprint column — with a structural
+> pin added in §13; §12 and §13 name the fixture fallout of the fail-closed key (autouse patch of
+> the loaded settings object in the three modules that reach `create_intake`, the `""` case
+> defeating it, and the third `_create_registration` argument in `test_intake_db_error_phi.py`),
+> and §12 states the prohibition on a non-empty default; D-13's branch-B range extends to
+> E5-SPEC-24..43. Verification step 12 gains the matching negative check. No other text moved.
+> Revised 2026-08-11 after codex review round 2 on PR #76 (`findings.md` §Review, round 2) and
+> the spec's second amendment (spec D-18): E5-SPEC-30 is qualified on content and E5-SPEC-41/42/43
+> are new, so §7 gains the fingerprint column, §9 gains the portal re-mint on post-failure edit,
+> §11 gains the fingerprint compute/compare and the mismatch 409, §12 gains the fingerprint key,
+> §13 gains the mismatch and fail-closed tests, and D-19/D-20 record the mechanisms. Chunk 1
+> (branch A) is merged and untouched; chunk 2 is mid-review on PR #76, so this revision lands on
+> the open branch after re-gate. The round-6 stamp below is superseded; re-gate is a full
+> fresh-context re-run against the twice-amended spec.
+> Round-6 gate record (superseded): gated fresh-context 2026-08-11, round 6 (`findings.md` §Gate) — full re-run of
+> the round-5-revised plan against the frozen spec; branch A (E5-SPEC-1..23) verified against
+> the delivered state (chunk 1 merged 2026-08-11, PR #74 code, PR #75 artifacts), branch-B
+> facts re-verified in-repo. Residual-named SPECs, accepted and carried into implementation:
+> E5-SPEC-30/31 (a replay re-verifies eligibility — one extra payer hop, D-14), E5-SPEC-33
+> (the bounded-wait expiry answers imprecisely, D-11; `lock_timeout` must be proven at
+> verification step 12, with the `statement_timeout` fallback recorded as a decision if
+> taken), E5-SPEC-34 (submission identifiers retained forever, D-7), E5-SPEC-40 (a portal-bug
+> rejection renders in the correctable-at-the-desk branch, D-10).
+> Revised 2026-08-11 after gate round 5 (`findings.md` §Gate): §11's bounded-wait template now
+> states the seconds→ms conversion (`n = int(settings.registration_lock_wait_seconds * 1000)`)
+> and §13's dialect pin asserts the issued value (`'5000ms'` at the 5s default), not merely
+> issuance. Chunk 1 (branch A) merged 2026-08-11 (PR #74 code, PR #75 artifacts) under the
+> round-4 stamp; the revision touches only branch B text.
+> Round-4 gate record (superseded): gated fresh-context 2026-08-11, round 4 (`findings.md` §Gate) — full re-run
 > against the amended spec; rounds 1–3 dispositions verified in place, round-3 owner
 > overrules honored. Residual-named SPECs, accepted and carried into implementation:
 > E5-SPEC-30/31 (a replay re-verifies eligibility — one extra payer hop, D-14),
@@ -13,7 +61,8 @@
 > merged) — that lives in `docs/workflow/e5/pr-body.md`. The impl gate does not touch
 > this header.
 > Workflow stage 3 (code plan). Anchors to the frozen spec `docs/workflow/e5/spec.md`
-> (E5-SPEC-1..40, AGREED 2026-08-11; amended 2026-08-11 and re-frozen — E5-SPEC-8 only).
+> (E5-SPEC-1..43, AGREED 2026-08-11; amended 2026-08-11 and re-frozen twice — first E5-SPEC-8
+> only, then D-18: E5-SPEC-30 qualified, E5-SPEC-41/42/43 added).
 > Requirements: `docs/workflow/e5/requirements.md` (AGREED 2026-08-10, amended 2026-08-11).
 > Revised 2026-08-11 after gate round 1 (`findings.md` §Gate): the zero-caller search
 > scoped to the gateway helpers, the portal measurements corrected at source, the patient
@@ -89,7 +138,10 @@ surfaces itself, so no interpretive decision remains to record):
 
 - **D-13 — e5 lands as two branches, chunk 1 first.** Branch A is E5-SPEC-1..23 (gateway
   conversion, portal read surfaces, helper deletion, registry upkeep); branch B is
-  E5-SPEC-24..40 (registration idempotency). Requirements D-1 permits this explicitly; the
+  **E5-SPEC-24..43** (registration idempotency). *(Extended 2026-08-11 after gate round 7: the
+  spec's second amendment appended E5-SPEC-41, E5-SPEC-42 and E5-SPEC-43, which are branch-B
+  work planned into §7/§9/§11/§13 — the range that defines what branch B carries has to say so,
+  or the three new ids belong to no branch.)* Requirements D-1 permits this explicitly; the
   chunks share no code and no seam. Chunk 1 is repointing against a known contract, chunk 2 is
   new persisted state in an approval-gated zone — separate PRs keep each review honest.
 - **D-14 — a replayed registration re-verifies eligibility.** The original verdict is not
@@ -113,6 +165,53 @@ surfaces itself, so no interpretive decision remains to record):
   stores everything as `TEXT`). Minted with `crypto.randomUUID()` where available and from
   `crypto.getRandomValues` otherwise — `randomUUID` is secure-context-only, and the portal is
   not guaranteed to be served over https.
+- **D-19 — the content fingerprint (spec D-18, E5-SPEC-41/42) is an HMAC-SHA256 over the
+  canonical validated payload, keyed by a new server-side secret.** Canonical form:
+  `json.dumps` of the pydantic-validated request minus `submission_id`, with `sort_keys=True`,
+  compact separators, `ensure_ascii=True`, and the `consents` list sorted — consents are a set
+  in meaning, so order must not defeat a replay. Fingerprinting the *validated* model, not the
+  raw body, means two byte-different requests that validate identically replay identically.
+  The key is `REGISTRATION_FINGERPRINT_KEY` (§12), and the guard is **fail-closed**: a missing
+  or empty key answers 503 in the existing "registration store unavailable" branch before any
+  write — an unkeyed fingerprint of guessable fields (DOB, SSN) is a dictionary-reversible
+  confirmation oracle, which E5-SPEC-41 forbids, so degrading to unkeyed is not an option.
+  A mismatch answers **409** with a constant non-PHI detail; `_post_checked` relays downstream
+  status as-is and the portal sends every non-ok status except 400/422 to the system-failure
+  branch (`page.tsx:110-111`), so the 409 lands where E5-SPEC-42 requires with no portal branch
+  edit. The mismatch comparison runs on the replay fast path AND on the collision loser's
+  re-read — the loser's content may differ from the winner's. Migration: **`010_registration_submissions.sql`
+  is amended in place**, not followed by an 011 — 010 exists only on the unmerged PR #76
+  branch, so no environment has run it and amending keeps the PR's migration story one file;
+  a landed migration would have required 011. Key rotation invalidates recorded fingerprints;
+  the consequence is bounded and visible (a post-rotation lost-confirmation retry answers 409
+  → the operator re-enters on a fresh mount → duplicate pair queued for review, E5-SPEC-37)
+  and is recorded in Landmines rather than engineered around with key versioning.
+- **D-20 — the portal re-mints on the first edit after a submit whose outcome was not
+  success** (E5-SPEC-43). `submit()` sets an "attempt submitted" flag in every non-success
+  outcome (failure result *and* the network-error catch — an unconfirmed outcome is exactly
+  the lost window); every form field change funnels through one `touch()` helper that, when
+  the flag is set, mints a fresh `submissionId` and clears the flag. Resubmitting *unchanged*
+  after a failure keeps the identifier (the replay E5-SPEC-26 requires); any edit makes the
+  next submission a new attempt (E5-SPEC-43); several edits between submits mint once. The
+  success screen replaces the form, so a success cannot be edited-and-resubmitted from the
+  same mount.
+- **D-21 — the service requires a version 4 UUID, not merely a UUID-shaped string**
+  (E5-SPEC-38, E5-SPEC-40; codex review round 1 on PR #76, `findings.md` §Review, landed in
+  `a1cf9bb`). Canonicalization alone accepts the nil UUID, a v1 and a v5. Two of those are
+  identifiers a caller reaches by accident: an uninitialized field serializes to the nil UUID,
+  and a v5 is what a "make the key deterministic" change produces — and one identifier sent for
+  two patients replays the **first** patient's chart (E5-SPEC-36), while a v5 derived from
+  submitted values carries those bits into the log projection, the response and a stored column
+  (E5-SPEC-38, E5-SPEC-39; confirmed live before the fix — a v5 over `name|dob|ssn` registered
+  201 and appeared in `POST /intake meta=`). D-17's "UUIDv4" is therefore enforced at the
+  service boundary, not only asserted of the portal's mint, and `contracts/intake-registration.json`
+  words the field as "a client-generated UUIDv4" so both suites read the same constraint.
+  **Named limit, carried in the validator docstring and in the `docs/phi-logging-policy.md`
+  row:** a version check narrows the accidental class, it does not prove randomness — the
+  version and variant bits are self-report, and a constant or hash-stamped v4 passes. The
+  randomness guarantee stays at the portal's mint (§9); this boundary closes the accidental
+  derivations only. Canonicalization is not traded away for it: the v4 case still collapses two
+  spellings to one value (E5-SPEC-40).
 
 ## Scope map (spec → change)
 
@@ -134,11 +233,14 @@ surfaces itself, so no interpretive decision remains to record):
 | E5-SPEC-27 | §8 — `contracts/intake-registration.json` gains `submission_id` on the request side, asserted from both suites |
 | E5-SPEC-28 | §10 — `proxy_intake` forwards the body verbatim; test pins id-in == id-out and no minting |
 | E5-SPEC-29, E5-SPEC-34 | §7 — `registration_submissions` (UNIQUE `submission_id`, FK `patient_id`), written in `_create_registration`'s transaction; no expiry, no pruning |
-| E5-SPEC-30, E5-SPEC-31 | §11 — replay answers 201 with the recorded `patient_id`, same response model, no replay marker (D-14 supplies `eligibility`) |
-| E5-SPEC-32, E5-SPEC-33 | §11 — unique violation → re-read and replay; `lock_timeout` expiry → 503 (D-15) |
+| E5-SPEC-30, E5-SPEC-31 | §11 — a fingerprint-matched replay answers 201 with the recorded `patient_id`, same response model, no replay marker (D-14 supplies `eligibility`) |
+| E5-SPEC-32, E5-SPEC-33 | §11 — unique violation → re-read, fingerprint-check and replay; `lock_timeout` expiry → 503 (D-15) |
 | E5-SPEC-36, E5-SPEC-37 | §11 — an unrecorded identifier always creates a new chart; `_evaluate_match_key` is unchanged, so the pair is still queued and still not merged |
-| E5-SPEC-38, E5-SPEC-39 | §9 — random UUIDv4, derived from no submitted value; §13 negative tests over payload, log line and stored row |
-| E5-SPEC-40 | §11 — a missing or malformed identifier is a pydantic rejection (422), so it lands in e4's correctable-at-the-desk branch |
+| E5-SPEC-38, E5-SPEC-39 | §9 — random UUIDv4, derived from no submitted value; §11 — the service rejects a non-v4 UUID, closing the name-derived v5 case at the boundary (D-21); §13 negative tests over payload, log line and stored row, plus the v4 cases |
+| E5-SPEC-40 | §11 — a missing, malformed or non-v4 identifier is a pydantic rejection (422), so it lands in e4's correctable-at-the-desk branch; canonicalization survives the narrowing (D-21) |
+| E5-SPEC-41 | §7 — `payload_fingerprint` column beside the identifier, written in the same transaction; §11 — keyed HMAC over the canonical validated payload (D-19), fail-closed on a missing key |
+| E5-SPEC-42 | §11 — a recorded identifier with a non-matching fingerprint answers a constant-detail 409, writes nothing, modifies nothing; relayed as-is to the portal's system-failure branch |
+| E5-SPEC-43 | §9 — the portal re-mints the identifier on the first edit after a non-success submit (D-20) |
 | registry upkeep | §5 — `docs/todo.md` TODO-1's deferral line, TODO-62 for the accepted residual (id re-checked at landing per the collision rule) |
 
 ## Implementation
@@ -350,47 +452,76 @@ opposite direction).
 
 ### Branch B — chunk 2: registration idempotency
 
-#### 7. Schema and migration (E5-SPEC-29, E5-SPEC-34) — ⚠ approval-gated
+#### 7. Schema and migration (E5-SPEC-29, E5-SPEC-34, E5-SPEC-41) — ⚠ approval-gated
 
 `db/schema.sql` and a new `db/migrations/010_registration_submissions.sql`, hand-synced per
 `docs/landmines.md` §2. **Recorded human approval before any code is written** — this is the
-migrations zone.
+migrations zone. *(Revised after review round 2 / spec D-18: the table gains
+`payload_fingerprint`, owner approval recorded 2026-08-11 with the amendment; 010 is amended
+in place rather than followed by an 011 because it exists only on the unmerged PR #76 branch —
+D-19.)*
+
+**The constraint is named, and the name is load-bearing.** *(Corrected 2026-08-11 after gate
+round 7.)* The delivered table already carries `CONSTRAINT uq_registration_submission_id UNIQUE
+(submission_id)`, and `services/intake-service/app.py:193-199` matches a collision on exactly
+that string (`_SUBMISSION_CONSTRAINT`, or `_SUBMISSION_COLUMN =
+"registration_submissions.submission_id"` for SQLite's spelling). An inline `submission_id TEXT
+NOT NULL UNIQUE` would make Postgres name it `registration_submissions_submission_id_key`, which
+matches neither — `_SubmissionAlreadyRecorded` would never be raised, a routine concurrent
+collision would fall through to the 503 branch instead of replaying (E5-SPEC-32 fails, and
+E5-SPEC-33's imprecise branch swallows the evidence), and none of it is visible to the SQLite
+unit tests. So the DDL below is stated as the delivered text plus one column, not re-derived,
+and §13 adds a cheap structural pin so the name cannot drift without a red test.
+
+The single edit to both files is the `payload_fingerprint` line. `db/migrations/010_registration_submissions.sql`
+(amended in place — D-19) reads:
 
 ```sql
--- ---------------------------------------------------------------------------
--- Registration submission idempotency (e5, E5-SPEC-29/34)
--- ---------------------------------------------------------------------------
--- One row per completed registration submission, written in the SAME
--- transaction as the patient/coverage/consent rows: a record written outside
--- that transaction reopens the window it exists to close. The UNIQUE index is
--- the mechanism, not an optimization — it decides a concurrent collision and
--- makes replay lookup cheap as the table grows (D-7). No PHI: an opaque
--- client-generated identifier, a patient id and a timestamp.
--- Rows are kept FOREVER. No expiry, no pruning (requirements D-7): a retention
--- horizon is a date past which a late retry silently creates the duplicate this
--- table exists to prevent. The unbounded growth is accepted and recorded.
-CREATE TABLE IF NOT EXISTS registration_submissions (
-    id             SERIAL PRIMARY KEY,
-    submission_id  TEXT NOT NULL UNIQUE,
-    patient_id     INTEGER NOT NULL REFERENCES patients(id),
-    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE registration_submissions (
+    id SERIAL PRIMARY KEY,
+    submission_id TEXT NOT NULL,
+    payload_fingerprint TEXT NOT NULL,
+    patient_id INTEGER NOT NULL REFERENCES patients(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_registration_submission_id UNIQUE (submission_id)
 );
 ```
 
-`services/intake-service/models.py` gains the matching `RegistrationSubmission` model. No other
-service gets it — no other service reads registrations. D8 (the schema has zero indexes) is
-untouched: the UNIQUE index is on the new table only, and no existing table gains one.
+`db/schema.sql:221-227` carries the same table in the flattened file's idiom — `CREATE TABLE IF
+NOT EXISTS`, columns aligned — and gains the same column in the same position. Both files' header
+comments gain the fingerprint's account, in the terms the existing comments already use:
+
+```
+-- No PHI: an opaque client-generated identifier, a keyed non-reversible content
+-- fingerprint (E5-SPEC-41 — HMAC, never a plain hash: a plain hash of guessable
+-- fields is a dictionary-reversible confirmation oracle), a patient id and a
+-- timestamp. The fingerprint decides whether a request carrying a recorded
+-- identifier is a replay of the same attempt (answer the recorded registration)
+-- or a different payload under a reused key (answer 409, E5-SPEC-42).
+```
+
+Everything else in those comments — the same-transaction rule (E5-SPEC-29), the UNIQUE
+constraint as mechanism, the keep-forever paragraph (E5-SPEC-34, requirements D-7) — is already
+delivered text and is not restated here.
+
+`services/intake-service/models.py`'s `RegistrationSubmission` gains the matching
+`payload_fingerprint` column. No other service gets the model — no other service reads
+registrations. D8 (the schema has zero indexes) is untouched: the constraint-backed index is on
+the new table only, and no existing table gains one.
 
 #### 8. The request contract (E5-SPEC-27)
 
 `contracts/intake-registration.json`: `request_fields.root` gains `"submission_id"`, and
-`sample_request` gains a synthetic UUID. Additive on the request side only — nothing is renamed,
+`sample_request` gains a **synthetic v4 UUID** — the `$comment` words the field as "a
+client-generated UUIDv4", which D-21 makes enforceable, and the existing
+`test_the_sample_request_validates_against_the_schema` puts the sample through `IntakeRequest`,
+so a sample edited to a v1 or the nil UUID reddens there. Additive on the request side only — nothing is renamed,
 retyped or removed, and the response side is untouched (requirements §6). Both suites already
 assert `request_fields.root` against their own end (`tests/test_intake_payload_contract.py`,
 `frontend/app/intake/payload.contract.test.ts`), so the declaration is the only place the field
 is introduced and either side drifting reddens its own CI job.
 
-#### 9. The portal mints and reuses the identifier (E5-SPEC-26, E5-SPEC-35, E5-SPEC-38, E5-SPEC-39)
+#### 9. The portal mints, reuses, and re-mints the identifier (E5-SPEC-26, E5-SPEC-35, E5-SPEC-38, E5-SPEC-39, E5-SPEC-43)
 
 `frontend/app/intake/payload.ts`:
 
@@ -415,15 +546,28 @@ export function newSubmissionId(): string {
 
 `buildIntakePayload` takes the identifier as a fourth argument and emits it as a root key.
 `frontend/app/intake/page.tsx` mints it once per mount —
-`const [submissionId] = useState(newSubmissionId)` — so every re-submission of the same attempt
-carries the same value (E5-SPEC-26) and a genuinely new registration, which reaches the form by a
-fresh mount, gets a new one (E5-SPEC-35). The confirmation screen replaces the form entirely
-(`page.tsx:159-231`) and offers no "register another", so a success cannot be re-submitted from
-the same mount.
+`const [submissionId, setSubmissionId] = useState(newSubmissionId)` — so every re-submission of
+the same attempt carries the same value (E5-SPEC-26) and a genuinely new registration, which
+reaches the form by a fresh mount, gets a new one (E5-SPEC-35). The confirmation screen replaces
+the form entirely (`page.tsx:170-242`, the `result?.ok` early return) and offers no "register
+another", so a success cannot be
+re-submitted from the same mount.
 
-Reusing the identifier across a *correctable rejection* retry is deliberate and safe: a rejected
-submission recorded nothing, so the retry with corrected values creates the registration rather
-than replaying.
+**Re-mint on edit after a non-success submit** (E5-SPEC-43, D-20). `submit()` sets a
+`submittedRef` flag in both non-success outcomes — the rendered failure result *and* the
+network-error catch, because an unconfirmed outcome is exactly the lost window E5-SPEC-24 names.
+Every form field change funnels through one `touch()` helper wrapped around the existing
+`setDemo`/`setIns`/`setConsents` call sites; when the flag is set, `touch()` mints a fresh
+identifier and clears the flag. The resulting contract: resubmit *unchanged* after a failure →
+same identifier, replays (E5-SPEC-26); edit *anything* first → new identifier, new attempt
+(E5-SPEC-43); several edits between two submits mint exactly once. A flag in a ref, not state —
+minting must happen synchronously with the first edit, and nothing renders from it.
+
+Reusing the identifier across an *unedited* correctable-rejection retry is deliberate and safe: a
+rejected submission recorded nothing, so the retry creates the registration rather than
+replaying — and a corrected retry re-mints anyway, which after review round 2 is what keeps a
+correction from being silently swallowed by a replay of the uncorrected attempt (E5-SPEC-42's
+scenario, closed at the source).
 
 #### 10. The gateway forwards it unchanged (E5-SPEC-28)
 
@@ -433,7 +577,7 @@ body through. The requirement is that the gateway neither mints, substitutes nor
 gateway-minted identifier would differ on the retry and close nothing — so this lands as a test
 (§13) pinning id-in == id-out over the existing route, not as an edit.
 
-#### 11. The intake service (E5-SPEC-24, 25, 29..33, 36, 37, 40)
+#### 11. The intake service (E5-SPEC-24, 25, 29..33, 36, 37, 40, 41, 42)
 
 `services/intake-service/schemas.py` — `IntakeRequest` gains a required field:
 
@@ -447,14 +591,22 @@ gateway-minted identifier would differ on the retry and close nothing — so thi
         # behaviour, so the guarantee is not conditional on the caller. A
         # rejection here is a pydantic 422 — a rejection by the submitted
         # values, which is e4's correctable-at-the-desk branch (E4-SPEC-6).
+        # The version check is D-21; the docstring carries what it does and
+        # does not establish.
         try:
-            return str(UUID(v))
+            parsed = UUID(v)
         except (ValueError, AttributeError, TypeError):
             raise ValueError("submission_id must be a UUID")
+        if parsed.version != 4:
+            raise ValueError("submission_id must be a version 4 UUID")
+        return str(parsed)
 ```
 
-Canonicalizing through `UUID` normalizes case and rejects anything else, so two spellings of the
-same identifier cannot both claim a row (E5-SPEC-40).
+Canonicalizing through `UUID` normalizes case and bracing, so two spellings of the same
+identifier cannot both claim a row (E5-SPEC-40); the version check then rejects the UUID-shaped
+values the contract does not admit (D-21, E5-SPEC-38). Neither is a proof of randomness — a
+constant v4 passes — so E5-SPEC-38's guarantee stays where §9 puts it, at the portal's mint, and
+the docstring says so rather than letting the version check read as evidence.
 
 `log_metadata` gains `"submission_id"`. It is the correlation key that makes a lost-confirmation
 retry traceable at all, and E5-SPEC-39 anticipates exactly this: the identifier discloses nothing
@@ -471,29 +623,58 @@ def create_intake(req, db):
     started = time.time()
     log.info('POST /intake meta=%s', json.dumps(log_metadata(req)))
 
-    replayed = _find_registration(db, req.submission_id)          # E5-SPEC-30
+    fingerprint = _payload_fingerprint(req)                       # E5-SPEC-41; 503 fail-closed
+                                                                  # on a missing key, before any
+                                                                  # read or write (D-19)
+    replayed = _find_registration(db, req.submission_id)          # → (patient_id, fingerprint)
     if replayed is None:
         try:
-            patient_id = _create_registration(db, req)            # one transaction
+            patient_id = _create_registration(db, req, fingerprint)  # one transaction
         except _SubmissionAlreadyRecorded:                        # E5-SPEC-32
-            patient_id = _require_registration(db, req.submission_id)
+            patient_id = _require_registration(db, req.submission_id, fingerprint)
         else:
             _evaluate_match_key(db, patient_id, req.demographics) # E5-SPEC-37, unchanged
     else:
-        patient_id = replayed
+        patient_id = _match_or_conflict(replayed, fingerprint)    # E5-SPEC-30 / E5-SPEC-42
 
     eligibility = _verify_eligibility_guarded(req.insurance)      # D-14, both paths
     ...
     return IntakeResponse(patient_id=patient_id, elapsed_seconds=elapsed, eligibility=eligibility)
 ```
 
-- **The record is written inside the existing transaction** (E5-SPEC-29). `_create_registration`
-  adds `RegistrationSubmission(submission_id=…, patient_id=patient_id)` after `db.flush()`
-  assigns the PK and before the single `db.commit()`. Nothing about the patient/coverage/consent
-  writes changes, so E4-SPEC-4's atomicity is inherited rather than re-made.
+- **The record is written inside the existing transaction** (E5-SPEC-29, E5-SPEC-41).
+  `_create_registration` adds
+  `RegistrationSubmission(submission_id=…, payload_fingerprint=…, patient_id=patient_id)` after
+  `db.flush()` assigns the PK and before the single `db.commit()`. Nothing about the
+  patient/coverage/consent writes changes, so E4-SPEC-4's atomicity is inherited rather than
+  re-made.
+- **The fingerprint** (E5-SPEC-41, D-19): `_payload_fingerprint(req)` is
+  `hmac.new(key, canonical, hashlib.sha256).hexdigest()` over
+  `json.dumps(dump, sort_keys=True, separators=(",", ":"), ensure_ascii=True)` where `dump` is
+  `req.model_dump()` minus `submission_id` and with `consents` sorted. Computed from the
+  *validated* model so spellings that validate identically fingerprint identically, and computed
+  **before** the replay lookup so the fail-closed key guard (missing/empty
+  `REGISTRATION_FINGERPRINT_KEY` → the existing 503 "registration store unavailable") can never
+  be bypassed by a replay-shaped request. Hex output: the stored value is 64 hex chars from a
+  keyed function — no submitted value is recoverable from it, which is what lets it live in a
+  column, per E5-REQ-13's discipline.
+- **Mismatch → 409** (E5-SPEC-42): `_match_or_conflict` compares with `hmac.compare_digest`; a
+  non-matching fingerprint raises `HTTPException(409, "registration submission conflict")` — a
+  constant detail, no submitted value. It creates nothing and modifies nothing: the recorded row
+  and the recorded chart are exactly as the original attempt left them. `_post_checked` relays
+  the 409 as-is and the portal's non-400/422 arm renders the system-failure branch, so E5-SPEC-42
+  lands with no gateway edit and no portal branch edit. When §9's re-mint holds, the portal never
+  sends this shape — the 409 is the service-side guarantee for any other caller.
+- **The collision loser also compares** (E5-SPEC-32 × E5-SPEC-42): `_require_registration` takes
+  the loser's fingerprint and applies the same match-or-409 — the loser's content may differ from
+  the winner's, and answering the winner's `patient_id` for different content is the same silent
+  confirmation the mismatch path exists to refuse.
 - **The bounded wait** (D-15, E5-SPEC-32, E5-SPEC-33). Before the insert, on the PostgreSQL
   dialect only, `_create_registration` issues
-  `SET LOCAL lock_timeout = '<n>ms'` with `n` an `int()`-coerced settings value — `SET` takes no
+  `SET LOCAL lock_timeout = '<n>ms'` with `n = int(settings.registration_lock_wait_seconds * 1000)`
+  — the knob is **seconds** (§12, D-15) and `lock_timeout`'s unit here is milliseconds, so the
+  conversion is stated rather than left to the implementer: a dropped `* 1000` silently shrinks
+  the bound 1000× and turns every routine collision wait into a 503. `SET` takes no
   bind parameters, so the value is interpolated after integer coercion and reaches the statement
   from config, never from a request. The dialect guard exists because the endpoint tests run on
   in-memory SQLite (`tests/test_intake_endpoint.py`), which serializes writers anyway; a unit
@@ -515,8 +696,9 @@ def create_intake(req, db):
   (E5-SPEC-37) — idempotency must not become an MPI.
 - **The replay creates nothing** (E5-SPEC-24, E5-SPEC-25): the fast path skips
   `_create_registration` *and* `_evaluate_match_key`, so no patient, coverage, consent or queue
-  row is written. It answers 201 with the recorded `patient_id` through the unchanged
-  `IntakeResponse` — no replay marker, no new status (E5-SPEC-30, E5-SPEC-31).
+  row is written. A fingerprint-matched replay answers 201 with the recorded `patient_id`
+  through the unchanged `IntakeResponse` — no replay marker, no new status (E5-SPEC-30,
+  E5-SPEC-31); only a matched replay is a replay at all (E5-SPEC-42).
 
 The module docstring's D4 bullet (`app.py:36-38`) is corrected: the idempotency key it names as
 "still open" is what this branch lands.
@@ -539,6 +721,24 @@ parametrized over both keys, for the reason the existing comment already gives: 
 `environment:` entry or a scoped env template can set a value neither source-of-truth check can
 see. No compose edit is needed — intake-service loads the shared `.env`.
 
+**The fingerprint key** (D-19, E5-SPEC-41): `config.py` gains
+`registration_fingerprint_key = os.getenv("REGISTRATION_FINGERPRINT_KEY", "")`, deliberately
+defaulting to empty — the guard in `_payload_fingerprint` fails closed on empty (503 before any
+read or write), in the `/ai` paths' fail-closed style, because a hardcoded default key is a
+published key and an unkeyed hash is a confirmation oracle. `.env.example` carries a dev
+placeholder with a comment naming both the fail-closed behaviour and the rotation consequence
+(Landmines). Not a timeout, so the budget-alignment invariants are untouched.
+
+**The empty default reddens the existing suite, and that is planned work, not a surprise**
+*(added 2026-08-11 after gate round 7)*. `config.py` reads `os.getenv` in the **class body**, so
+the value is fixed at import; neither `make test-docker` nor CI's `tests` job supplies a `.env`
+(`Makefile:78-81` and `.github/workflows/ci.yml:91` both run bare `pytest -m "not integration"`,
+and the compose job's `cp .env.example .env` is a different job). Every test that reaches
+`create_intake` therefore hits the fail-closed 503 unless it sets the key. §13 owns the fixture;
+what belongs here is the prohibition: **the repair is never a non-empty default in `config.py`**
+— that is the published key D-19 forbids, and it would turn a red suite into a silently unkeyed
+production fingerprint.
+
 #### 13. Chunk 2 tests
 
 **New: `tests/test_intake_idempotency.py`** — TestClient over intake-service on in-memory SQLite,
@@ -550,12 +750,92 @@ the duplicate pair queued (E5-SPEC-36, E5-SPEC-37); a missing identifier and a m
 each 422 with nothing written (E5-SPEC-40); the collision path is driven by faking the insert to
 raise `IntegrityError` and asserting a replay rather than a second write (E5-SPEC-32), and by
 faking `lock_not_available` and asserting 503 with no second registration (E5-SPEC-33); the
-`SET LOCAL lock_timeout` statement is issued on the Postgres dialect and skipped elsewhere.
+`SET LOCAL lock_timeout` statement is issued on the Postgres dialect and skipped elsewhere, and
+the pin asserts the issued **value** — `'5000ms'` at the 5s default, i.e. the §11 seconds→ms
+conversion applied — not merely that a statement was issued, so a dropped conversion reddens
+here rather than shipping a 1000×-shorter bound.
+
+**Mismatch cases** (E5-SPEC-42, review round 2): same identifier with changed demographics, with
+changed insurance, and with changed consents — each answers 409 with the constant detail, writes
+no row of any kind, and leaves the recorded chart's values exactly as the original attempt set
+them (the lost-response-then-edit scenario asserted end-to-end: first submit commits, edited
+resubmit 409s, the stored DOB/member_id are the originals). A reordered-consents replay is **not**
+a mismatch — it answers 201 with the recorded patient (D-19's canonicalization, asserted so a
+later "optimization" to raw-body hashing reddens). The collision loser with different content
+409s rather than answering the winner's chart (fake the `IntegrityError` exactly as the
+E5-SPEC-32 case does, with a differing payload). Fail-closed: an empty
+`REGISTRATION_FINGERPRINT_KEY` answers 503 with nothing written, for a fresh identifier and for
+a recorded one alike.
+
+**Fixture fallout of the fail-closed key** (E5-SPEC-41, D-19) *(added 2026-08-11 after gate
+round 7)*. `_payload_fingerprint` runs at the top of `create_intake`, before the replay lookup,
+so with no key set **every** test that drives the endpoint answers 503 instead of 201. The suite
+runs with no `.env` (§12), and `config.py` binds `os.getenv` at class-body time, so a
+`monkeypatch.setenv` after import cannot reach it. The fixture therefore patches the **loaded
+settings object**, not the environment:
+
+```python
+@pytest.fixture(autouse=True)
+def fingerprint_key(monkeypatch):
+    # config.py reads os.getenv in the class body, so the env is already read by
+    # import time — patch the object app.py holds. `from config import settings`
+    # makes app_mod's settings the same instance this module loaded (E5-SPEC-41,
+    # plan D-19). Never a default in config.py: an unkeyed fingerprint of
+    # guessable fields is a dictionary-reversible confirmation oracle.
+    monkeypatch.setattr(app_mod.settings, "registration_fingerprint_key", "e5-test-key")
+```
+
+Autouse, one copy per affected module — each test file loads its own `config` under a distinct
+`sys.modules` name (`intake_config_ep`, `intake_config_mk`, `intake_config_idem`), so there is no
+shared object for `tests/conftest.py` to patch. Affected: `tests/test_intake_endpoint.py` (7
+`POST /intake` sites), `tests/test_intake_match_key.py` (16 direct `app_mod.create_intake` calls),
+and `tests/test_intake_idempotency.py` (15) — which already binds `config_mod` at `:46` and can
+use it directly. The **fail-closed test is the one case that must defeat the fixture**: it sets
+the key back to `""` inside the test body, after the autouse fixture has run, and asserts 503
+with nothing written for a fresh identifier and for a recorded one alike.
+
+**Ordering:** the fixture is a prerequisite of the fingerprint slice, not a follow-up to it. It
+lands in the same commit as `_payload_fingerprint`, or the suite is red at that commit and the
+TDD loop's red/green signal stops meaning anything.
+
+`tests/test_intake_db_error_phi.py` is separate fallout with the same cause: its four sites call
+`app_mod._create_registration(db, _request())` directly, never reaching the guard, but §11 gives
+that function a third parameter — they pass a literal fingerprint string. No key fixture is
+needed there.
+
+**The constraint name is pinned structurally** (E5-SPEC-29, E5-SPEC-32) *(added 2026-08-11 after
+gate round 7)*. `_is_submission_collision` matches `uq_registration_submission_id` by string, and
+nothing in the SQLite unit tests can tell whether the DDL actually issues that name — the failure
+mode is a routine collision answering 503, visible only at live verification step 12. A scan in
+the style of `test_no_code_path_expires_or_prunes_a_submission_record` asserts that both
+`db/migrations/010_registration_submissions.sql` and `db/schema.sql` carry the exact
+`_SUBMISSION_CONSTRAINT` value, and that neither spells the constraint inline on the column
+(`submission_id TEXT NOT NULL UNIQUE`), so the two files and the matcher cannot drift apart
+silently.
+
+**Fingerprint PHI negatives** (E5-SPEC-41, landmines §3): the stored fingerprint of an
+adversarial payload (name/SSN/DOB planted) contains none of the submitted values; the same
+payload under two different keys yields two different fingerprints (the keyed property — a
+refactor to an unkeyed hash reddens); the 409 response body and the log lines around the
+mismatch carry no submitted value.
 
 **PHI negative tests** (`docs/landmines.md` §3, E5-SPEC-38, E5-SPEC-39): a submission whose
 demographics carry an adversarial name/SSN/DOB produces an identifier containing none of them;
 the identifier as stored, as logged and as it appears anywhere in the response is scanned for
 every submitted value.
+
+**The v4 constraint is pinned at both levels** (E5-SPEC-38, E5-SPEC-40, D-21) *(added
+2026-08-11 after gate round 8; landed in `a1cf9bb` from review round 1, seven cases)*.
+Schema level, `tests/test_intake_schemas.py`: `test_a_uuid_that_is_not_v4_is_rejected`
+parametrized over the nil UUID, a `uuid1()` and a `uuid5()` built from `name|dob|ssn` — the
+name-derived case is the one that would put submitted values in the log projection — plus
+`test_a_v4_identifier_is_accepted_and_canonicalized`, which pins that the narrowing did not cost
+E5-SPEC-40 (a braced, upper-cased v4 still collapses to the canonical spelling). Endpoint level,
+`tests/test_intake_idempotency.py`: the existing
+`test_a_missing_or_malformed_identifier_is_rejected_and_writes_nothing` parametrize gains the
+same three spellings, so each is a 422 that writes nothing rather than a row in the idempotency
+table. The comment block above the schema cases states the limit D-21 names — a constant v4
+passes — so a later reader does not mistake the check for a randomness proof.
 
 **Extended:** `tests/test_gateway_intake_proxy.py` — the identifier arrives downstream unchanged
 and the gateway mints none (E5-SPEC-28). `tests/test_intake_payload_contract.py` needs no edit;
@@ -571,7 +851,11 @@ field so the fixture stays honest about what a real request looks like.
 **Frontend:** `payload.contract.test.ts` gains the root-key assertion by construction (it
 compares against the declaration); `page.test.tsx` gains cases for a stable identifier across two
 submissions from one mount (E5-SPEC-26) and for an identifier that appears in the posted body and
-matches no submitted value (E5-SPEC-38).
+matches no submitted value (E5-SPEC-38). Re-mint cases (E5-SPEC-43, D-20): after a failed submit,
+an unchanged resubmit posts the *same* identifier; editing any field first posts a *different*
+one; two edits between submits mint once (the second submit's identifier differs from the first's
+but the two edits produce one value); the network-error catch counts as a failed submit for
+re-mint purposes.
 
 ## Files touched
 
@@ -591,19 +875,20 @@ matches no submitted value (E5-SPEC-38).
 | `frontend/app/records/page.test.tsx` | Extended — the chart read's failed / empty / loaded cases |
 | `CLAUDE.md`, `docs/landmines.md`, `docs/debt-log.md`, `docs/phi-logging-policy.md`, `docs/todo.md` | Registry upkeep (§5) |
 | **Branch B** | |
-| `db/schema.sql`, `db/migrations/010_registration_submissions.sql` | ⚠ New table, hand-synced |
+| `db/schema.sql`, `db/migrations/010_registration_submissions.sql` | ⚠ New table incl. `payload_fingerprint` (D-19; 010 amended in place, unmerged), hand-synced |
 | `contracts/intake-registration.json` | `submission_id` on the request side; sample updated |
 | `services/intake-service/models.py` | `RegistrationSubmission` |
-| `services/intake-service/schemas.py` | Required validated `submission_id`; `log_metadata` gains it |
-| `services/intake-service/app.py` | Replay fast path, in-transaction record, collision handling, docstring correction |
-| `services/intake-service/config.py`, `.env.example` | `REGISTRATION_LOCK_WAIT_SECONDS` |
+| `services/intake-service/schemas.py` | Required `submission_id`, canonicalized and constrained to v4 (D-21); `log_metadata` gains it |
+| `services/intake-service/app.py` | Replay fast path with fingerprint match, mismatch 409, in-transaction record, collision handling, fail-closed key guard, docstring correction |
+| `services/intake-service/config.py`, `.env.example` | `REGISTRATION_LOCK_WAIT_SECONDS`; `REGISTRATION_FINGERPRINT_KEY` (empty default, fail-closed — D-19) |
 | `frontend/app/intake/payload.ts` | `newSubmissionId()`; builder takes and emits the identifier |
-| `frontend/app/intake/page.tsx` | Mints once per mount, passes to the builder |
-| `tests/test_intake_idempotency.py` | **New** — replay, collision, fresh-create, rejection, PHI negatives |
-| `tests/test_intake_schemas.py`, `test_redaction.py`, `test_intake_match_key.py`, `test_intake_db_error_phi.py`, `test_intake_endpoint.py`, `test_gateway_intake_proxy.py` | Fixtures gain the field; gateway forwarding pinned |
+| `frontend/app/intake/page.tsx` | Mints once per mount, passes to the builder; re-mints on first edit after a non-success submit (D-20) |
+| `tests/test_intake_idempotency.py` | **New** — replay, mismatch 409 ×3, lost-response-then-edit, reordered-consents replay, collision (incl. differing-content loser), fresh-create, rejection (missing / malformed / nil / v1 / v5 — D-21), fail-closed key, PHI negatives incl. fingerprint |
+| `tests/test_intake_schemas.py`, `test_redaction.py`, `test_intake_match_key.py`, `test_intake_db_error_phi.py`, `test_intake_endpoint.py`, `test_gateway_intake_proxy.py` | Fixtures gain the field; gateway forwarding pinned. Plus `test_intake_schemas.py`'s v4 rejection and canonicalization cases (D-21) and the fingerprint-key autouse fixture in the three modules that reach `create_intake` (endpoint, match_key, idempotency) and the third `_create_registration` argument in `test_intake_db_error_phi.py` — §13 |
 | `tests/test_eligibility_budget_alignment.py`, `tests/test_compose_topology.py` | Registration bound covers the new knob |
 | `frontend/app/intake/page.test.tsx` | Identifier stability and non-derivation |
 | `docs/debt-log.md`, `docs/todo.md` | D4's idempotency follow-up closed; TODO-62 for the accepted residual |
+| `docs/phi-logging-policy.md` | The intake projection row records `submission_id` as a non-PHI correlation field, and what the v4 boundary does and does not establish (D-21) |
 
 ## Out of scope (from requirements §6)
 
@@ -699,13 +984,29 @@ Fast tier is `make test-docker` (python:3.12, mirrors CI); the frontend gate is
     `REGISTRATION_LOCK_WAIT_SECONDS=1` and hold a conflicting transaction open past it: the second
     caller gets a 503 the portal renders in its existing system-failure branch, and no second
     registration exists. **This step also proves `lock_timeout` actually bounds a wait on a
-    duplicate-key insert** — see the risk below.
+    duplicate-key insert** — see the risk below. **Negative:** in a scratch database, recreate the
+    table with `submission_id TEXT NOT NULL UNIQUE` instead of the named constraint and re-run the
+    two-caller case — the loser answers 503 rather than replaying, which is the failure the §13
+    DDL-name pin exists to catch before it reaches here. Revert.
 13. **A fresh registration is never a replay** (E5-SPEC-36, E5-SPEC-37). Register the same person
     twice with two identifiers: two charts, and
     `SELECT * FROM duplicate_review_queue WHERE status='pending'` still shows the pair. D5 is
     still open.
-14. **Rejection** (E5-SPEC-40). POST without `submission_id`, and with `"not-a-uuid"`: both 422,
-    both leave `patients` unchanged, and the portal renders the correctable-at-the-desk branch.
+13b. **A mismatched replay is refused, an edited form re-mints** (E5-SPEC-41, E5-SPEC-42,
+    E5-SPEC-43 — review round 2's scenario, proven closed at both ends). Register a patient,
+    then re-post the same `submission_id` with an edited DOB and member_id: 409, and
+    `SELECT dob, member_id` still returns the originals — the exact query that proved the
+    defect proves the fix. Re-post byte-identical: still a 201 replay. Then in the portal,
+    fail a submission (stop intake-service), edit a field, resubmit with the service back up:
+    a *new* chart is created (new identifier), and the pair sits in the duplicate review
+    queue. Finally, unset `REGISTRATION_FINGERPRINT_KEY` in the intake environment: any
+    POST /intake answers 503 with nothing written — fail-closed proven live.
+14. **Rejection** (E5-SPEC-38, E5-SPEC-40, D-21). POST without `submission_id`, with
+    `"not-a-uuid"`, and with a v5 built from `name|dob|ssn`: all three 422, all three leave
+    `patients` unchanged, and the portal renders the correctable-at-the-desk branch. Negative
+    check: drop the `parsed.version != 4` line, watch the v5 case register 201 and its derived
+    bits appear in `POST /intake meta=` in `logs/intake-service.log` — the failure confirmed
+    live at review round 1 — then revert.
 15. **PHI** (E5-SPEC-38, E5-SPEC-39). The negative tests green; then read
     `logs/intake-service.log` from the live run above and confirm the identifier appears with no
     submitted value near it.
@@ -738,6 +1039,13 @@ Fast tier is `make test-docker` (python:3.12, mirrors CI); the frontend gate is
 - ⚠️ **Migrations and the schema** (chunk 2) — one new table, hand-synced across `db/schema.sql`
   and `db/migrations/010_*.sql`. Recorded human approval before code. No existing table, column
   or PHI column is altered.
+- ⚠️ **Secret files and the secret bootstrap path** (chunk 2, review rounds 3 and 5) — the
+  registration fingerprint key. Round 3 emptied it in `.env.example`; round 5 moved it out of the
+  shared template entirely into a scoped, generated `.env.registration`, which touches
+  `.env.example`, a new `.env.registration.example`, `.gitignore`, the `Makefile`'s generation
+  target and `docker-compose.yml`'s `env_file` list. **Owner approval recorded 2026-08-13**,
+  before code. No `.env`, `.env.redis` or `.env.ai-proxy` content is read or modified, no
+  credential is committed, and the shipped template stays empty.
 - ⚠️ **ADR 0010 budget pinning** — `PROXY_TIMEOUT_SECONDS` on the eligibility-reaching route and
   `REGISTRATION_LOCK_WAIT_SECONDS` inside intake's own budget. Both land as new assertions in
   `tests/test_eligibility_budget_alignment.py`; neither existing value is widened or loosened.
@@ -760,8 +1068,8 @@ unchanged — that is D11's problem, out of scope (requirements §6).
 - **E5-SPEC-33's answer is imprecise.** A bounded-wait expiry answers "not saved" while the
   winning request may have saved the registration. Accepted deliberately at spec stage (D-11):
   the operator's next retry carries the same identifier and replays into the real confirmation.
-- **E5-SPEC-40 lands a non-correctable rejection in the correctable branch.** A missing or
-  malformed `submission_id` is a portal bug, not something the operator can fix at the desk, but
+- **E5-SPEC-40 lands a non-correctable rejection in the correctable branch.** A missing,
+  malformed or non-v4 `submission_id` is a portal bug, not something the operator can fix at the desk, but
   it is a rejection by the submitted values so it renders as E4-SPEC-6. Accepted rather than
   adding a fifth result branch (D-10, D-11). The portal is the only caller today.
 - **`lock_timeout` must be proven, not assumed.** The design rests on Postgres applying
@@ -775,6 +1083,22 @@ unchanged — that is D11's problem, out of scope (requirements §6).
   original.
 - **Submission identifiers grow without bound** (D-7). Recorded here and in the schema comment,
   not deferred to a future item.
+- **Rotating `REGISTRATION_FINGERPRINT_KEY` invalidates recorded fingerprints** (D-19). A
+  lost-confirmation retry that straddles a rotation answers 409 instead of replaying; the
+  operator re-enters on a fresh mount, the duplicate pair is queued for human review
+  (E5-SPEC-37), and nothing is silent. Accepted: rotation is rare, the straddle window is
+  minutes, and key versioning is machinery this estate does not have. The `.env.example`
+  comment records it.
+- **The fingerprint is PHI-derived and must stay keyed.** An unkeyed hash of guessable fields
+  is a dictionary-reversible confirmation oracle (E5-SPEC-41). The keyed property is pinned by
+  a test (§13), and the fail-closed guard refuses to run unkeyed.
+- **The v4 check narrows the accidental class; it does not prove randomness** (D-21,
+  E5-SPEC-38). Version and variant bits are self-report — a constant v4, or v4 bits stamped on a
+  hash of submitted values, passes the boundary. E5-SPEC-38's guarantee therefore rests on the
+  portal's mint (§9) plus the fact that the only caller is inside the gateway's session
+  boundary; the service check closes the derivations a caller reaches by accident (nil, v1, v5).
+  Written into the validator docstring and the `docs/phi-logging-policy.md` intake row so the
+  register is not read as claiming more than it enforces.
 - **The verdict still reaches no column.** D4 residual 3 is untouched — it is why the replay must
   re-verify rather than read back.
 
