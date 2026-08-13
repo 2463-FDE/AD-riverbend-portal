@@ -941,3 +941,21 @@ a landmines §1 decision of its own. Second finding this item where the reviewer
 remedy rested on a premise (a draft store; a persisted eligibility verdict) the codebase
 does not have, which is a cheaper thing to check than to argue: read the premise first, then
 the finding. +18 tests; suite 1333 → 1351.
+
+PR #76 r8 — 1 finding: 0 A / 0 B / 0 C, 0 refuted, 1 answered from the record · the remount
+residual accepted at r7 (`docs/todo.md` TODO-66), re-raised at the same anchor with the same
+remedy and **escalated from [medium] to [high] no-ship** with no new evidence and no change
+on that path — `frontend/` is untouched since round 2. Round 7's finding 1 did not return,
+so the owner's overrule landed. **The escalation is the entry worth keeping.** This log's
+§3.4 records that the reviewer never objects to complexity; this round adds that it also
+does not track its own prior severity — the same mechanism, argued the same way, came back
+one round later as a merge blocker. Nothing in the loop reconciles the two, so a severity
+label is a statement about a round, not about a defect, and a disposition that answers "why
+this is accepted" does not lower it. Second measurement of the same shape at r3→r4 (that
+one held its severity and was dropped after two restatements). **What it costs and what to
+watch:** two of this item's eight rounds have now been spent restating settled residuals,
+against one round (r5) where continuing found a real B. The bet is still positive, but the
+tell to watch is a re-raise whose *premise* has already been measured absent — here, a draft
+store the portal does not have, named in both restatements and in the reviewer's own
+suggested test. When a finding's remedy depends on a component that does not exist, checking
+the premise is cheaper than arguing the finding, and it is the same check both times.

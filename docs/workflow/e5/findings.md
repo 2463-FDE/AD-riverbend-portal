@@ -515,3 +515,27 @@ recorded per slice: the 11 schema cases failed against the pre-fix `/healthz` (9
 green — the two positives), the 6 key cases failed after the schema half landed. `make eval`
 not re-run and the frontend suite not re-run — nothing under `eval/rag/`, the retrieval path
 or `frontend/` is in this round's diff.
+
+### Round 8 — 2026-08-13
+
+1 finding, **no code change**. **Past the round-3 rule**, so the disposition is the owner's;
+taken 2026-08-13. Round 7's finding 1 — the schema/key health guard — did **not** return,
+so the overruled disposition is accepted by the reviewer. What returned is round 7's
+finding 2, the residual the owner accepted one round earlier, re-raised at the same anchor
+with the same remedy and escalated to a no-ship verdict.
+
+This is the item's second re-raised residual (the eligibility verdict at r3→r4 was the
+first), and it re-raises the same way: the recommendation still names a draft store the
+portal does not have. The loop continues by owner decision, on the same reasoning that paid
+at r5 — a further restatement of a settled residual changes nothing, but the branch has
+surfaces the reviewer has read fewer times, and round 7 gave it 18 new tests and a new
+endpoint behaviour to read.
+
+| # | SPEC | Finding | Disposition (A/B/C/E) |
+|---|------|---------|-----------------------|
+| 1 | E5-SPEC-26, E5-SPEC-35 | [high] The idempotency key is lost on remount (`frontend/app/intake/page.tsx:56`): a refresh, navigation, session-refresh remount or tab crash after a committed-but-unconfirmed POST mints a new UUID, the server replays nothing, and a second patient/coverage/consent set is written. Recommends persisting the attempt id outside the component lifetime (`sessionStorage` keyed to the draft), cleared only on a confirmed 201 or an explicit new-registration action, or issuing the key server-side; plus a remount test that submits, fails unconfirmed, remounts *with the same draft* and asserts the original id is resent | **Answered from the record, no code change — this is round 7 finding 2, accepted as a residual by owner decision 2026-08-13 and filed as `docs/todo.md` TODO-66.** Nothing on this path changed between rounds: round 7's commits touched `services/intake-service/app.py`, `tests/`, and four docs; `frontend/` is untouched on this branch since `7e0b2c1` (round 2). The account lives in TODO-66 and is not re-argued here. What is worth recording is that the escalation to no-ship rests on the same premise the r7 disposition measured and found absent: the recommendation says "remounts the intake page **with the same draft**", and there is no draft — `frontend/app/lib/session.ts` is the portal's only browser-storage writer, so a remount loses every typed value with the identifier. The reviewer's own test design is unbuildable as written for that reason, which is the cheapest available check on the finding. The alternative it offers — issue the key server-side — does not reach the mechanism either: a server-issued id still has to be remembered across the remount by the same client that just lost its state. **Not reopened**, per the skill: reopening an accepted residual is the owner's call, and the owner accepted it one round ago with the PHI cost stated. **Loop continues**: owner decision 2026-08-13, re-tag for a round 9 — the disposition comment says which finding is closed and which surfaces are unread, as at r4 |
+
+**E-8 — round-8 verification, 2026-08-13.** No code change, so no re-measurement: the tree
+is `1793c31` plus this round's artifact edit, and the last suite run under the claim-worthy
+gate (E-7, `make test-docker`) stands at **1351 passed, 1 xfailed, 5 deselected**. CI on the
+pushed head: all fourteen jobs green.
