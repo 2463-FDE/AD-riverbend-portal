@@ -495,11 +495,23 @@ evidence if the object resolves from the branch.
 | 1b | E5-SPEC-41 | *Not a reviewer finding — the class the fix left half-closed, raised in-session and decided by the owner 2026-08-13.* Making `/healthz` a readiness probe closes "green while every registration 503s" for the schema, but the unconfigured fingerprint key answers 503 on the same requests and round 5 recorded a decision **not** to check it here ("a `/healthz` that computes a fingerprint is a PHI-adjacent probe") | **Owner decision: extend the guard** (`27a05d8`). The round-5 objection is about computing a digest; the landed check asks the configuration whether a real key exists and computes none, so it does not reach it. `_fingerprint_key_is_real` is now one predicate shared by the request path and the probe — two copies is how a health endpoint ends up green on a value the request path refuses. The refusal is polled every 10s, so it names the variable and states neither the value, its length, nor which check refused (the `_fingerprint_key` precedent). Round 5's other half stands untouched: generation at `make up` is still what keeps a make-driven stack green, and the guard only reddens a stack that never ran `make`. PHI register updated with the second refusal site |
 | 2 | E5-SPEC-26, E5-SPEC-35 | [medium] The retry id is lost on remount (`frontend/app/intake/page.tsx:56`): `submissionId` lives in `useState` alone, so a refresh, tab restore or crash after an unconfirmed submit mints a new identifier, bypasses the server-side replay and creates a duplicate chart. Reviewer states it as an inference from the state lifecycle. Recommends persisting the in-flight id in `sessionStorage` alongside the draft, clearing it only on confirmed success, plus a remount test | **A, accepted as a residual by owner decision 2026-08-13; no code change. `docs/todo.md` TODO-66.** Mechanism confirmed, and the reviewer is right that no recorded residual covered it. What decided the disposition is the premise the recommendation rests on: **there is no draft.** The intake form persists nothing — `frontend/app/lib/session.ts` is the only browser-storage writer in the portal and it holds the auth token — so a remount loses every typed value along with the identifier, and "re-submit the same attempt" is not a path the operator can take. Persisting the id *alone* would therefore be **worse than the gap**: the old attempt's identifier would attach to freshly typed content, the keyed fingerprint would mismatch, and a genuinely new registration would be refused (E5-SPEC-42) — the 409 trap D-20 was written to prevent — while E5-SPEC-35 ("a new registration gets a new identifier") stopped holding, since a refresh is indistinguishable from a fresh start without a draft to compare. What the branch does today is the outcome D-20 already chose for the edit path: the retyped registration creates a second chart and the pair is queued for human review (E5-SPEC-37), visible rather than silent. The complete fix is draft restore, and its cost is not the retry key: the draft is name, DOB, SSN and insurance, so it writes PHI to browser storage on a shared front-desk workstation — a `docs/landmines.md` §1 decision with its own approval, and new persisted state with a lifecycle, i.e. the skill's structural trigger. Filed with that constraint stated so the session that takes it finds it first |
 
-**E-7 — round-7 verification, 2026-08-13.** No live stack: both halves of the fix are
-covered by the suite, and the finding's runtime mechanism was already measured under E-6 on
-a scratch container. `.venv/bin/python -m pytest -m "not integration" -q` →
-**1351 passed, 1 xfailed, 5 deselected** (1333 → 1351, +18; the xfail and the five
-deselected did not move). Red-before-green recorded per slice: the 11 schema cases failed
-against the pre-fix `/healthz` (9 red, 2 green — the two positives), the 6 key cases failed
-after the schema half landed. `make eval` not re-run — nothing under `eval/rag/` or the
-retrieval path is in this round's diff.
+**E-7 — round-7 live verification, 2026-08-13.** Isolated by construction, as E-6 was: a
+throwaway `postgres:15` on its own anonymous volume plus the branch's intake image on a
+private network, no host ports, no compose project — the engagement stack was down and its
+`ad-riverbend-portal_pgdata` volume was never mounted, read or written; both containers and
+the network were removed after. The container ran under the **compose healthcheck command
+verbatim**, because the whole claim is what that command reports. Seeded from
+`git show main:db/schema.sql` → 14 tables, `registration_submissions` absent. (1) Real key,
+table missing: healthcheck **unhealthy**, `/healthz` → `503 {"detail":"schema incomplete"}`,
+log `healthz: schema incomplete, missing registration_submissions` — the finding's condition,
+now visible where round 6 left it green. (2) Applying the branch's `db/schema.sql` (what
+`make schema-apply` pipes in): table created, `patients` 0→0 unchanged, healthcheck goes
+**healthy**, `/healthz` → `200`. (3) Break-then-revert on the other half: key emptied,
+schema complete → **unhealthy**, `503 {"detail":"registration key not configured"}`, log
+naming the variable and no value; key restored → **healthy**, `200`. Suite under the
+claim-worthy gate `make test-docker` → **1351 passed, 1 xfailed, 5 deselected**
+(1333 → 1351, +18; the xfail and the five deselected did not move). Red-before-green
+recorded per slice: the 11 schema cases failed against the pre-fix `/healthz` (9 red, 2
+green — the two positives), the 6 key cases failed after the schema half landed. `make eval`
+not re-run and the frontend suite not re-run — nothing under `eval/rag/`, the retrieval path
+or `frontend/` is in this round's diff.
