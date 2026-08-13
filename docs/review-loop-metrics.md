@@ -995,3 +995,16 @@ bounded). The density suggestion is r1's F2 restated and is answered from that r
 r2 [medium] is the round's lesson: **a runbook command is code that runs in the reader's
 shell, not prose** — it inherits none of the Makefile's defaults, so copying a recipe out
 of the Makefile into a doc must copy its environment assumptions too.
+
+**PR #78 r3 — 2026-08-13, loop closed by the round-3 rule.** 2 findings, **1 A / 0 B /
+0 C**, plus the density suggestion's third consecutive restatement, which engaged the
+rule. F1 (the PR summary could read as if seeding were now safe): A, fixed in the PR
+description — one explicit line, "documents the foot-guns, does not remove them,
+guardrail deferred to the restarted e6 batch". F2 (density, r1-F2/r2-F3 restated with a
+concrete variant): **owner disposition 2026-08-13, partial accept** — the two new debt
+rows gain a one-line "Operator action today:" lead (they are new rows, no history
+rewritten; the runbook stays the deep home), the metrics ledger stays as-is per its
+append-only contract, and the full-restructure variant stays declined per the r1/r2
+record. Lesson: a reviewer restating a dispositioned style finding converges when the
+third round's variant is concrete enough to accept partially — the round-3 rule turned
+a stalemate into a bounded improvement, at the cost of the owner's time to decide it.
