@@ -34,7 +34,7 @@ ps: .env.ai-proxy .env.redis   ## service status
 build: .env.ai-proxy .env.redis ## build all images
 	docker compose build
 
-seed: .env.ai-proxy .env.redis ## load schema + demo data (re-runs against a running db)
+seed: .env.ai-proxy .env.redis ## load schema + demo data (fresh empty db only — a re-run doubles the seed, see runbook)
 	docker compose exec -T postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend} < db/schema.sql
 	docker compose exec -T postgres psql -U $${DB_USER:-riverbend_app} -d $${DB_NAME:-riverbend} < db/seed/seed.sql
 

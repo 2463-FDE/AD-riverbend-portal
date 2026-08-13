@@ -1,6 +1,7 @@
 # E5 Spec (EARS)
 
-> Status: AGREED 2026-08-11 (frozen); amended 2026-08-11 and re-frozen — E5-SPEC-8 only
+> Status: AGREED 2026-08-11 (frozen); amended 2026-08-11 and re-frozen — E5-SPEC-8 only; amended
+> again 2026-08-11 and re-frozen — D-18: E5-SPEC-30 qualified, E5-SPEC-41/42/43 added
 > Source: docs/workflow/e5/requirements.md (AGREED 2026-08-10, amended 2026-08-11)
 >
 > **Amendment 2026-08-11 (D-12, §3).** The drift gate's first round (`findings.md` §Gate,
@@ -8,6 +9,14 @@
 > E5-SPEC-8's enumeration: the patient chart read. The owner's disposition was to cover it. Only
 > E5-SPEC-8's statement and Notes changed; no id was added, removed or renumbered, and no other
 > statement was touched. The plan (`plan.md`, `Status: DRAFT`) must re-gate against this text.
+>
+> **Amendment 2026-08-11 (D-18, §3), second.** Codex review round 2 on PR #76 (`findings.md`
+> §Review, round 2) found that E5-SPEC-30, unqualified on content, confirms an edited retry
+> while silently discarding the edit — confirmed at runtime before amendment. Owner disposition:
+> qualify the replay on content. E5-SPEC-30's statement and Notes changed; E5-SPEC-41 and
+> E5-SPEC-42 (E5-REQ-11) and E5-SPEC-43 (E5-REQ-12) were added, appended last in their tables —
+> ids are allocated once and never renumbered. No other statement was touched. The plan must
+> re-gate against this text.
 >
 
 > One spec, two chunks (requirements D-1): §1.1 is the gateway/portal error-contract conversion
@@ -113,12 +122,14 @@
 | E5-SPEC-27 | A registration request shall carry the submission identifier as a declared field of the request payload contract | ⚠ human-gate. Additive extension of the frozen request contract; requirements §6 forbids renaming, retyping or removing anything already in it |
 | E5-SPEC-28 | The gateway shall forward the submission identifier unchanged, and shall neither generate, substitute nor drop one | The gateway is inside the lost window; a gateway-minted identifier would differ on the retry and close nothing |
 | E5-SPEC-29 | When the intake service completes a registration, it shall record the submission identifier against the registration it produced, in the same transaction that creates the registration | ⚠ human-gate — new persisted state, so `db/schema.sql` plus a migration; recorded human approval before code. A record written outside the transaction reopens the window it exists to close |
-| E5-SPEC-30 | When a registration request carries a submission identifier already recorded against a completed registration, the intake service shall answer with the created status and the patient identifier of that registration, and shall create no further record | Requirements D-5: the replay is indistinguishable from the original success — that is the point |
+| E5-SPEC-30 | When a registration request carries a submission identifier already recorded against a completed registration and content that matches the recorded attempt's content, the intake service shall answer with the created status and the patient identifier of that registration, and shall create no further record | Requirements D-5, qualified by D-18 (§3): a replay of the *same attempt* is indistinguishable from the original success — that is the point. Content match is decided by the recorded fingerprint (E5-SPEC-41); the mismatch path is E5-SPEC-42 |
 | E5-SPEC-31 | The registration response shall carry no indication that a request was a replay, and its shape and status shall be unchanged | ⚠ human-gate adjacency — e4's frozen response contract. D-5: no fifth portal result branch |
 | E5-SPEC-32 | If two registration requests carrying the same submission identifier are in flight together, then exactly one shall create the registration and the other shall wait a bounded time and answer with the created registration's result | Requirements D-6. The uniqueness of the recorded identifier decides the race; the loser replays rather than answering "duplicate" |
 | E5-SPEC-33 | If the bounded wait expires before the winning request's result is available, then the intake service shall answer with a failure that the portal presents in its existing system-failure branch, and shall create no second registration | Requirements D-6, and owner 2026-08-10 (D-11): no fifth portal branch. The answer is imprecise in this edge case — the winner may have saved the registration — and the operator's next retry carries the same identifier and replays into the real confirmation (E5-SPEC-30) |
 | E5-SPEC-34 | A recorded submission identifier shall be retained for the lifetime of the system, with no expiry and no pruning | Requirements D-7; the unbounded growth is accepted and recorded, not deferred. Lookup by identifier must stay cheap as the record set grows |
 | E5-SPEC-40 | If a registration request carries no submission identifier, or one that is not well-formed, then the intake service shall reject the request and shall create no registration | ⚠ human-gate. Owner 2026-08-10 (D-10): the identifier is required, so no path retains the non-idempotent behaviour. Rejection is by the submitted values, so it lands in e4's correctable-at-the-desk branch (E4-SPEC-6) |
+| E5-SPEC-41 | When the intake service records the submission identifier (E5-SPEC-29), it shall record with it, in the same transaction, a fingerprint of the submitted content from which no patient-identifying value can be recovered | ⚠ human-gate — new persisted state (`db/schema.sql` plus a migration) and a PHI-derived value; owner approval recorded 2026-08-11 (D-18). Non-recoverability is E5-REQ-13's discipline applied to the fingerprint: it reaches persisted state, and a plain hash of guessable fields (DOB, SSN) is dictionary-reversible. The keyed derivation is plan work |
+| E5-SPEC-42 | If a registration request carries a submission identifier already recorded and content that does not match the recorded attempt's content, then the intake service shall answer with a failure that the portal presents in its existing system-failure branch, shall create no registration, and shall modify no recorded one | ⚠ human-gate — PHI path; landmines §3 negative tests. D-18: a mismatched replay is answered as a failure, never as a confirmation of content that was not saved. When E5-SPEC-43 holds this path is unreachable from the portal; it is the service-side guarantee for every other caller |
 
 #### E5-REQ-12 — a fresh registration is never mistaken for a retry
 
@@ -127,6 +138,7 @@
 | E5-SPEC-35 | When an operator begins a new registration rather than re-submitting an attempt, the portal shall generate a new submission identifier | The pair to E5-SPEC-26; a form that reuses an identifier turns a genuine second registration into a silent replay |
 | E5-SPEC-36 | When a registration request carries a submission identifier not previously recorded, the system shall create a new patient chart, including when a patient with the same identifying values already exists | ⚠ human-gate — PHI; landmines §3 negative tests. Idempotency must not become an accidental master patient index |
 | E5-SPEC-37 | Two separate registration submissions for the same person shall still be queued as a duplicate candidate pair and shall still not be merged | ⚠ human-gate. D5 is a planted defect that stays open by design (requirements §6); e5 must be shown not to have closed it |
+| E5-SPEC-43 | When the operator changes any value of the registration form after a submission attempt whose outcome was a failure or was never delivered, the portal shall treat the next submission as a new attempt and shall generate a new submission identifier for it | D-18, the pair to E5-SPEC-26's "same attempt": an edited form is a different attempt, not a re-submission. If the original attempt had in fact committed, the edited submission creates a second chart and the pair is queued for human review (E5-SPEC-37) — visible, where the unqualified replay silently discarded the edit |
 
 #### E5-REQ-13 — the identifier carries no patient-identifying value
 
@@ -149,8 +161,8 @@
 | E5-REQ-8 | E5-SPEC-20, E5-SPEC-21 |
 | E5-REQ-9 | E5-SPEC-22, E5-SPEC-23 |
 | E5-REQ-10 | E5-SPEC-24, E5-SPEC-25 |
-| E5-REQ-11 | E5-SPEC-26, E5-SPEC-27, E5-SPEC-28, E5-SPEC-29, E5-SPEC-30, E5-SPEC-31, E5-SPEC-32, E5-SPEC-33, E5-SPEC-34, E5-SPEC-40 |
-| E5-REQ-12 | E5-SPEC-35, E5-SPEC-36, E5-SPEC-37 |
+| E5-REQ-11 | E5-SPEC-26, E5-SPEC-27, E5-SPEC-28, E5-SPEC-29, E5-SPEC-30, E5-SPEC-31, E5-SPEC-32, E5-SPEC-33, E5-SPEC-34, E5-SPEC-40, E5-SPEC-41, E5-SPEC-42 |
+| E5-REQ-12 | E5-SPEC-35, E5-SPEC-36, E5-SPEC-37, E5-SPEC-43 |
 | E5-REQ-13 | E5-SPEC-38, E5-SPEC-39 |
 
 Both directions close: every requirement maps to ≥1 statement; every statement maps to exactly
@@ -158,9 +170,9 @@ one requirement. All thirteen requirements are in scope — e5 defers nothing.
 
 ## 3. Decisions taken at this stage
 
-Owner, 2026-08-10 (D-9 … D-11) and 2026-08-11 (D-12), closing the questions this stage opened.
-Numbered on from the requirements' decision table (D-1 … D-8), which stays the record of what
-stage 1 decided.
+Owner, 2026-08-10 (D-9 … D-11) and 2026-08-11 (D-12) and 2026-08-11 (D-18, on review round 2), closing the questions this stage
+opened or that review returned to it. Numbered on from the requirements' decision table
+(D-1 … D-8), which stays the record of what stage 1 decided.
 
 | ID | Decision | Statements |
 |----|----------|------------|
@@ -168,3 +180,4 @@ stage 1 decided.
 | D-10 | **The submission identifier is required.** A request without one, or with a malformed one, is rejected. | E5-SPEC-40. No path retains the non-idempotent behaviour, so the guarantee is not conditional on the caller. Consequence: the request contract extension is additive **and required** — a caller that does not send the field breaks, and today the portal is the only caller. |
 | D-11 | **A bounded-wait expiry answers in e4's existing system-failure branch.** No fifth portal result branch. | E5-SPEC-33, resting on E4-SPEC-7 and requirements D-5. The answer is imprecise in that edge case — the winning request may have saved the registration — and it is accepted deliberately: the operator's next retry carries the same identifier and replays into the real confirmation. |
 | D-12 | **E5-SPEC-8 covers every portal read surface of gateway-proxied results**, stated as universality rather than as a list. Taken 2026-08-11, on the drift gate's finding 3. | E5-SPEC-8. The patient chart read (`frontend/app/records/page.tsx:78`) has the defect E5-REQ-2 names — no status check, `json.encounters ?? []`, and an outage rendered as "No records found for this patient." — and its route (`proxy_records`) is one e5 converts, so excluding it would have shipped e5 with the class still visible on a PHI read surface. It was an omission, not a decision: E5-REQ-2's text was always generic, the stage-1 enumeration was measured wrong (requirements amendment 2026-08-11), and the pattern the requirements cite as the one to imitate is the sibling function twenty lines below the unchecked read. Stating it as universality rather than a longer list closes the failure mode the finding exposed — a list that a later measurement can fall outside of. |
+| D-18 | **A replay must match the recorded attempt; a mismatch is answered as a failure; an edited form is a new attempt.** Taken 2026-08-11, on codex PR #76 round-2 finding 1, confirmed at runtime before the decision. | E5-SPEC-30 (qualified), E5-SPEC-41, E5-SPEC-42, E5-SPEC-43. D-5's "the replay is indistinguishable from the original success" was decided for the re-submission of identical content; unqualified, it also confirmed an *edited* retry while silently discarding the edit — the desk saw success for a correction the chart never received, and the response even echoed the edited insurance in its eligibility block. The service records a non-reversible content fingerprint beside the identifier and answers a mismatched replay in the existing system-failure branch (no fifth portal branch — D-11's precedent holds); the portal re-mints the identifier when the form is edited after a failed or unconfirmed submit, so the operator-facing path is a new attempt and the service-side rejection is defence in depth for any non-portal caller. |
