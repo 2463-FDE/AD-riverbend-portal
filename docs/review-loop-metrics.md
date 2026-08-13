@@ -971,3 +971,16 @@ question the frozen spec had never decided, so the loop was doing spec work at r
 prices (one spec amendment mid-review, D-18, plus a re-gate, plus the restatement rounds).
 The successor starts from a spec that pre-encodes those decisions; whether its review loop
 shortens is the measurable prediction this section can be checked against.
+
+**PR #78 (the e5 close-record docs PR) r1 — 2026-08-13.** 2 findings, **0 A / 0 B / 0 C /
+2 E**, no diff change. Both were improve-suggestions answered with evidence, the W2-r2
+shape: (1) a `make seed` refusal guardrail / `schema-apply` target is runtime code, which
+the noncode path's scope guard excludes and the routing table sends to the registry — the
+filing is in this diff (the seed row's "Fix if taken" clause; the no-runner row naming the
+closed branch's mitigation as cherry-pickable), and the owner call (2026-08-13, land
+without) queues the cherry-pick as a candidate for the restarted e6 defect batch;
+(2) restructuring the debt rows and this ledger into rule-first blocks was declined on the
+documents' own contracts — the register's fast-read surface is its Status column and the
+new rows match every existing cross-cutting row's shape, while this file is append-only
+and compressing its history would rewrite the record it exists to keep; the operator-facing
+current rule lives in `docs/runbook.md`, the change the same review called the best here.
