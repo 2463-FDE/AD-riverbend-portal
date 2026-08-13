@@ -850,6 +850,31 @@ before designing a fix for a configuration or guard finding, grep the estate for
 the same shape already solved** — it is faster than designing, and it lands a
 consistent answer instead of a second convention.
 
+PR #76 r6 — 1 finding: 1 A / 0 B / 0 C, 0 refuted · **[high] A, fixed** (`a04a02b`) — a
+`pgdata` volume created before the migration never receives `registration_submissions`
+(nothing applies `db/migrations/*.sql`, compose mounts `db/schema.sql` into initdb, which
+runs on a fresh volume only), so `_find_registration` catches the missing relation and
+every registration answers 503. Confirmed in a scratch container seeded from `main`'s
+schema before any decision. **First round of this item to leave the request path** — five
+rounds attacked replay semantics, key material and boot wiring; this one attacked *the
+database that already exists*. **The r5 lesson repeated and now holds twice**: the estate
+had already answered it — `db/schema.sql` is `CREATE TABLE IF NOT EXISTS` throughout, so
+the upgrade needed *exposing* (`make schema-apply`), not building, and the reviewer's two
+suggestions (migrate inside `make up`; fail startup) were both new mechanism. **The new
+lesson is narrower and sharper: verify the obvious answer before recommending it.** The
+one-line reply here was "run `make seed`" — the command `docs/runbook.md` advertised for
+exactly this case. Running it against a populated database showed it skips the explicit-id
+inserts and gives every serial-id table a second copy pointing at the original patients
+(`consents` 403→806, `patients` unchanged), i.e. the recommended remedy corrupts the
+fixture that teaches D5a. A second, pre-existing defect found only because the disposition
+was tested rather than asserted; both are now `docs/debt-log.md` cross-cutting rows.
+**Scope note worth keeping**: the finding was true of `main` before this branch existed
+(three earlier migrations have the same latent break), and the disposition neither
+declined it as out-of-scope nor let it grow into a migration runner — it shipped the
+operator path and filed the runner. Class-closing tests over a one-instance integration
+test: +24 structural, including the hand-sync parity that reddens if any future migration
+and the flattened schema drift.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
