@@ -443,3 +443,33 @@ finding reproduced under the new wiring; key restored → `200` `patient_id=1874
 **1309 passed, 1 xfailed, 5 deselected** (1301 → 1309, +8; the xfail and the five deselected did
 not move). `make eval` green. `gitleaks --no-git` over the tracked tree plus the new template →
 no leaks, so the added file does not redden CI's `secret-scan`.
+
+### Round 6 — 2026-08-13
+
+1 finding. **Past the round-3 rule**, so the disposition is the owner's; taken 2026-08-13.
+Round 5's fix held and did not return, and the eligibility residual re-raised at r3/r4 stayed
+closed. The new finding is on the branch's *deployment* surface — the first round to leave the
+request path entirely — and it is labelled **A**: genuine, covered by no recorded residual, and
+not a defect this branch's own fix rounds wrote (the class predates e5, below).
+
+| # | SPEC | Finding | Disposition (A/B/C/E) |
+|---|------|---------|-----------------------|
+| 1 | E5-SPEC-29 | [high] Existing databases reject every intake: `create_intake` unconditionally queries `registration_submissions` (`services/intake-service/app.py:153-154`), but nothing applies `db/migrations/010_registration_submissions.sql` to an already-running database — `docker-compose.yml:12` mounts only `db/schema.sql` into `/docker-entrypoint-initdb.d`, which Postgres runs on a fresh volume alone, and `make up` runs no migrations. On a volume with existing `pgdata` the query hits a missing table, is caught as `SQLAlchemyError`, and returns `503` for every registration. Recommends wiring the migration into `make up`/the deploy path or failing startup until the table exists, plus an upgrade test that boots from the pre-migration schema | **A, accepted; fixed on the branch as an operator path** (`0cd880c`). Mechanism confirmed at runtime before any decision (E-6): a scratch container seeded from `main`'s `db/schema.sql` has 14 tables and no `registration_submissions`, and the select errors exactly where `_find_registration` catches it (`app.py:372-383`). **The class is older than this branch**, which is what decided the scope: `insurance_coverages` (mig 005), `roi_requests` (008) and `duplicate_review_queue` (009) are read the same unconditional way, so every environment older than those migrations already carries the same latent break — e5 adds a tenth table to a condition `main` has, it does not create one. **Route: branch patch, not stage 3.** The fix adds no runtime state — no counter, TTL, lock, breaker, budget or cache — only an operator command and documentation, so the skill's structural trigger does not fire. **Mechanism, and why not the reviewer's two options:** `db/schema.sql` is already re-appliable (15 of 15 tables are `CREATE TABLE IF NOT EXISTS`), so the upgrade needed exposing, not building — `make schema-apply` pipes the flattened schema into the running database, creating what is missing and no-oping what is not. Wiring it into `make up` was rejected because a migration step that runs unconditionally on every start is a write to a live database nobody asked for, inside the `docs/landmines.md` §1 migrations zone; a startup guard was rejected because it converts a fixable operational state into a service that will not boot. A real runner (versions table, apply step) is the complete answer and is estate-wide, out of this item's scope by owner decision 2026-08-13 and filed as `docs/debt-log.md` cross-cutting "No migration runner", which also records what the mitigation does **not** cover: `IF NOT EXISTS` skips an existing table whole, so an `ALTER TABLE ... ADD COLUMN` migration is still hand-applied. **A second defect surfaced while verifying the obvious answer** and is why "just run `make seed`" is not the disposition: `db/seed/seed.sql` carries no `ON CONFLICT`, so the seed half of that target leaves a half-duplicated corpus on a populated volume — the explicit-id inserts are skipped while every serial-id table gets a second copy attached to the original patients (measured: `consents` 403→806, `insurance_coverages` 255→510, `patients` unchanged at 255) — pre-existing on `main`, and `docs/runbook.md` advertised the command for exactly this case. Filed as the second `docs/debt-log.md` cross-cutting row; the runbook and the `Makefile` `##` line now say fresh-DB-only and point at `schema-apply`. The reviewer's upgrade test is deliberately **not** built as an integration boot test — it would need live Postgres and would exercise one instance; +24 structural tests in `tests/test_schema_upgrade_path.py` close the class instead: the re-appliable form (a future plain `CREATE TABLE` reddens), the table and column hand-sync between every migration and the flattened schema, `schema-apply` applying schema without seed (with `seed` as the positive control), and the runbook stating the bound |
+
+**E-6 — round-6 stale-volume verification, 2026-08-13.** Isolated by construction: a throwaway
+`postgres:15` container on its own anonymous volume, no host port, no compose project — the
+engagement stack was down and its `ad-riverbend-portal_pgdata` volume was never mounted, read or
+written; the container was removed after. Seeded from `git show main:db/schema.sql` + `seed.sql`
+→ 14 tables, no `registration_submissions`; `select 1 from registration_submissions` →
+`ERROR: relation "registration_submissions" does not exist`, the input to the 503 branch.
+Applying the branch's `db/schema.sql` → `15 CREATE TABLE`, 14 `already exists, skipping` notices,
+the new table plus `uq_registration_submission_id` created, `patients` 255→255 unchanged. Then
+re-running `db/seed/seed.sql` on that populated database → duplicate-key errors on every insert
+that names its id (`users`, `patients`, `encounters`, `records`, `slots` — skipped, counts
+unchanged at 12/255/475/687/120) and a second copy of every serial-id table: `consents` 403→806,
+`insurance_coverages` 255→510, `appointments` 209→418, `audit_logs` 22→44, `roi_requests` 16→32,
+`disclosures` 8→16. Both halves measured before and after, not inferred from the after count. The
+split is what makes it worse than a clean double — the duplicated coverage and consent rows point
+at the original patients — and it is the foot-gun in the command the runbook used to recommend. Suite **1333 passed, 1 xfailed, 5
+deselected** (1309 → 1333, +24; the xfail and the five deselected did not move). `make eval`
+green (exit 0).
