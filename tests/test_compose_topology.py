@@ -259,6 +259,120 @@ def test_ci_seeds_every_env_file_the_topology_requires():
         )
 
 
+# --- the registration fingerprint key is scoped AND generated (round 5) -------
+# Review round 3 made _fingerprint_key refuse a committed placeholder and emptied
+# the value in the shared template. That closed the published-key hole and opened
+# an availability one: the intake healthcheck polls /healthz, which knows nothing
+# about the key, so a stack seeded from .env.example reported HEALTHY while every
+# registration answered 503 — the loud failure arriving silently, exactly the
+# shape test_redis_refuses_the_same_placeholders_the_gateway_does exists to stop.
+# Redis had the same problem and it was solved by GENERATING the secret at
+# `make up` into its own env file, so this key follows it: one random value per
+# machine, never committed, never on the shared .env that reaches every container
+# on the network — and a PHI-derived key has a stronger claim to that scoping
+# than a session-store password does.
+FINGERPRINT_SECRET_KEY = "REGISTRATION_FINGERPRINT_KEY"
+FINGERPRINT_SECRET_ENV_FILE = ".env.registration"
+FINGERPRINT_SECRET_HOLDERS = {"intake-service"}
+
+
+def test_the_fingerprint_key_reaches_only_intake():
+    for name, svc in _all_services().items():
+        holds_file = FINGERPRINT_SECRET_ENV_FILE in _env_file_paths(svc)
+        holds_env = FINGERPRINT_SECRET_KEY in _environment_keys(svc)
+        if name in FINGERPRINT_SECRET_HOLDERS:
+            assert holds_file, (
+                f"{name} must load {FINGERPRINT_SECRET_ENV_FILE}: it is the only "
+                "service that computes or compares the registration fingerprint"
+            )
+        else:
+            assert not holds_file and not holds_env, (
+                f"{name} must not receive {FINGERPRINT_SECRET_KEY}: it keys a "
+                "digest of DOB, SSN and member id, and a service that never "
+                "fingerprints anything has no use for the one thing standing "
+                "between a stolen column and an offline confirmation oracle"
+            )
+
+
+def test_the_fingerprint_key_loads_after_the_shared_env():
+    # Ordering, not just membership: compose lets a LATER env_file entry beat an
+    # earlier one. If .env.registration came first, a stale REGISTRATION_
+    # FINGERPRINT_KEY left in someone's .env from before this move would win over
+    # the generated one — and two keys in a deployment's history is 409s on every
+    # straddling replay, silently.
+    paths = _env_file_paths(_service("intake-service"))
+    assert paths.index(".env") < paths.index(FINGERPRINT_SECRET_ENV_FILE), (
+        f"{FINGERPRINT_SECRET_ENV_FILE} must be listed AFTER .env so the "
+        "generated key wins over a leftover assignment in the shared file"
+    )
+
+
+def test_shared_env_template_does_not_carry_the_fingerprint_key():
+    text = (COMPOSE.parent / ".env.example").read_text()
+    assert not re.search(rf"^\s*{FINGERPRINT_SECRET_KEY}\s*=", text, re.MULTILINE), (
+        f"{FINGERPRINT_SECRET_KEY} must live in {FINGERPRINT_SECRET_ENV_FILE} "
+        f"(template {FINGERPRINT_SECRET_ENV_FILE}.example); the shared .env is "
+        "handed to every service on the network"
+    )
+
+
+def test_fingerprint_key_template_exists_and_ships_empty():
+    # Fail-closed default for a checkout that never ran `make`: the template
+    # exists so `docker compose config/build` can parse the topology, and it
+    # ships empty so a copied template refuses to register rather than
+    # fingerprinting PHI under a value every clone shares. `make up` generates a
+    # real one instead of copying this file.
+    text = (COMPOSE.parent / f"{FINGERPRINT_SECRET_ENV_FILE}.example").read_text()
+    assert re.search(rf"^{FINGERPRINT_SECRET_KEY}=$", text, re.MULTILINE), (
+        f"{FINGERPRINT_SECRET_ENV_FILE}.example must ship "
+        f"{FINGERPRINT_SECRET_KEY} empty"
+    )
+
+
+def test_the_fingerprint_key_is_generated_not_copied():
+    # The whole point of round 5. A `cp`-based recipe would put the empty
+    # template value into the live file and leave the stack healthy-but-unusable,
+    # which is the state this round is closing.
+    makefile = (COMPOSE.parent / "Makefile").read_text()
+    recipe = re.search(
+        rf"^{re.escape(FINGERPRINT_SECRET_ENV_FILE)}:\n((?:\t.*\n)+)",
+        makefile,
+        re.MULTILINE,
+    )
+    assert recipe, f"the Makefile must have a {FINGERPRINT_SECRET_ENV_FILE} target"
+    body = recipe.group(1)
+    assert "openssl rand" in body, (
+        f"{FINGERPRINT_SECRET_ENV_FILE} must be GENERATED like .env.redis, not "
+        "copied from its template: a copied template value is empty, and empty "
+        "is the 503-on-every-registration state"
+    )
+    assert f"cp {FINGERPRINT_SECRET_ENV_FILE}.example" not in makefile
+
+
+def test_every_compose_target_waits_for_the_generated_key():
+    # Compose refuses to parse when a listed env_file is missing, so every target
+    # that runs compose has to depend on the file — the same reason .env.ai-proxy
+    # and .env.redis are prerequisites of all of them.
+    makefile = (COMPOSE.parent / "Makefile").read_text()
+    for target in ("up", "down", "logs", "ps", "build", "seed", "psql", "config"):
+        line = re.search(rf"^{target}:(.*)$", makefile, re.MULTILINE)
+        assert line, f"the Makefile must still have a {target} target"
+        assert FINGERPRINT_SECRET_ENV_FILE in line.group(1), (
+            f"`make {target}` must depend on {FINGERPRINT_SECRET_ENV_FILE}: "
+            "compose cannot parse the file without it"
+        )
+
+
+def test_the_generated_key_file_is_never_tracked():
+    ignored = (COMPOSE.parent / ".gitignore").read_text()
+    assert re.search(
+        rf"^{re.escape(FINGERPRINT_SECRET_ENV_FILE)}$", ignored, re.MULTILINE
+    ), (
+        f"{FINGERPRINT_SECRET_ENV_FILE} holds a real generated secret and must "
+        "be gitignored, like .env.redis and .env.ai-proxy"
+    )
+
+
 # --- the health probe's budget fits inside the healthcheck's (round 2) --------
 # /healthz sends a real Redis PING, and the container healthcheck that polls it
 # has its own timeout. If the probe can outlast that, docker gives up on the

@@ -113,7 +113,16 @@ services:
 
   intake-service:
     build: ./services/intake-service
-    env_file: .env
+    # The registration content-fingerprint key (e5, E5-SPEC-41) is scoped here
+    # rather than carried in the shared .env: compose hands that file to every
+    # container, and the key is the only thing standing between a stolen
+    # registration_submissions column and an offline confirmation oracle over
+    # guessable fields. `make up` generates the file (empty template = fail-closed
+    # 503). Listed AFTER .env so the generated value wins over any leftover
+    # assignment in the shared file. Guarded by tests/test_compose_topology.py.
+    env_file:
+      - .env
+      - .env.registration
     environment:
       ELIGIBILITY_URL: http://eligibility-service:8072
     # Network-internal, like every domain service (ADR 0016, debt-log D15): no

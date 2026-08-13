@@ -78,7 +78,8 @@ eval/rag/           RIV-160 retrieval eval + the CI drift gate
   - a local 3.12 venv: `python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`,
     then `.venv/bin/python -m pytest -m "not integration" -q` (~26s).
 - `make up` / `down` / `logs` / `ps` — needs `cp .env.example .env` first; `make up` generates the
-  gitignored `.env.ai-proxy` and `.env.redis` itself. Postgres seeds on first boot.
+  gitignored `.env.ai-proxy`, `.env.redis` and `.env.registration` itself. Postgres seeds on
+  first boot.
 - `make eval` — the drift gate (`eval/rag/check_drift.py`); also runs in CI.
 - Everyday targets are `##`-documented in the `Makefile`. That is the single source — do not
   restate them here or anywhere else.

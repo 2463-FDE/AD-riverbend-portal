@@ -127,8 +127,13 @@ class Settings:
     # default; tests set it on the loaded settings object instead.
     # Presence is NOT the guard: app.py::_fingerprint_key also refuses known
     # placeholder values and anything under 32 characters, because a committed
-    # template value is as published as a hardcoded default and CI seeds .env
-    # from .env.example (PR #76 review round 3). .env.example ships this EMPTY.
+    # template value is as published as a hardcoded default and CI seeds the env
+    # files from their templates (PR #76 review round 3).
+    # WHERE THE VALUE COMES FROM: .env.registration, scoped to this service alone
+    # and GENERATED per machine by `make up` — not the shared .env, which compose
+    # hands to every container. The template ships EMPTY, so a checkout that
+    # never ran `make` fails closed; generation is what keeps that from meaning
+    # "a healthy stack that registers nobody" (PR #76 review round 5).
     # Rotating it invalidates every recorded fingerprint: a lost-confirmation
     # retry that straddles a rotation answers 409, the operator re-enters on a
     # fresh mount, and the duplicate pair is queued for human review — accepted

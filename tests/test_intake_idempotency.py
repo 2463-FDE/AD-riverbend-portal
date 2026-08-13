@@ -17,6 +17,7 @@ outbound call — except where a test's whole subject is whether the hook ran
 """
 import logging
 import pathlib
+import shutil
 import subprocess
 import sys
 import uuid
@@ -483,14 +484,16 @@ def test_a_placeholder_or_too_short_key_is_refused_exactly_like_no_key(
 
 
 def test_the_key_the_template_ships_fails_closed(client, session_factory, monkeypatch):
-    """E5-SPEC-41 against the state a fresh deploy actually boots into.
+    """E5-SPEC-41 against the state a fresh CHECKOUT boots into.
 
     The case above pins the guard against a list this file chose; this one pins
-    it against the file CI copies (`cp .env.example .env`,
-    `.github/workflows/ci.yml`), so it keeps holding whatever value the template
-    grows next. It passes today because the template ships the key EMPTY, and it
-    reddens the moment anyone puts a usable-looking value back."""
-    template = pathlib.Path(__file__).resolve().parents[1] / ".env.example"
+    it against the file CI copies (`cp .env.registration.example
+    .env.registration`, `.github/workflows/ci.yml`), so it keeps holding
+    whatever value the template grows next. It passes today because the template
+    ships the key EMPTY, and it reddens the moment anyone puts a usable-looking
+    value back. The template is the never-ran-`make` state, not the deployed one
+    — `test_the_generated_key_registers` below covers what `make up` produces."""
+    template = pathlib.Path(__file__).resolve().parents[1] / ".env.registration.example"
     shipped = [
         line.split("=", 1)[1].strip()
         for line in template.read_text().splitlines()
@@ -503,10 +506,57 @@ def test_the_key_the_template_ships_fails_closed(client, session_factory, monkey
     r = client.post("/intake", json=_request(str(uuid.uuid4())))
 
     assert r.status_code == 503, (
-        ".env.example ships a REGISTRATION_FINGERPRINT_KEY the guard accepts — a "
-        "committed key is a published key, and CI seeds .env from this file"
+        ".env.registration.example ships a REGISTRATION_FINGERPRINT_KEY the "
+        "guard accepts — a committed key is a published key, and CI seeds the "
+        "live file from this one"
     )
     assert _counts(session_factory) == before
+
+
+def test_the_generated_key_registers(client, session_factory, monkeypatch, tmp_path):
+    """PR #76 review round 5. The other half of the fail-closed guard, and the
+    half round 3 left open: a key nobody can set by hand is a registration path
+    nobody can use.
+
+    Round 3 emptied the template, and the intake healthcheck only polls
+    /healthz, so a stack brought up from the committed files reported HEALTHY
+    and answered 503 to every registration. The fix is the .env.redis pattern —
+    `make up` GENERATES the key — and this test runs that recipe for real and
+    feeds what it wrote to the guard. Nothing is asserted about the recipe's
+    text here; tests/test_compose_topology.py pins the shape, this pins the
+    outcome: the value a make-driven stack boots with is one that registers."""
+    work = tmp_path / "repo"
+    work.mkdir()
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    shutil.copy(str(repo / "Makefile"), str(work / "Makefile"))
+
+    proc = subprocess.run(
+        ["make", ".env.registration"], cwd=str(work),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    generated = [
+        line.split("=", 1)[1].strip()
+        for line in (work / ".env.registration").read_text().splitlines()
+        if line.startswith("REGISTRATION_FINGERPRINT_KEY=")
+    ]
+    assert len(generated) == 1, "the generated file must declare the key exactly once"
+    key = generated[0]
+    # Guard against a vacuous pass: an empty value would sail through the
+    # 503-count comparison below only because nothing was written either way.
+    assert key, "the recipe wrote an empty key — that is the 503 state it exists to avoid"
+
+    before = _counts(session_factory)
+    monkeypatch.setattr(config_mod.settings, "registration_fingerprint_key", key)
+    r = client.post("/intake", json=_request(str(uuid.uuid4())))
+
+    assert r.status_code == 201, (
+        "the key `make up` generates must satisfy _fingerprint_key: a generated "
+        "value the guard still refuses is the round-5 availability gap moved, "
+        "not closed"
+    )
+    assert _counts(session_factory) != before
 
 
 def test_a_real_key_registers(client, session_factory):

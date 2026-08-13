@@ -162,6 +162,32 @@ put sessions and visit memory on an open store — that is the guard working, no
 a Redis outage. Fix the credential; do not work around it by pointing
 `REDIS_URL` at an unauthenticated instance.
 
+### Every registration answers "registration store unavailable" (503)
+
+Intake is refusing to fingerprint the submitted content under a key it does not
+trust — an unset, empty, placeholder or under-32-character
+`REGISTRATION_FINGERPRINT_KEY`. **The container stays green while this happens**:
+`/healthz` does not exercise the key, so the symptom is registrations failing on
+a stack that reports healthy. The key lives in `.env.registration` (gitignored,
+loaded by intake-service only) and `make up` generates a random one on first run,
+so the usual cause is a stack brought up without `make`.
+
+```bash
+# is there a real key? (length only — never print the value)
+awk -F= '/^REGISTRATION_FINGERPRINT_KEY=/{print length($2)}' .env.registration
+# generate one
+rm -f .env.registration && make up
+```
+
+The intake log names the variable and never the value, and it does not say which
+check refused — that is deliberate, since naming the check narrows the key for
+anyone reading the log. Do not "fix" this by putting a value in `.env` or in a
+template: the guard exists because a committed key is a published key, and the
+fingerprint's inputs (DOB, SSN, member id) are guessable. **Rotating the key
+invalidates every recorded fingerprint**, so a lost-confirmation retry that
+straddles a rotation answers 409 rather than replaying; the operator re-enters on
+a fresh mount and the duplicate pair is queued for review.
+
 ### Gateway is unhealthy with "session store" in the log
 `GET /healthz` sends an authenticated Redis `PING` (each socket operation bounded
 by `REDIS_PROBE_TIMEOUT_SECONDS`, default 0.5s), so the container goes red when
