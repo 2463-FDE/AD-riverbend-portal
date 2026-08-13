@@ -262,10 +262,14 @@ def test_ci_seeds_every_env_file_the_topology_requires():
 # --- the registration fingerprint key is scoped AND generated (round 5) -------
 # Review round 3 made _fingerprint_key refuse a committed placeholder and emptied
 # the value in the shared template. That closed the published-key hole and opened
-# an availability one: the intake healthcheck polls /healthz, which knows nothing
-# about the key, so a stack seeded from .env.example reported HEALTHY while every
-# registration answered 503 — the loud failure arriving silently, exactly the
-# shape test_redis_refuses_the_same_placeholders_the_gateway_does exists to stop.
+# an availability one: the intake healthcheck polls /healthz, which at the time
+# knew nothing about the key, so a stack seeded from .env.example reported
+# HEALTHY while every registration answered 503 — the loud failure arriving
+# silently, exactly the shape
+# test_redis_refuses_the_same_placeholders_the_gateway_does exists to stop.
+# (Round 7 closed the signal half too: /healthz now refuses on an unconfigured
+# key as well as a missing table — tests/test_intake_schema_guard.py. Generation
+# is still what keeps a make-driven stack green.)
 # Redis had the same problem and it was solved by GENERATING the secret at
 # `make up` into its own env file, so this key follows it: one random value per
 # machine, never committed, never on the shared .env that reaches every container

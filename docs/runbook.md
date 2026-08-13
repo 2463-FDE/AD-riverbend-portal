@@ -57,6 +57,15 @@ old volume without `registration_submissions` is the worked example (e5, PR #76
 round 6); `insurance_coverages`, `roi_requests` and `duplicate_review_queue` are
 the same shape from earlier migrations.
 
+**How it presents:** `make ps` shows `intake-service` **unhealthy** — its
+`/healthz` checks that every table the service maps exists and answers `503`
+`schema incomplete` when one does not, naming the missing table in its log
+(PR #76 round 7). Until that guard landed the container reported healthy while
+every registration failed, which is how this condition reached an operator as
+"the portal is broken" rather than "the database is behind". Only intake carries
+the check today; the other services still present this as request-path `503`s
+with a green container.
+
 After pulling a change that adds a table, against a running stack:
 
 ```bash

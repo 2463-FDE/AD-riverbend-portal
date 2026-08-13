@@ -57,6 +57,7 @@ from typing import Any, Optional
 import httpx
 import yaml
 from fastapi import Depends, FastAPI, HTTPException
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -65,7 +66,7 @@ from sqlalchemy.orm import Session
 import matching
 from breaker import CircuitBreaker, EligibilityBreakerOpen
 from config import settings
-from db import get_db
+from db import Base, get_db
 from logging_config import configure
 from models import (
     Consent,
@@ -105,8 +106,66 @@ _breaker = CircuitBreaker(
 )
 
 
+# Every table this service maps, resolved once at import. Derived from the
+# metadata rather than listed, so a future model is inside the guard without an
+# edit — and so the whole class is covered, not migration 010's instance of it.
+_DECLARED_TABLES = tuple(sorted(Base.metadata.tables))
+
+
+def _missing_tables(db: Session) -> list[str]:
+    """Which declared tables the connected database does not have.
+
+    Catalog metadata only — no row is ever selected, so nothing this reads can
+    be PHI.
+    """
+    existing = set(sa_inspect(db.get_bind()).get_table_names())
+    return [name for name in _DECLARED_TABLES if name not in existing]
+
+
 @app.get("/healthz")
-def healthz():
+def healthz(db: Session = Depends(get_db)):
+    """Liveness + "can this instance actually register anyone".
+
+    `db/migrations/*.sql` has no runner and compose mounts `db/schema.sql` into
+    `/docker-entrypoint-initdb.d`, which Postgres runs on a FRESH volume only
+    (docs/debt-log.md, "No migration runner"). A database that predates a
+    migration therefore lacks the table the route reads unconditionally; the
+    read raises SQLAlchemyError, the caller catches it, and every registration
+    answers 503 — while a health endpoint that only proves the process is
+    listening reports green. That is the green-dashboard-dead-service failure,
+    and it is the same argument the gateway's Redis PING settled (app.py:179):
+    an accurate red beats a stable lie. Nothing in the topology drains or
+    restarts on this signal, and `make schema-apply` clears it.
+
+    The same argument reaches the fingerprint key (E5-SPEC-41): without a real
+    one `_fingerprint_key` refuses every registration, and until round 7 this
+    endpoint knew nothing about it. Round 5 declined to check it here because a
+    /healthz that COMPUTES a fingerprint is a PHI-adjacent probe — this asks the
+    configuration whether a key exists and computes no digest, so that objection
+    does not reach it (owner decision, review round 7).
+
+    Three reds, differing only in the log line: an incomplete schema is a
+    database that never received a migration, an unreadable one is a dependency
+    that is down, an unconfigured key is a deploy that never generated one.
+    """
+    if not _fingerprint_key_is_real(_configured_fingerprint_key()):
+        # No key material, no length, and no statement of WHICH check refused —
+        # this line is polled every 10s and must not narrow the secret.
+        log.error(
+            "healthz: REGISTRATION_FINGERPRINT_KEY is not set to a real secret, "
+            "so no registration can be recorded"
+        )
+        raise HTTPException(status_code=503, detail="registration key not configured")
+    try:
+        missing = _missing_tables(db)
+    except SQLAlchemyError as e:
+        # Class name only (phi-logging-policy rule 3): a statement-level
+        # DBAPIError can embed bound values in the driver's own message.
+        log.error("healthz: schema could not be read (%s)", type(e).__name__)
+        raise HTTPException(status_code=503, detail="database unavailable")
+    if missing:
+        log.error("healthz: schema incomplete, missing %s", ",".join(missing))
+        raise HTTPException(status_code=503, detail="schema incomplete")
     return {"status": "ok", "service": settings.service_name}
 
 
@@ -267,6 +326,27 @@ _PLACEHOLDER_FINGERPRINT_MARKERS = ("changeme", "change-me", "change_me", "place
 _MIN_FINGERPRINT_KEY_CHARS = 32
 
 
+def _configured_fingerprint_key() -> str:
+    return (settings.registration_fingerprint_key or "").strip()
+
+
+def _fingerprint_key_is_real(key: str) -> bool:
+    """Whether the configured value is a secret rather than a stand-in for one.
+
+    Split out from `_fingerprint_key` so /healthz can ask the same question
+    without raising, and so both askers share one definition of "real" — two
+    copies of this predicate is how a health endpoint ends up green on a value
+    the request path refuses.
+    """
+    normalized = key.lower()
+    return not (
+        not key
+        or normalized in _PLACEHOLDER_FINGERPRINT_KEYS
+        or any(marker in normalized for marker in _PLACEHOLDER_FINGERPRINT_MARKERS)
+        or len(key) < _MIN_FINGERPRINT_KEY_CHARS
+    )
+
+
 def _fingerprint_key() -> str:
     """The configured fingerprint key, or a 503 if it is not a real one.
 
@@ -275,15 +355,8 @@ def _fingerprint_key() -> str:
     value is only compared — never logged, echoed in the response, or embedded
     in the error.
     """
-    key = (settings.registration_fingerprint_key or "").strip()
-    normalized = key.lower()
-    unusable = (
-        not key
-        or normalized in _PLACEHOLDER_FINGERPRINT_KEYS
-        or any(marker in normalized for marker in _PLACEHOLDER_FINGERPRINT_MARKERS)
-        or len(key) < _MIN_FINGERPRINT_KEY_CHARS
-    )
-    if unusable:
+    key = _configured_fingerprint_key()
+    if not _fingerprint_key_is_real(key):
         # Configuration, not content: no submitted value and no key material in
         # this message. Deliberately does not say WHICH check refused — that
         # would narrow the value for anyone reading the log.
