@@ -616,6 +616,92 @@ worked example, each answering the last one's gap. That is convergent, not diver
 it is convergent because the artifacts are documents nobody executes; the same shape in
 code is PR #7.
 
+PR #77 r1 — 4 findings: **2 A / 0 B / 0 C**, **2 refuted** · the first round where half the
+findings asserted that work in the diff was absent. (1) [medium] **A** — the README claimed
+header ownership but never said which stage may write which field, and the `plan DRAFT`
+advance was assigned by no file at all (six skills state their own header write;
+`plan-authoring` stated none). Fixed with a field→writer table (`9fb793d`). The conflict the
+finding actually named — `delivery IMPLEMENTED` vs `## Plan` status — was not real; the
+grammar block already carried both axes. (2) [medium] **E** — "the frozen spec contradicts
+the mutable `test:` cell" is resolved by the delegation the section table sets up:
+`spec-authoring` owns Spec rules and carves the column out at `SKILL.md:26-27` and `:43-45`.
+Declined rather than duplicated into the README (`CLAUDE.md` §10). (3) [high] **E** — "the
+diff does not show the README update", against a diff whose README change is 160 lines and
+the largest file in the PR; all six items named as missing were cited back by line.
+(4) [medium] **A/E, split** — the 400-line budget was genuinely homeless (one hit repo-wide,
+marked "owned here", no dated decision, no rationale), and is now a dated shape decision with
+its basis and its `CLAUDE.md` §11 advisory ceiling; the pinned-test diff in the same finding
+was **not** homeless — the rule is `spec-authoring` step 6's freeze scope, and only the gate's
+"(owned here)" label was wrong.
+**Lesson: a finding that asserts absence is the cheapest kind to check and the most expensive
+kind to comply with.** Both E findings here were absence claims, and complying with the second
+would have copied a 160-line contract section into the skills that delegate to it — manufacturing
+exactly the duplicate-source-of-truth failure the one-file shape exists to remove. The check is
+one command (`git diff main...HEAD --stat`) and it ran before any editing. **Generalizes: triage
+an absence claim with a diff command before it earns a fix, and when it survives, ask whether
+the missing thing is missing or delegated — a review that cannot see the contract file reports
+delegation as absence.** Second, smaller: **an "(owned here)" annotation is a claim and grep
+settles it** — the same finding covered one rule that was homeless and one that was homed
+elsewhere and mislabeled, and only reading both against the tree separated them.
+**Process note:** this round had no fresh-context gate available — neither gate can run on a
+tooling PR (both key on an item's spec and plan; a skill file has none), so codex was the only
+adversarial reader and it misread the diff. Filed as TODO-64, not fixed inside the PR under
+review.
+
+PR #77 r2 — 3 findings: **2 A / 0 B / 0 C**, 1 refuted · the round r1's fix made possible.
+(1) [medium] **A** — four sites said "set/advance the header to `delivery X`", which reads as
+replacing the whole `Status:` line and dropping the `plan GATED` half an earlier stage earned;
+each now advances the *delivery axis* and says the plan stamp stands (`e25a0e5`). The reviewer
+asked for the literal two-axis string at each site; four copies of a grammar the README owns is
+the `CLAUDE.md` §10 shape, so the axis is named instead, and `noncode-merge`'s `MERGED` stamp —
+same wording, not in the finding — was fixed with them. (2) [medium] **A** — the gate skills
+write a dry `checked:` round on a clean run while the README said a stage with no finding has
+no rounds. Resolved by the decode table rather than by preference: it reads "no Gate round" as
+*the gate has not run*, which is only sound if a clean run records one, so the README sentence
+was the defective half (`f55592c`). (3) [low] **E** — "impl-gate's write boundary contradicts
+itself" quotes a rule whose next sentence is the carve-out. Refuted, and the wording tightened
+anyway (`56027ce`), since naming the protected Delivery content and the one permitted append
+costs three words and removes the misread.
+**Lesson: writing a rule down does not only create a surface for the next round to attack — it
+also makes latent defects findable, and the two are hard to tell apart from the finding
+counts.** Both A findings here are original-push wording (`2aecbbf`), not fix-round wording, so
+neither is a **B** — but neither was reachable until r1 wrote "the line carries both axes and a
+delivery transition never rolls back the plan stamp" into the README. The reviewer had a rule to
+measure four skill sites against, and found them. Compare PR #75 r3, where the rules added by
+r1 and r2 were themselves the defect surface: same mechanism, opposite sign. **Generalizes: an
+explicit rule converts ambiguity into findings, so expect the round after a state-model fix to
+raise more, and label them by whose text is wrong (original push vs fix round), never by which
+round could first see them.** Second: **when two documents contradict, look for the third thing
+that depends on one of them** — the decode table settled which half was wrong here, and settled
+it in one read, where arguing the merits of dry rounds would not have converged.
+
+PR #77 r3 — 6 findings: **1 A / 0 B / 0 C**, 5 refuted · **the round the absence claim came
+back**, and the round-3 rule's first application to a non-code PR. The headline finding is r1's
+F3 restated — "the README isn't shown carrying those definitions" — against a README that is
+the largest file in the diff and had grown twice since, by the reviewer's own two prior rounds
+(`9fb793d`, `f55592c`). Two more were the same shape: the branch/merge lifecycle it asked the
+README to state is the README's Landing rule, and the pinned-test lifecycle it asked for is
+`spec-authoring` step 6. (3) [medium] **A** — both gates say "README owns the round format"
+while the section table assigned `## Findings` rules to the stage skill and the README carried
+only the heading and numbering; with the inline templates removed, the pointer led to half a
+rule. README now carries the row shape and the empty-disposition convention the decode table
+keys on (`cab5e5b`). (4) [low] **E**, edit taken (`6cd8bc4`) — the pinned-test lifecycle was
+intact in `spec-authoring` and asked about twice, which is a discoverability defect even when
+the rule is not. Two suggestions declined with cites: deltas-only wants a worked example (five
+delivered plans are the examples), residuals-by-ID wants summaries (`docs/todo.md`'s line format
+already guarantees a self-contained line per id).
+**Lesson: a reviewer that cannot see the artifact will keep reporting delegation as absence,
+and each repetition costs a round even when the answer is a citation.** Three of six findings
+this round, and two of four in r1, were absence claims about a file in the diff; every one was
+closed by quoting line numbers, and none moved the code. That is not a reviewer defect to
+route around — it is the measured cost of this PR class having **no fresh-context gate**: both
+gates key on an item's spec and plan, a tooling PR has neither, so the only adversarial reader
+is the one worst placed to check the contract (TODO-64). **Generalizes: when the same absence
+claim survives a refutation with line cites, stop answering it and fix the reachability instead
+— r3's one real finding was exactly that, a pointer that led to half a rule — and count the
+repeat rounds as evidence for the missing gate rather than as review noise to absorb.** Cost
+here: three rounds, of which one produced two real defects (r2) and one produced one (r3).
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
