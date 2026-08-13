@@ -914,3 +914,30 @@ The stop happened, so the line stays; the next entry here will use whatever the 
 riverbend-demo loses all rules after parent rename → rebase-or-retire required; a2 `brief`
 dropped from the /dashboard stage enum; a3 dry-run ledger tag); OD-1 track `.claude/` with
 exclusions, OD-2 fence rewrite + Lens-4 traceability check, OD-3 ledger sited here.
+
+PR #76 r7 — 2 findings: 1 A / 0 B / 0 C · **[high] the round-6 finding re-raised, and the
+first re-raise this item did not answer from the record.** Round 6 accepted the mechanism,
+shipped the operator path and declined both enforcement options; round 7 restated it with
+the same anchor and the same two remedies, and the owner reversed the health half. Fixed in
+`27a05d8`: `/healthz` refuses while any table `Base.metadata` declares is missing, so the
+condition presents as an unhealthy container rather than a green one answering 503 to every
+registration. **The ledger-worthy part is what the re-raise cost and what it bought.** Cost:
+one round. Bought: a fix the disposition-from-the-record path would not have produced —
+round 6's reasoning ("a startup guard converts a fixable operational state into a service
+that will not boot") was sound about *process exit* and was quietly load-bearing for a
+weaker claim, that the signal should stay silent too. The reviewer never distinguished the
+two either; the owner did. **Reading for the loop:** the "answer it from the record" rule
+(fix-session step 2) is right when the record already weighed the remedy the reviewer names,
+and this round is the boundary case — round 6 weighed *both* named remedies and rejected
+them, so the rule fired correctly and the owner overruled it anyway, on a narrower option
+neither the reviewer nor round 6 had put on the table. That is not a rule failure; it is why
+step 2 routes to the owner past round 3 rather than to the fix session. Watch for the
+opposite error next: a re-raise answered from a record that only *looks* like it covered the
+remedy. **[medium] A, accepted as a residual** — the portal's retry id is lost on remount
+(`docs/todo.md` TODO-66). Not patched: the form persists no draft, so persisting the
+identifier alone would attach an old attempt to freshly typed content and refuse a genuinely
+new registration — worse than the gap — and the complete fix writes PHI to browser storage,
+a landmines §1 decision of its own. Second finding this item where the reviewer's stated
+remedy rested on a premise (a draft store; a persisted eligibility verdict) the codebase
+does not have, which is a cheaper thing to check than to argue: read the premise first, then
+the finding. +18 tests; suite 1333 → 1351.

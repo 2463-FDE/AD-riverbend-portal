@@ -2,6 +2,50 @@
 
 > Status: PUSHED PR #76 2026-08-12
 >
+> **Review round 7** (2026-08-13): two findings, **1 A / 0 B / 0 C**, plus one
+> owner reversal of a round-6 disposition. Fixed on the branch in `27a05d8`
+> (`findings.md` §Review round 7). *Finding 1 — nothing enforces the round-6
+> upgrade path:* the mechanism was already accepted at round 6, which shipped
+> `make schema-apply` and **declined** both enforcement options. The owner
+> reversed the health half 2026-08-13, and the landed guard is narrower than
+> what round 6 rejected: `/healthz` refuses while any table the service maps is
+> missing, so the condition presents as an **unhealthy container** rather than a
+> green one answering 503 to every registration — the process still starts and
+> still says which table is absent. Same shape as the gateway's Redis PING in its
+> own `/healthz` (an accurate red beats a stable lie); over `Base.metadata`, so
+> it covers the class round 6 measured rather than migration 010's instance.
+> `make up` applying schema unconditionally stays declined (a write to a live
+> database inside the §1 migrations zone), and `depends_on` stays
+> `service_started` — `service_healthy` would hold seven working surfaces down
+> for one stale table. The same edit closed the key half of the class by owner
+> decision: `/healthz` also refuses an unconfigured `REGISTRATION_FINGERPRINT_KEY`
+> through the predicate the request path uses, which reverses round 5's
+> "healthcheck deliberately unchanged" — round 5 objected to a probe that
+> *computes a fingerprint*, and this one reads configuration only.
+> *Finding 2 — the retry id is lost on remount:* **A, accepted as a residual**
+> (owner, 2026-08-13) and filed as `docs/todo.md` TODO-66, no code change. The
+> remedy is not separable from draft restore — the form persists nothing, so
+> persisting the identifier alone would attach an old attempt to freshly typed
+> content and refuse a genuinely new registration (E5-SPEC-42), which is the trap
+> D-20 exists to prevent. **Routing:** finding 1 a branch patch (no counter, TTL,
+> lock, breaker, budget or cache — a read of catalog metadata); finding 2 not
+> patched at all, because its real fix writes PHI to browser storage on a shared
+> workstation and is a §1 decision of its own. +18 tests in
+> `tests/test_intake_schema_guard.py`. Suite **1351 / 1 / 5** (+18; xfail and
+> deselected unmoved). Registry upkeep in the same commit: the debt-log runner
+> row records what now detects the condition and which services still do not, the
+> runbook states the symptom operators will see, the PHI register gains the second
+> refusal site. One citation correction: round 6's disposition cited a pre-amend
+> dangling `0cd880c`; the commit is `a04a02b`.
+>
+> **Review round 6** (2026-08-13): one finding, **A** — an existing Postgres
+> volume never receives migration 010, so every registration 503s behind a
+> healthy container. Fixed in `a04a02b` as an operator path (`make schema-apply`)
+> plus +24 structural tests; a second, pre-existing defect surfaced while
+> verifying it (`make seed` half-duplicates a populated corpus) and both are now
+> `docs/debt-log.md` cross-cutting rows. Suite **1333 / 1 / 5**. Round 7 re-raised
+> the enforcement half and the owner took it (above).
+>
 > **Review round 5** (2026-08-13): one finding, **B — a defect in the code round
 > 3's fix wrote**, the first B on this item. Fixed on the branch in `958d46c`
 > (`findings.md` §Review round 5). Round 3 emptied `REGISTRATION_FINGERPRINT_KEY`
@@ -336,6 +380,10 @@ Copied from the plan's Landmines section, with their live outcomes:
     confirmed, which is the point — but unlike the portal path there is no
     re-mint behind it, so a non-portal caller racing itself with two payloads
     under one identifier loses the second one with only a `409` to say so.
+11. **The portal's submission attempt does not survive a remount** *(added by
+    review round 7; owner-accepted 2026-08-13)*. `docs/todo.md` TODO-66 — the
+    account lives there, including why the reviewer's remedy is not separable
+    from draft restore and what draft restore costs.
 
 ## Test-first, and what wasn't
 
