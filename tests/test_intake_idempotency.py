@@ -9,9 +9,11 @@ recorded outcome instead of creating a second one.
 TestClient over intake-service with in-memory SQLite. The match-key hook
 (Postgres ON CONFLICT) and the eligibility hop (outbound call) are faked, exactly
 as tests/test_intake_endpoint.py does, so these assert the ROUTE. The lock_timeout
-bound is Postgres-only and proven by the integration marker
-(tests/integration/test_intake_lock_timeout.py); here the collision and
-wait-expiry branches are exercised by driving the exceptions they map from.
+bound is Postgres-only: the issued s->ms value is unit-pinned below
+(test_lock_timeout_ms_conversion_pins_the_units), real-Postgres acceptance was
+proven live (docs/workflow/e5b.md Delivery, verification 8 — no committed
+integration file, which would move the deselected count), and here the collision
+and wait-expiry branches are exercised by driving the exceptions they map from.
 
 Sibling-pinning idiom from tests/test_intake_endpoint.py.
 """
