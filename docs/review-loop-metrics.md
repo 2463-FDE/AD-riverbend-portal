@@ -954,6 +954,18 @@ at). Remedy adopted on PR #79: carry a compact dispositions-of-record section in
 body itself — the one reviewer-visible surface we control without bloating the artifact —
 naming each declined class, the decision it rests on, and what "routed to eN" means.
 
+PR #79 r7 — 1 finding: **0 A / 0 B / 0 C / 1 E** — a re-raise of r4 F1 (the crash-window
+match-evaluation gap), dispositioned by citing the r4 disposition and debt-log D5c. The
+result worth recording: r7 re-raised a class that **was already carried in the PR body's
+dispositions-of-record** (the r6 remedy) — so the reviewer-visible surface, on its own,
+did not stop the re-raise. Read together with r6 (a verbatim re-raise of r5), the signal
+is four consecutive zero-diff rounds cycling registered items. Lesson refined: the PR-body
+record is necessary for *human* readers and for anchoring the fix session, but it does not
+prevent a memoryless reviewer from re-raising — nothing in the diff-plus-body context
+tells the reviewer a class was raised and declined *before*. Once the loop is cycling
+registered items, the terminating move is the round-3 rule's — hand to the owner for the
+merge call — not another re-tag, which only buys another repeat.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`

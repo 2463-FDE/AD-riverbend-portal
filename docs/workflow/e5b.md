@@ -565,6 +565,23 @@ Verify: no code change; suite unchanged at **1300 passed, 5 deselected, 1 xfaile
 Loop signal: r4–r6 produced zero code change; r6 re-raises r5's dispositioned finding
 unchanged — dry.
 
+### Review — round 7, 2026-08-14
+
+One finding — a re-raise of round 4's (same class: a crash between the registration
+commit and `_evaluate_match_key` leaves a signal-less unevaluated patient; the replay
+path then masks it). Both r7 recommendations were dispositioned at r4: persist a
+`match_pending` marker in the registration transaction (new state) and run/enqueue eval
+from the replay path. Round-3 rule remains in effect.
+
+| # | Spec | Finding | Disposition |
+|---|---|---|---|
+| 1 | e5b-SPEC-7 (W2-SPEC-23/32) | Re-raise of r4 F1: `_create_registration` commits patient + ledger before `_evaluate_match_key`; a post-commit crash leaves a patient with no duplicate-review rows and no `MatchEvaluationFailure` marker, and the replay path returns without re-running eval — "duplicate detection bypassed, unchecked state durable." Recommends a `match_pending`/outbox marker written in the registration transaction, and a self-healing replay path that detects missing evaluation state. | **E · declined: answered by the round-4 disposition, which stands → e5b debt-log D5c.** The "skipped forever / no recovery" premise was refuted at runtime at r4 and the evidence is intact: the retroactive pass is a **marker-independent full sweep over every patient row** (`retro_match.py::run` — "Classify every patient row"; `MatchEvaluationFailure` rows are summary bookkeeping, not the sweep's input), proven by `tests/test_retro_match.py`; any later same-SSN registration re-derives the whole clique. The conceded half — the pass is operator-run only, so the crash-window patient is signal-less — is filed once as `docs/debt-log.md` **D5c** (OPEN). Both proposed fixes stay blocked by the record: the `match_pending` marker is new state → structural → stage 3, unwarranted against the registered residual; eval-on-replay violates frozen e5b-SPEC-7 ("creating and modifying nothing" on replay). The class is carried in the PR body's dispositions-of-record (the reviewer-visible surface) and was re-raised regardless — memoryless cycling, not new signal. Reopening is owner-only. |
+
+Verify: no code change; suite unchanged at **1300 passed, 5 deselected, 1 xfailed**.
+Loop signal: r4–r7 four consecutive zero-diff rounds; r7 re-raises r4's dispositioned
+finding despite the class sitting in the PR body's dispositions-of-record. The loop is
+exhausted — the record, not another round, answers repeats.
+
 ## Delivery
 
 Status: see the header status line — the single delivery axis (stamped `IMPLEMENTED
