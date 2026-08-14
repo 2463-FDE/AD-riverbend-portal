@@ -945,6 +945,15 @@ r5 disposition. Confirms the r5 loop signal: three consecutive zero-diff rounds,
 last a pure repeat. The reviewer has no memory of dispositions, so once findings cycle,
 the loop's value is exhausted — the record, not another round, is what answers repeats.
 
+Mechanism behind the cycling, worth acting on (2026-08-14): the reviewer's context is the
+diff plus the PR body — **PR comments are not in it**, so a disposition that lives only in
+a comment is invisible to the next round, and a routing target that exists only in
+engagement records reads as an unresolved name (e.g. "queued for e6": e6 is a successor
+work item with nothing on `main`, so the reviewer cannot see what the exclusion points
+at). Remedy adopted on PR #79: carry a compact dispositions-of-record section in the PR
+body itself — the one reviewer-visible surface we control without bloating the artifact —
+naming each declined class, the decision it rests on, and what "routed to eN" means.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`

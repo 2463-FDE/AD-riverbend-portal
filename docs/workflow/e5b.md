@@ -567,8 +567,9 @@ unchanged — dry.
 
 ## Delivery
 
-Status: delivery DRAFT — impl gate not yet run (the `IMPLEMENTED` stamp lands when
-a fresh-context impl-gate session returns clean; the plan stamp stays GATED)
+Status: see the header status line — the single delivery axis (stamped `IMPLEMENTED
+2026-08-14` by a fresh-context impl gate, 2 rounds; the plan stamp stays GATED).
+This line went stale once by carrying its own copy; it no longer does.
 
 Branch cut from `main` at the artifact's first commit; baseline measured then and
 recorded in the header (1247 passed, 1 xfailed, 5 deselected). Full suite after
