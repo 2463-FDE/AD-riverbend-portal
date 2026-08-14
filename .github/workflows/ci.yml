@@ -144,6 +144,9 @@ jobs:
           cp .env.example .env
           cp .env.ai-proxy.example .env.ai-proxy
           cp .env.redis.example .env.redis
+          # .env.registration ships no template (generated secret, e5b-D-13);
+          # generate it with its committed make recipe so compose can parse.
+          make .env.registration
       # NOTE: these steps prove every image COMPILES, never that any of them runs.
       # Runtime coverage comes from the frontend-boot dependency above, and covers
       # the frontend only — a domain service that builds and then crashes on boot

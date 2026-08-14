@@ -1,6 +1,6 @@
 # e5b — registration idempotency, restarted
 
-Status: plan GATED 2026-08-13 (spec FROZEN 2026-08-13)
+Status: plan GATED 2026-08-13 · delivery DRAFT 2026-08-13 (spec FROZEN 2026-08-13)
 Item: successor of e5 chunk 2 (PR #76, closed unmerged 2026-08-13) — make `POST /intake`
 safe to retry, restarted from requirements under the one-file pipeline
 Baseline at branch: 1247 passed, 1 xfailed, 5 deselected (`.venv` py3.12, `-m "not integration"`, 2026-08-13 at branch cut; `CLAUDE.md` §6's 969 confirmed stale per the e5 close record)
@@ -382,3 +382,90 @@ generate-and-prerequisite pattern, intake `env_file: .env`, 8s/30s timeout defau
 compose/topology pins; gate interaction incl. two-sided contract suites and unchanged
 gateway route set; residual honesty); verification runnable, 11 numbered commands with
 expected output, negative break-then-revert at 5/6/9.
+
+## Delivery
+
+Status: delivery DRAFT — impl gate not yet run (the `IMPLEMENTED` stamp lands when
+a fresh-context impl-gate session returns clean; the plan stamp stays GATED)
+
+Branch cut from `main` at the artifact's first commit; baseline measured then and
+recorded in the header (1247 passed, 1 xfailed, 5 deselected). Full suite after
+implementation, `make test-docker` (the claim-worthy gate) and `.venv` py3.12
+agree: **1295 passed, 5 deselected, 1 xfailed** — `+48` passed, xfailed and
+deselected **unmoved** (1/5), so no deliberate-gap count moved. Frontend gate:
+`npm test` 31 passed (payload.contract 13, page 18), `build` + `typecheck` +
+`lint` clean (lint's one warning is the pre-existing DateField one, untouched).
+
+Test additions trace exactly to the change list: two new files —
+`tests/test_intake_idempotency.py` (27), `tests/test_intake_schema_guard.py` (3) —
+plus extensions to `test_intake_schemas.py` (+8), `test_intake_payload_contract.py`
+(+1), `test_gateway_intake_proxy.py` (+2), `test_eligibility_budget_alignment.py`
+(+1), `test_compose_topology.py` (+6). 27 + 3 + 18 = 48. Every one of the 27
+frozen `test:` labels is homed in a named file (verified by scan); the 2 `gate:`
+rows are the Delivery observations below.
+
+Slices test-first (behavioural seam, `tdd` loop): schemas identifier + validator,
+the app.py idempotency core, the health guard, and the frontend mint/attempt
+semantics — each EARS row got its failing test at the plan's seam before the code.
+Slices with no behavioural seam, verified by their own checks rather than TDD:
+the DB migration/model/schema-sync, config knobs, and the infra wiring (Makefile,
+compose, `.gitignore`, `.env.example`) — covered by the contract, topology,
+budget, and boot-path tests.
+
+Deviations (plan facts correct; these are consequences the change list implied but
+did not spell out):
+- **Verification 8 (real-Postgres `lock_timeout`) run live, no committed
+  integration file.** The change list names no `tests/integration/` file, so none
+  was added — adding one would also move the deselected count. The s→ms conversion
+  is unit-pinned (`test_intake_idempotency.py::test_lock_timeout_ms_conversion_pins_the_units`,
+  `_lock_timeout_ms()` → 5000), and real-Postgres acceptance was proven live (below).
+- **`test_ci_seeds_every_env_file_the_topology_requires` generalized + CI seed
+  step gained `make .env.registration`.** The no-template decision (e5b-D-13) makes
+  `.env.registration` the first generated, template-less env_file; the existing CI
+  test asserted a `cp *.example` for *every* env_file, so it now branches on
+  template presence and CI generates the file with its committed recipe. Required
+  by the change list's own "no template ships", not a scope addition.
+- **The E4 budget test kept intact; the lock-wait invariant added as a new test.**
+  `test_the_gateway_registration_bound_never_preempts_intake` (E4-SPEC-17/18, a
+  pinned test) is unchanged; the e5b sum-shape (eligibility + lock wait + margin ≤
+  gateway bound) is a new sibling test, so no owner-pinned test was altered.
+- **`.env.example` INTAKE_TIMEOUT invariant comment amended** to name the lock
+  wait in the budget (8 + 5 + 1 = 14 ≤ 30) — part of the planned `.env.example`
+  change; called out because the edit touched the neighbouring comment block.
+
+No planned slice is absent from the diff. The gateway code diff is empty
+(`git diff main -- services/gateway/` → nothing; `rg submission_id services/gateway/`
+→ none): SPEC-5 is enforced by test alone (e5b-SPEC-5, verification 10).
+
+Live-run evidence (isolation stated per the §1 evidence rule):
+- **Verification 8 — real-Postgres `lock_timeout`** (e5b-SPEC-8; isolation: a
+  throwaway `postgres:15` scratch container, no repo stack touched, removed after):
+  the service's issued `SET LOCAL lock_timeout = '5000ms'` (for the default 5) is
+  accepted and `SHOW lock_timeout` returns `5s`; the dropped-×1000 control `'5ms'`
+  returns `5ms`. The s→ms conversion holds against real Postgres.
+- **Verification 9 — negative break-then-revert** (§3 rule): reverting the v4
+  validator (`if False`) reddens `test_format_check_boundary[*]` (3 fail); restore →
+  green. Disabling the `touch()` re-mint reddens `page.test.tsx` fe-remint cases
+  (2 fail: SPEC-14 edit + never-delivered); restore → green. Both files restored.
+- **Verifications 1–4, 10** green as recorded above. **`make eval` not run:**
+  nothing under `eval/rag/` or the retrieval path changed.
+
+`gate:` observations:
+- **e5b-SPEC-26 (health break-then-revert):** the schema-guard suite is the
+  automated half (`test_intake_schema_guard.py`: unreal key → 503 naming the
+  variable; missing `registration_submissions` → 503 naming the table; real key +
+  full schema → 200). The live break-then-revert on a running stack is deferred to
+  the impl gate's live pass, isolation to be stated there.
+- **e5b-SPEC-27 (harvest traceability audit):** performed at the impl gate against
+  `~/Documents/Work/process-plans/e5b-restart/harvest.md`; observation recorded when
+  the gate runs.
+
+Residuals — filed at landing, registry IDs only (no restatement here):
+- `docs/todo.md` **TODO-67** — the SPEC-11 non-correctable-422 residual, re-derived
+  on `main` (TODO-62 stays a closed record; ids never reused, e5b-D-6).
+- `docs/debt-log.md` "Intake contract break" residual-2 → **CLOSED (`e5b`)**; the
+  register-first and verdict-persistence residuals stay open there (e5b-D-5).
+- `docs/phi-logging-policy.md` register — the mechanism's new log surfaces, keyed
+  fingerprint, and loggable-id rationale (REVIEWED 2026-08-13).
+- `docs/runbook.md` — the key-rotation note (rotation invalidates recorded
+  fingerprints; bounded, a straddling retry 409s).

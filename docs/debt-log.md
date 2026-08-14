@@ -144,10 +144,18 @@
      verification runs after the commit behind a call-site guard, and the
      `try/finally` is untouched — it is still test-pinned for what it does
      guarantee (the breaker always settles, `tests/test_intake_breaker.py`).
-     **Residual on the residual:** atomicity is per-request, not cross-service.
-     A registration that commits and then loses its response in transit leaves a
-     row the operator never sees confirmed; that needs an idempotency key on
-     `POST /intake`, which is register-first's territory.
+     **Residual on the residual — CLOSED 2026-08-13 (`e5b`).** Atomicity was
+     per-request, not cross-service: a registration that committed and then lost
+     its response in transit left a row the operator never saw confirmed, and a
+     retry forked a second chart with its own coverage and consent rows. `e5b`
+     added the idempotency key — the portal attaches a client-minted
+     `submission_id`, and intake records it with a keyed content fingerprint in
+     the chart's own transaction (`registration_submissions`, migration 010), so
+     a retry of the same attempt replays the original outcome (201, original
+     `patient_id`, live eligibility re-verification) or 409s a corrected retry,
+     never a second chart. Register-first (instant 201 + async re-verify) stays
+     out of scope — a different fix class (`e5b-D-5`), and the eligibility
+     verdict still reaches no column (residual 3 below).
   3. **The verdict is never persisted.** `_create_registration` writes
      `payer_name`/`member_id`/`group_number`/`plan_type` only, so
      `insurance_coverages.status` keeps its schema default `'unknown'`

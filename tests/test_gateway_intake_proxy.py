@@ -213,6 +213,35 @@ def test_registration_fan_out_is_bounded_by_the_configured_timeout(monkeypatch):
     assert calls[0]["timeout"] is not None
 
 
+def test_gateway_forwards_the_submission_identifier_unchanged(monkeypatch):
+    """e5b-SPEC-5. proxy_intake takes an opaque dict and passes it through, so the
+    submission_id survives byte-for-byte and the gateway generates, substitutes,
+    or drops nothing. The forwarded body must equal the received one exactly."""
+    sid = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
+    payload = {**PAYLOAD, "submission_id": sid}
+    calls = _patch_post(monkeypatch, response=_FakeResponse(201, {"patient_id": 1}))
+    client.post("/intake", json=payload)
+    forwarded = calls[0]["json"]
+    assert forwarded["submission_id"] == sid   # forwarded unchanged
+    assert forwarded == payload                # nothing added, dropped, or substituted
+
+
+def test_downstream_409_is_relayed_as_409(monkeypatch):
+    """e5b-SPEC-13/D-15. A corrected-retry mismatch is a 409 with a constant
+    non-PHI detail; _post_checked relays it, and the portal's existing non-400/422
+    arm renders the system-failure message — no gateway edit, no new portal
+    branch."""
+    _patch_post(
+        monkeypatch,
+        response=_FakeResponse(
+            409, {"detail": "registration content does not match the original submission"}
+        ),
+    )
+    r = client.post("/intake", json=PAYLOAD)
+    assert r.status_code == 409
+    assert r.json()["detail"] == "registration content does not match the original submission"
+
+
 def test_a_role_without_patients_write_never_reaches_intake(monkeypatch):
     """The capability check (ADR 0017) still runs ahead of the fan-out — the
     migration changes the error contract, not the authz boundary."""
