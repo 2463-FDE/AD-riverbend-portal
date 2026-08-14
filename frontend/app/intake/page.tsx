@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import Card from "../components/Card";
 import DateField from "../components/DateField";
@@ -8,7 +8,7 @@ import VerdictBadge, { verdictTone } from "../components/VerdictBadge";
 import { apiFetch } from "../lib/session";
 import { formatSsn, formatPhone, digitsOnly } from "../lib/format";
 import type { EligibilityVerdict } from "../lib/types";
-import { buildIntakePayload } from "./payload";
+import { buildIntakePayload, newSubmissionId } from "./payload";
 import type { ConsentsForm, DemographicsForm, InsuranceForm } from "./payload";
 
 type Demographics = DemographicsForm;
@@ -62,6 +62,35 @@ export default function IntakePage() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<SubmitResult | null>(null);
 
+  // The submission-attempt identifier (e5b-SPEC-3/14/17). Refs, not state: the
+  // id is minted synchronously at the first submit of an attempt and nothing
+  // renders from it, so a re-render must never reset it. `remintOnEdit` is armed
+  // when an attempt ends in a non-success (a failure result, or a submit that
+  // was never delivered); the first field edit after that funnels through
+  // touch(), which mints a fresh id so a corrected retry is a NEW attempt — an
+  // identical retry (submit again, no edit) reuses the id and replays.
+  const attemptIdRef = useRef<string | null>(null);
+  const remintOnEditRef = useRef(false);
+
+  function touch() {
+    if (remintOnEditRef.current) {
+      attemptIdRef.current = newSubmissionId();
+      remintOnEditRef.current = false;
+    }
+  }
+  function updateDemo(patch: Partial<Demographics>) {
+    touch();
+    setDemo((d) => ({ ...d, ...patch }));
+  }
+  function updateIns(patch: Partial<Insurance>) {
+    touch();
+    setIns((i) => ({ ...i, ...patch }));
+  }
+  function updateConsents(patch: Partial<Consents>) {
+    touch();
+    setConsents((c) => ({ ...c, ...patch }));
+  }
+
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [instructions, setInstructions] = useState<{
@@ -82,7 +111,13 @@ export default function IntakePage() {
   async function submit() {
     setBusy(true);
     setResult(null);
-    const payload = buildIntakePayload(demo, ins, consents);
+    // Mint at the first submit of an attempt; a retry without an intervening
+    // edit reuses the same id and replays (e5b-SPEC-3). touch() re-mints on the
+    // first edit after a non-success, so the id here is already the right one.
+    if (attemptIdRef.current === null) {
+      attemptIdRef.current = newSubmissionId();
+    }
+    const payload = buildIntakePayload(demo, ins, consents, attemptIdRef.current);
     try {
       // NOTE: /api/intake can take a few seconds — intake verifies payer
       // eligibility on the request thread (bounded, ADR 0010).
@@ -96,11 +131,17 @@ export default function IntakePage() {
         // Status class alone decides which of the two things the operator is
         // being told (E4-SPEC-6/7, 14). The downstream `detail` is deliberately
         // never rendered: it can carry the submitted values that were rejected.
+        // A 409 (a corrected retry the service refused) is not 400/422, so it
+        // renders the system-failure message — no new portal branch (e5b-D-15).
         const rejected = res.status === 400 || res.status === 422;
+        // Arm a re-mint: the outcome was not a success, so the next edit starts
+        // a fresh attempt (e5b-SPEC-14).
+        remintOnEditRef.current = true;
         setResult({ ok: false, text: rejected ? NOT_SAVED_CORRECTABLE : NOT_SAVED_SYSTEM });
       } else if (typeof data?.patient_id !== "number") {
         // A success status that confirms no record is not a success
         // (E4-SPEC-5). This is the branch the old fallback string hid.
+        remintOnEditRef.current = true;
         setResult({ ok: false, text: NOT_SAVED_SYSTEM });
       } else {
         setResult({
@@ -110,6 +151,9 @@ export default function IntakePage() {
         });
       }
     } catch {
+      // Never delivered — an identical retry replays the committed result, so the
+      // id is kept; an edit re-mints (e5b-SPEC-14).
+      remintOnEditRef.current = true;
       setResult({ ok: false, text: "Could not reach the portal. Please try again." });
     } finally {
       setBusy(false);
@@ -268,17 +312,17 @@ export default function IntakePage() {
             <div className="rb-field-row">
               <Field id="first_name" label="First name" required value={demo.first_name}
                 autoComplete="given-name"
-                onChange={(v) => setDemo({ ...demo, first_name: v })} />
+                onChange={(v) => updateDemo({ first_name: v })} />
               <Field id="last_name" label="Last name" required value={demo.last_name}
                 autoComplete="family-name"
-                onChange={(v) => setDemo({ ...demo, last_name: v })} />
+                onChange={(v) => updateDemo({ last_name: v })} />
             </div>
             <div className="rb-field-row">
               <DateField id="dob" label="Date of birth" required value={demo.dob}
                 disableFuture fromYear={1900}
-                onChange={(v) => setDemo({ ...demo, dob: v })} />
+                onChange={(v) => updateDemo({ dob: v })} />
               <SelectField id="gender" label="Gender" value={demo.gender}
-                onChange={(v) => setDemo({ ...demo, gender: v })}
+                onChange={(v) => updateDemo({ gender: v })}
                 options={["", "Female", "Male", "Non-binary", "Prefer not to say"]} />
             </div>
             <div className="rb-field-row">
@@ -289,17 +333,17 @@ export default function IntakePage() {
               <Field id="ssn" label="SSN" hint="Used for insurance verification only."
                 value={demo.ssn} format={formatSsn} inputMode="numeric"
                 autoComplete="off" revealable
-                onChange={(v) => setDemo({ ...demo, ssn: v })} />
+                onChange={(v) => updateDemo({ ssn: v })} />
               <Field id="phone" label="Phone" type="tel" value={demo.phone}
                 format={formatPhone} inputMode="tel" autoComplete="tel"
-                onChange={(v) => setDemo({ ...demo, phone: v })} />
+                onChange={(v) => updateDemo({ phone: v })} />
             </div>
             <Field id="email" label="Email" type="email" value={demo.email}
               inputMode="email" autoComplete="email"
-              onChange={(v) => setDemo({ ...demo, email: v })} />
+              onChange={(v) => updateDemo({ email: v })} />
             <Field id="address" label="Home address" value={demo.address}
               autoComplete="street-address"
-              onChange={(v) => setDemo({ ...demo, address: v })} />
+              onChange={(v) => updateDemo({ address: v })} />
           </fieldset>
         )}
 
@@ -310,15 +354,15 @@ export default function IntakePage() {
             </legend>
             <div className="rb-field-row">
               <Field id="carrier" label="Insurance carrier" value={ins.carrier}
-                onChange={(v) => setIns({ ...ins, carrier: v })} />
+                onChange={(v) => updateIns({ carrier: v })} />
               <Field id="member_id" label="Member / Insurance ID" value={ins.member_id}
-                onChange={(v) => setIns({ ...ins, member_id: v })} />
+                onChange={(v) => updateIns({ member_id: v })} />
             </div>
             <div className="rb-field-row">
               <Field id="group_number" label="Group number" value={ins.group_number}
-                onChange={(v) => setIns({ ...ins, group_number: v })} />
+                onChange={(v) => updateIns({ group_number: v })} />
               <SelectField id="plan_type" label="Plan type" value={ins.plan_type}
-                onChange={(v) => setIns({ ...ins, plan_type: v })}
+                onChange={(v) => updateIns({ plan_type: v })}
                 options={["", "HMO", "PPO", "EPO", "POS", "Medicare", "Medicaid", "Self-pay"]} />
             </div>
             {/* A checkbox, not a name field: Riverbend has nowhere to store a
@@ -331,7 +375,7 @@ export default function IntakePage() {
                 id="policy_holder_is_self"
                 type="checkbox"
                 checked={ins.policy_holder_is_self}
-                onChange={(e) => setIns({ ...ins, policy_holder_is_self: e.target.checked })}
+                onChange={(e) => updateIns({ policy_holder_is_self: e.target.checked })}
               />
               <label className="rb-checkbox__body" htmlFor="policy_holder_is_self">
                 <strong>I am the policy holder</strong>
@@ -348,19 +392,19 @@ export default function IntakePage() {
               Please review and acknowledge the following. Items marked required must be accepted.
             </legend>
             <Consent id="c_treatment" required checked={consents.treatment}
-              onChange={(v) => setConsents({ ...consents, treatment: v })}
+              onChange={(v) => updateConsents({ treatment: v })}
               title="Consent to treatment"
               body="I consent to medical care and treatment provided by Riverbend Community Health." />
             <Consent id="c_privacy" required checked={consents.privacy}
-              onChange={(v) => setConsents({ ...consents, privacy: v })}
+              onChange={(v) => updateConsents({ privacy: v })}
               title="Notice of privacy practices (HIPAA)"
               body="I acknowledge receipt of the Notice of Privacy Practices describing how my health information may be used and disclosed." />
             <Consent id="c_financial" checked={consents.financial}
-              onChange={(v) => setConsents({ ...consents, financial: v })}
+              onChange={(v) => updateConsents({ financial: v })}
               title="Financial responsibility"
               body="I understand I am financially responsible for charges not covered by my insurance." />
             <Consent id="c_comms" checked={consents.communications}
-              onChange={(v) => setConsents({ ...consents, communications: v })}
+              onChange={(v) => updateConsents({ communications: v })}
               title="Electronic communications (optional)"
               body="I agree to receive appointment reminders and portal notifications by email or text." />
             {/* Optional, like the two above. The wording points at the Notice
@@ -369,7 +413,7 @@ export default function IntakePage() {
                 authorization, and nothing in roi-service reads it as one
                 (docs/todo.md TODO-61). */}
             <Consent id="c_roi" checked={consents.roi}
-              onChange={(v) => setConsents({ ...consents, roi: v })}
+              onChange={(v) => updateConsents({ roi: v })}
               title="Release of information (optional)"
               body="I authorize Riverbend to release my records as described in the Notice of Privacy Practices." />
           </fieldset>
