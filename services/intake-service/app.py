@@ -195,12 +195,17 @@ class _SubmissionCollision(Exception):
 def healthz(db: Session = Depends(get_db)):
     """Report unhealthy while registration could not work (e5b-SPEC-23/25).
 
-    Two fail-closed conditions the request path also enforces, checked here so
-    the health signal can never be a stable lie (e5b-D-14): the fingerprint key
-    must be real, and every table declared on Base.metadata (the class, not a
-    session instance) must exist — a database predating this item's state is
-    missing registration_submissions and must read red. The refusal detail names
-    the variable or the missing table set, never a value and never a secret.
+    Three fail-closed conditions checked here so the health signal can never be
+    a stable lie (e5b-D-14): the fingerprint key must be real, every table
+    declared on Base.metadata (the class, not a session instance) must exist — a
+    database predating this item's state is missing registration_submissions and
+    must read red — and registration_submissions must carry its declared columns
+    and the UNIQUE constraint on submission_id. Presence is not shape (PR #79
+    round 2): a partially applied migration can leave the table without
+    uq_registration_submission_id, and that constraint is the sole arbiter of a
+    retry (e5b-SPEC-8) — without it duplicate charts return silently. The
+    refusal detail names the variable, table, column, or constraint, never a
+    value and never a secret.
     """
     if not _fingerprint_key_is_real(settings.registration_fingerprint_key):
         # Name the configuration, never its value (e5b-SPEC-22).
@@ -208,8 +213,15 @@ def healthz(db: Session = Depends(get_db)):
             status_code=503,
             detail="registration unavailable: REGISTRATION_FINGERPRINT_KEY not configured",
         )
+    ledger = Base.metadata.tables["registration_submissions"]
     try:
-        existing = set(inspect(db.get_bind()).get_table_names())
+        insp = inspect(db.get_bind())
+        existing = set(insp.get_table_names())
+        if ledger.name in existing:
+            live_columns = {c["name"] for c in insp.get_columns(ledger.name)}
+            uniques = insp.get_unique_constraints(ledger.name)
+        else:
+            live_columns, uniques = set(), []
     except SQLAlchemyError as e:
         log.error("healthz: schema inspection failed (%s)", type(e).__name__)
         raise HTTPException(status_code=503, detail="database unavailable")
@@ -220,6 +232,33 @@ def healthz(db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=503,
             detail=f"registration schema incomplete: missing {','.join(missing)}",
+        )
+    missing_columns = sorted(set(ledger.columns.keys()) - live_columns)
+    if missing_columns:
+        # Column names carry no PHI and no secret (e5b-SPEC-25).
+        log.error(
+            "healthz: registration_submissions missing columns %s", ",".join(missing_columns)
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "registration schema incomplete: registration_submissions missing "
+                f"{','.join(missing_columns)}"
+            ),
+        )
+    # Match by covered column set, not constraint name — the name is DDL
+    # cosmetics; uniqueness of submission_id is what idempotency rests on.
+    if not any(u.get("column_names") == ["submission_id"] for u in uniques):
+        log.error(
+            "healthz: registration_submissions missing unique constraint "
+            "uq_registration_submission_id"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "registration schema incomplete: registration_submissions lacks "
+                "unique constraint uq_registration_submission_id (submission_id)"
+            ),
         )
     return {"status": "ok", "service": settings.service_name}
 

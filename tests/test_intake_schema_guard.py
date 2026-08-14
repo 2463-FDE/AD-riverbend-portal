@@ -2,10 +2,13 @@
 
 An accurate red beats a stable lie (e5b-D-14): the health surface refuses while a
 fail-closed guard the request path also enforces would refuse every registration.
-Two conditions are checked — the fingerprint key must be real, and every table
+Three conditions are checked — the fingerprint key must be real, every table
 Base.metadata declares must exist (a database predating this item is missing
-registration_submissions). The refusal names the variable or the missing table
-set, never a value and never a secret.
+registration_submissions), and registration_submissions must carry its declared
+columns and the UNIQUE constraint on submission_id (PR #79 round 2: presence is
+not shape — a partially applied migration without the constraint silently
+recreates the duplicate-chart bug). The refusal names the variable, table,
+column, or constraint, never a value and never a secret.
 
 compose depends_on stays service_started (e5b-D-14), so this red never becomes an
 estate-wide boot failure — it is a signal, read by the operator, not a gate.
@@ -16,7 +19,7 @@ import sys
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -80,6 +83,58 @@ def stale_schema():
     engine.dispose()
 
 
+@pytest.fixture
+def constraintless_schema():
+    """A partially applied migration: the table exists, the UNIQUE arbiter does not."""
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    db_mod.Base.metadata.create_all(engine)
+    models_mod.RegistrationSubmission.__table__.drop(engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE registration_submissions (
+                    id INTEGER PRIMARY KEY,
+                    submission_id TEXT NOT NULL,
+                    payload_fingerprint TEXT NOT NULL,
+                    patient_id INTEGER NOT NULL REFERENCES patients(id),
+                    created_at TIMESTAMP
+                )
+                """
+            )
+        )
+    yield sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    engine.dispose()
+
+
+@pytest.fixture
+def columnless_schema():
+    """Column drift: the table exists with the constraint but not every declared column."""
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    db_mod.Base.metadata.create_all(engine)
+    models_mod.RegistrationSubmission.__table__.drop(engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE registration_submissions (
+                    id INTEGER PRIMARY KEY,
+                    submission_id TEXT NOT NULL,
+                    patient_id INTEGER NOT NULL REFERENCES patients(id),
+                    created_at TIMESTAMP,
+                    CONSTRAINT uq_registration_submission_id UNIQUE (submission_id)
+                )
+                """
+            )
+        )
+    yield sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    engine.dispose()
+
+
 def teardown_function():
     app_mod.app.dependency_overrides.clear()
 
@@ -111,4 +166,28 @@ def test_stale_db_is_unhealthy(stale_schema):  # test: stale-db-unhealthy
     assert r.status_code == 503
     detail = r.json()["detail"]
     assert "registration_submissions" in detail
+    assert REAL_KEY not in detail
+
+
+def test_missing_unique_constraint_is_unhealthy(constraintless_schema):
+    """PR #79 round 2: the UNIQUE constraint is the sole arbiter of a retry
+    (e5b-SPEC-8); a table without it would serve duplicate charts silently, so
+    the guard must read red on constraint drift, naming the constraint only."""
+    client = _client(constraintless_schema, REAL_KEY)
+    r = client.get("/healthz")
+    assert r.status_code == 503
+    detail = r.json()["detail"]
+    assert "uq_registration_submission_id" in detail
+    assert REAL_KEY not in detail
+
+
+def test_missing_column_is_unhealthy(columnless_schema):
+    """PR #79 round 2: a declared column absent from the live table is schema
+    drift the request path would only surface as a 500 mid-write; the guard
+    reads red first, naming the column only."""
+    client = _client(columnless_schema, REAL_KEY)
+    r = client.get("/healthz")
+    assert r.status_code == 503
+    detail = r.json()["detail"]
+    assert "payload_fingerprint" in detail
     assert REAL_KEY not in detail
