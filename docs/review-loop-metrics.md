@@ -889,6 +889,16 @@ the plan missed. Negative test uses a well-formed v4 UUID embedding an SSN, the 
 the pre-existing `test_no_phi_on_any_surface` (demographics/insurance only) could not
 reach.
 
+PR #79 r2 — 1 finding: **1 A / 0 B / 0 C**, 0 refuted. `healthz` checked table-name
+presence only; a partially applied migration leaving `registration_submissions` without
+`uq_registration_submission_id` read healthy while the sole retry arbiter (e5b-SPEC-8)
+was absent — the duplicate-chart bug back, silently. Fixed by extending the same guard
+to verify declared columns and the UNIQUE constraint (matched by covered column set),
+plus two drift regression tests. Read-only inspection, no state → trivial route, no
+re-gate; e5b-D-14 chose the presence check but recorded nothing on shape, so the fix
+deepens the decision rather than reopening it. Lesson: a guard that proves *presence*
+of a structure whose *property* carries the invariant is half a guard.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`

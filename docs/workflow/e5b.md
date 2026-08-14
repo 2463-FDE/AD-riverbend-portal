@@ -504,6 +504,17 @@ other high-entropy strings; the remaining local hits (`.venv/`, `frontend/.next/
 `.env.registration`) are untracked/gitignored and absent from CI's `actions/checkout`
 tracked tree. Fixed @839bed6.
 
+### Review — round 2, 2026-08-14
+
+One finding.
+
+| # | Spec | Finding | Disposition |
+|---|---|---|---|
+| 1 | e5b-SPEC-8/25 | `healthz` compares table *names* only, so a database where `registration_submissions` exists but lacks `uq_registration_submission_id` — a partially applied migration — reports healthy while the sole retry arbiter (e5b-SPEC-8) is absent: two same-`submission_id` requests each insert a patient and ledger row, silently restoring the duplicate-chart bug. e5b-D-14 chose the schema-presence check but recorded no decision on shape, so this deepens the same guard rather than contradicting a decision. | **A · fixed @70a2964** — trivial route (read-only inspector extension, no new state → no re-gate). Guard now verifies the ledger's declared columns and the UNIQUE constraint on `submission_id`, matched by covered column set (the name is DDL cosmetics; uniqueness is what idempotency rests on). Refusal detail names table/column/constraint only, never a value. Two drift regression tests: table rebuilt without the constraint, and without a declared column — each reads 503. |
+
+Verify: `.venv` py3.12 `-m "not integration"` → **1298 passed, 5 deselected, 1 xfailed**
+(+2 the drift tests; xfail/deselected unmoved). Frontend untouched (Python only).
+
 ## Delivery
 
 Status: delivery DRAFT — impl gate not yet run (the `IMPLEMENTED` stamp lands when
