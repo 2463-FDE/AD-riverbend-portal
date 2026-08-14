@@ -150,6 +150,29 @@ def _fingerprint(req: IntakeRequest) -> str:
     ).hexdigest()
 
 
+def _submission_log_id(submission_id: str) -> str:
+    """A server-keyed digest of the identifier, for log correlation only.
+
+    The portal mints the submission_id from a source independent of patient data
+    (e5b-SPEC-18), but the service cannot PROVE that: a caller reaching the
+    gateway directly bypasses the mint, and the version-4 format check narrows
+    accidental derivation without proving randomness (e5b-D-9). A well-formed v4
+    UUID still carries 122 caller-controlled bits — enough to smuggle an SSN or
+    MRN into the hex digits — so logging the raw value would make the PHI-log
+    boundary depend on the portal being the only minting authority (PR #79 codex
+    r1). Logging a REGISTRATION_FINGERPRINT_KEY-keyed HMAC digest keeps replay
+    and collision lines correlatable while making the logged token non-reversible
+    to any identifier the caller embedded (e5b-SPEC-20). The key is checked real
+    before any request-path log site runs, so a digest is never taken over a weak
+    key. 16 hex chars (64 bits) is ample to distinguish attempts in a log scan.
+    """
+    return hmac.new(
+        settings.registration_fingerprint_key.encode(),
+        submission_id.encode(),
+        hashlib.sha256,
+    ).hexdigest()[:16]
+
+
 def _lock_timeout_ms() -> int:
     """The bounded wait as Postgres lock_timeout milliseconds (e5b-D-12).
 
@@ -235,8 +258,12 @@ def create_intake(req: IntakeRequest, db: Session = Depends(get_db)):
     # never the request body or any raw request string. Redacting the body was
     # insufficient because pattern redaction misses names/DOBs smuggled into
     # free-text fields (Codex review). See docs/phi-logging-policy.md. The
-    # submission_id is on the allowlist (non-PHI by construction, e5b-SPEC-20).
-    log.info('POST /intake meta=%s', json.dumps(log_metadata(req)))
+    # identifier is logged only as a server-keyed digest (submission_ref), never
+    # raw — the raw value is caller-controllable and cannot be proven non-PHI at
+    # this boundary (_submission_log_id; e5b-SPEC-20; PR #79 codex r1).
+    meta = log_metadata(req)
+    meta["submission_ref"] = _submission_log_id(req.submission_id)
+    log.info('POST /intake meta=%s', json.dumps(meta))
 
     fingerprint = _fingerprint(req)
 
@@ -278,9 +305,9 @@ def create_intake(req: IntakeRequest, db: Session = Depends(get_db)):
 
     elapsed = round(time.time() - started, 2)
     log.info(
-        "POST /intake 201 patient_id=%s submission_id=%s elapsed=%.2fs",
+        "POST /intake 201 patient_id=%s submission_ref=%s elapsed=%.2fs",
         patient_id,
-        req.submission_id,
+        _submission_log_id(req.submission_id),
         elapsed,
     )
     return IntakeResponse(patient_id=patient_id, elapsed_seconds=elapsed, eligibility=eligibility)
@@ -318,8 +345,8 @@ def _replay_or_conflict(
     """
     if not hmac.compare_digest(existing.payload_fingerprint, fingerprint):
         log.info(
-            "intake: submission_id replay content mismatch submission_id=%s",
-            req.submission_id,
+            "intake: submission_id replay content mismatch submission_ref=%s",
+            _submission_log_id(req.submission_id),
         )
         raise HTTPException(
             status_code=409,
@@ -328,8 +355,8 @@ def _replay_or_conflict(
     eligibility = _verify_eligibility_guarded(req.insurance)
     elapsed = round(time.time() - started, 2)
     log.info(
-        "intake: submission_id replay served submission_id=%s patient_id=%s elapsed=%.2fs",
-        req.submission_id,
+        "intake: submission_id replay served submission_ref=%s patient_id=%s elapsed=%.2fs",
+        _submission_log_id(req.submission_id),
         existing.patient_id,
         elapsed,
     )

@@ -148,7 +148,10 @@ def test_log_metadata_reports_allowlisted_structure():
         consents=["npp_ack"],
     )
     meta = schemas.log_metadata(req)
-    assert meta["submission_id"] == VALID_SUBMISSION_ID
+    # The raw submission_id is NOT emitted here — it is caller-controllable and
+    # logged only as a server-keyed digest by app.py (PR #79 codex r1). See
+    # test_intake_idempotency.py::test_malicious_valid_uuid_is_never_logged_raw.
+    assert "submission_id" not in meta
     assert meta["consents"] == ["npp_ack"]
     assert meta["has_ssn"] is True
     assert meta["has_insurance"] is False

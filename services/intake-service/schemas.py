@@ -201,10 +201,10 @@ def log_metadata(req: IntakeRequest) -> dict[str, Any]:
     demo = req.demographics
     ins = req.insurance
     return {
-        # Non-PHI by construction (e5b-SPEC-18/20): a mint-random v4 UUID carries
-        # no patient value, so logging it is what makes a replay diagnosable
-        # without echoing any demographic or insurance field (e5b-D-10).
-        "submission_id": req.submission_id,
+        # The submission_id is deliberately NOT emitted here: it is
+        # caller-controllable and cannot be proven non-PHI at this boundary, so
+        # app.py logs a server-keyed digest (submission_ref) instead of the raw
+        # value (_submission_log_id; e5b-SPEC-20; PR #79 codex r1).
         "consents": list(req.consents),          # constrained to ConsentKind
         "self_service": demo.created_via == "self_service",
         "has_insurance": ins is not None,

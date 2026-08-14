@@ -420,6 +420,30 @@ def test_no_phi_on_any_surface(client, session_factory, caplog):  # test: no-phi
         assert value not in persisted
 
 
+def test_malicious_valid_uuid_is_never_logged_raw(client, caplog):  # test: no-phi-any-surface
+    """e5b-SPEC-20, PR #79 codex r1: the format check proves version-4 shape, not
+    randomness, so a direct (non-portal) caller can send a well-formed v4 UUID
+    whose 122 free bits smuggle a patient identifier — here an SSN in the node
+    field. The service must never write that raw value to a log or the response;
+    it logs a server-keyed digest instead. Complements test_no_phi_on_any_surface,
+    which only feeds PHI through demographics and insurance fields."""
+    ssn = "123456789"
+    # Valid v4: version nibble 4, variant nibble 8; the node field carries the SSN.
+    malicious_id = "00000000-0000-4000-8000-000" + ssn
+    with caplog.at_level("INFO"):
+        # POST twice with the same id: the second is a replay, exercising the
+        # replay-served log line as well as the initial-metadata and success lines.
+        client.post("/intake", json={**BASE_REQUEST, "submission_id": malicious_id})
+        resp = client.post("/intake", json={**BASE_REQUEST, "submission_id": malicious_id})
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert malicious_id not in logged  # the raw identifier never reaches a log line
+    assert ssn not in logged           # nor the identifier smuggled inside it
+    assert malicious_id not in resp.text
+    assert ssn not in resp.text
+    # The keyed digest IS present, so replays stay correlatable in a log scan.
+    assert app_mod._submission_log_id(malicious_id) in logged
+
+
 def test_binding_is_keyed_not_reversible(monkeypatch):  # test: binding-not-reversible
     """e5b-SPEC-21: the persisted binding is a keyed HMAC — an attacker holding
     the stored records and guessing field values cannot recompute it without the
