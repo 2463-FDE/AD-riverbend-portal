@@ -47,6 +47,7 @@ for _name, _module in _saved.items():
 
 
 VALID_REQUEST = {
+    "submission_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
     "demographics": {
         "name": "Sample Patient",
         "dob": "1985-03-12",
@@ -94,6 +95,14 @@ def client(session_factory, monkeypatch):
         finally:
             session.close()
 
+    # create_intake fails closed without a real fingerprint key (e5b-SPEC-22);
+    # pin a synthetic 64-char one on this file's settings instance (never a live
+    # key) so these route tests reach the write path.
+    monkeypatch.setattr(
+        app_mod.settings,
+        "registration_fingerprint_key",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    )
     # The match-key hook and the payer hop are exercised elsewhere; here they
     # would only add a Postgres dialect and an outbound call.
     monkeypatch.setattr(app_mod, "_evaluate_match_key", lambda *a, **k: None)

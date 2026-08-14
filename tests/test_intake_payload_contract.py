@@ -92,6 +92,19 @@ def test_every_portal_omission_is_optional_in_the_schema():
             )
 
 
+def test_contract_declares_the_submission_identifier_field():  # e5b-SPEC-4
+    """The submission-attempt identifier is an additive, required root field of
+    the contract (e5b-D-6): declared in root and present, version-4-shaped, in
+    the sample both suites validate. The equality test above already fails if
+    root and IntakeRequest disagree; this pins the field by name so a silent
+    drop of it from the declaration is unmistakable in the diff."""
+    assert "submission_id" in CONTRACT["request_fields"]["root"]
+    sample_id = CONTRACT["sample_request"]["submission_id"]
+    # Re-validates through the schema so the sample id is a real v4, not any string.
+    assert schemas.IntakeRequest.model_validate(CONTRACT["sample_request"]).submission_id == sample_id
+    assert schemas.IntakeRequest.model_fields["submission_id"].is_required()
+
+
 def test_the_sample_request_carries_no_seeded_identifiers():
     """The declaration is committed and read by two suites, so its sample must
     stay synthetic — a real-looking SSN or member id here would be a PHI-shaped

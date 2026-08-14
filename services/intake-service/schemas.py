@@ -1,9 +1,21 @@
 """Pydantic v2 request/response schemas for intake-service."""
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# A submission-attempt identifier: RFC 4122 version-4 UUID, variant bits pinned
+# (the ``4`` and the ``[89ab]``). The portal mints one per attempt
+# (e5b-SPEC-18); the service only NARROWS the accidental-derivation class — this
+# format check cannot prove randomness, which lives at the mint (e5b-D-9). A
+# missing or malformed id is rejected in e4's correctable-input branch
+# (e5b-SPEC-11/19), reached because the field is required.
+_SUBMISSION_ID_RE = re.compile(
+    r"\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z",
+    re.IGNORECASE,
+)
 
 
 class ConsentKind(str, Enum):
@@ -61,11 +73,29 @@ class IntakeRequest(BaseModel):
     # matching how models.Consent.kind is stored and how log_metadata emits it.
     model_config = ConfigDict(use_enum_values=True)
 
+    # The submission-attempt identifier the portal mints (e5b-SPEC-3/4). Required
+    # root field: a missing one is a correctable-input rejection (e5b-SPEC-11),
+    # the accepted TODO-shape residual — the portal always sends it. Stored TEXT,
+    # non-PHI by construction, so it joins the log allowlist below.
+    submission_id: str
     demographics: Demographics
     insurance: Optional[Insurance] = None
     consents: list[ConsentKind] = Field(
         default_factory=lambda: ["npp_ack", "treatment_consent"]
     )
+
+    @field_validator("submission_id")
+    @classmethod
+    def submission_id_is_uuid4(cls, v: str) -> str:
+        # Narrows the accidental-derivation class only (e5b-SPEC-19): a value
+        # that is not a version-4 UUID cannot be a random mint of one, so it is
+        # rejected before any read or write. Randomness itself is the mint's
+        # guarantee (e5b-D-9), not provable here. Canonicalize to lowercase so an
+        # uppercased-but-valid id is stored and matched in one form — a replay
+        # must never miss on case alone.
+        if not _SUBMISSION_ID_RE.match(v or ""):
+            raise ValueError("submission_id must be a version-4 UUID")
+        return v.lower()
 
 
 class IntakeResponse(BaseModel):
@@ -171,6 +201,10 @@ def log_metadata(req: IntakeRequest) -> dict[str, Any]:
     demo = req.demographics
     ins = req.insurance
     return {
+        # Non-PHI by construction (e5b-SPEC-18/20): a mint-random v4 UUID carries
+        # no patient value, so logging it is what makes a replay diagnosable
+        # without echoing any demographic or insurance field (e5b-D-10).
+        "submission_id": req.submission_id,
         "consents": list(req.consents),          # constrained to ConsentKind
         "self_service": demo.created_via == "self_service",
         "has_insurance": ins is not None,
