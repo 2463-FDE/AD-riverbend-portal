@@ -899,6 +899,18 @@ re-gate; e5b-D-14 chose the presence check but recorded nothing on shape, so the
 deepens the decision rather than reopening it. Lesson: a guard that proves *presence*
 of a structure whose *property* carries the invariant is half a guard.
 
+PR #79 r3 — 2 findings: **1 A / 0 B / 0 C / 1 E**, round-3 close. F1 (A): the ledger
+lookup ran unguarded as the first DB operation on every `/intake` request — an escaped
+DBAPIError's traceback embeds the bound caller-controlled `submission_id`, the r1 PHI
+vector by another door; fixed with the write path's rollback/class-only/503 idiom inside
+the helper, negative + endpoint tests. F2 (E): "don't re-mint on edit after ambiguous
+failure" restates the frozen spec's recorded choice — e5b-SPEC-14 mandates the re-mint
+and records the second-chart consequence in the row itself (visible pair, SPEC-16 queue,
+never a silent discard); the proposed alternative is the PR #76 r2 failure e5b-REQ-2
+exists to prevent. Answered from the record, not re-litigated. Pattern note: r1 and r3-F1
+are the same lesson at two sites — a caller-controlled value is PHI-capable on *every*
+egress surface, explicit log lines and exception tracebacks alike.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`

@@ -515,6 +515,20 @@ One finding.
 Verify: `.venv` py3.12 `-m "not integration"` → **1298 passed, 5 deselected, 1 xfailed**
 (+2 the drift tests; xfail/deselected unmoved). Frontend untouched (Python only).
 
+### Review — round 3, 2026-08-14
+
+Two findings. Round-3 rule in effect: dispositions below are final per the recorded
+owner decision at close.
+
+| # | Spec | Finding | Disposition |
+|---|---|---|---|
+| 1 | e5b-SPEC-20/25 | `_lookup_submission` runs unguarded as the first DB operation on every `/intake` request (initial lookup and post-collision re-read); a `SQLAlchemyError` escapes as an uncontrolled 500 instead of the controlled 503 — and the uvicorn traceback stringifies the DBAPIError, embedding the bound caller-controlled `submission_id`: the r1 PHI vector by another door. Especially reachable in the schema-drift case round 2 made healthz-red. | **A · fixed @30d95e0** — trivial route (same rollback / class-name-only / 503 idiom as `_create_registration`, applied inside the helper so both call sites are covered by one guard; no new state → no re-gate). Negative test `test_ledger_lookup_failure_is_controlled_and_leak_free` (driver sentinel + raw id planted in a statement-level error; asserts neither survives into any log record or the body); endpoint test `test_intake_refuses_controlled_503_when_ledger_missing` (table absent → 503 `registration store unavailable`, not 500). |
+| 2 | e5b-SPEC-14 | Editing after an ambiguous failure re-mints the `submission_id`, so a retry of a committed-but-undelivered attempt with one edit creates a second chart; recommends keeping the original id until a definitive success/409. | **E · declined: restates the frozen spec's recorded choice → e5b-SPEC-14 + e5b-D-15 + e5b-REQ-2.** SPEC-14 mandates exactly this behaviour and records the consequence in the row itself: "if the original committed, the edit creates a second chart and the pair queues per SPEC-16 — visible, never a silent discard." The alternative the reviewer proposes (hold the id, 409 on edited retry) is the PR #76 round-2 failure REQ-2 exists to prevent — an idempotency key without content awareness confirming an edited retry while dropping the edit. D-15 is the owner decision (2026-08-13) implementing it. Not re-litigated; reopening is owner-only. |
+
+Verify: `.venv` py3.12 `-m "not integration"` → **1300 passed, 5 deselected, 1 xfailed**
+(+2: the lookup negative test and the endpoint drift test; xfail/deselected unmoved).
+Frontend untouched (finding 2 produced no change by design).
+
 ## Delivery
 
 Status: delivery DRAFT — impl gate not yet run (the `IMPLEMENTED` stamp lands when
