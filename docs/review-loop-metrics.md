@@ -939,6 +939,12 @@ harvest doing its job: PR #76's r6 raised the same class, and e5b's answer was r
 worth reading: r4 and r5 both produced zero code change; the reviewer is now re-raising
 registered items, which is the round-3 rule's definition of dry.
 
+PR #79 r6 — 1 finding: **0 A / 0 B / 0 C / 1 E** — a verbatim re-raise of r5 F1 (same
+class, same three sub-asks) against an identical code diff, dispositioned by citing the
+r5 disposition. Confirms the r5 loop signal: three consecutive zero-diff rounds, the
+last a pure repeat. The reviewer has no memory of dispositions, so once findings cycle,
+the loop's value is exhausted — the record, not another round, is what answers repeats.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`

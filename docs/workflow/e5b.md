@@ -551,6 +551,20 @@ Round-3 rule remains in effect.
 
 Verify: no code change; suite unchanged at **1300 passed, 5 deselected, 1 xfailed**.
 
+### Review — round 6, 2026-08-14
+
+One finding — a verbatim re-raise of round 5's (same class, same three sub-asks:
+schema-apply in the deploy path, pre-010 upgrade test, gateway gating on intake
+health), against an identical code diff.
+
+| # | Spec | Finding | Disposition |
+|---|---|---|---|
+| 1 | e5b-SPEC-25 / e5b-D-14 | Re-raise of r5 F1: existing databases 503 every intake until migration 010 is applied by hand. | **E · declined: answered by the round-5 disposition, which stands** — upgrade command is SPEC-25's documented e6 exclusion (schema-apply cherry-pick queued there, owner re-confirmed at r5 close); the class is debt-log "No migration runner"; health-gating is D-14's recorded overrule. Per the round procedure, a finding restating a recorded decision is answered from the record, not re-litigated; reopening is owner-only. |
+
+Verify: no code change; suite unchanged at **1300 passed, 5 deselected, 1 xfailed**.
+Loop signal: r4–r6 produced zero code change; r6 re-raises r5's dispositioned finding
+unchanged — dry.
+
 ## Delivery
 
 Status: delivery DRAFT — impl gate not yet run (the `IMPLEMENTED` stamp lands when
