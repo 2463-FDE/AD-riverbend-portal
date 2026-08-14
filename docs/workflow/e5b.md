@@ -502,7 +502,7 @@ high-entropy leak still fails (the D9 recurrence guard is preserved); `ci.yml` p
 `gitleaks:v8.18.4` image: both `REAL_KEY` findings clear, default rules still fire on
 other high-entropy strings; the remaining local hits (`.venv/`, `frontend/.next/`,
 `.env.registration`) are untracked/gitignored and absent from CI's `actions/checkout`
-tracked tree. Fixed @<pending>.
+tracked tree. Fixed @839bed6.
 
 ## Delivery
 
