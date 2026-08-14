@@ -875,6 +875,20 @@ operator path and filed the runner. Class-closing tests over a one-instance inte
 test: +24 structural, including the hand-sync parity that reddens if any future migration
 and the flattened schema drift.
 
+PR #79 r1 — 1 finding: **1 A / 0 B / 0 C**, 0 refuted · e5b's first review round.
+Caller-controlled `submission_id` logged raw at all four request-path sites; the v4
+format check proves shape, not randomness (e5b-D-9), so a direct gateway caller can
+smuggle an identifier into the UUID's 122 free bits and land PHI in logs (SPEC-20).
+Fixed with a keyed HMAC digest (`_submission_log_id` → `submission_ref`) — a pure
+transform over the already-provisioned fail-closed key, so **trivial route, no re-gate**
+despite touching a secret. The finding is worth reading as the anti-narrowing rule
+(e5b-REQ-6) paying off *after* freeze: e5b-D-10 accepted raw logging on SPEC-18
+mint-independence, which is a portal guarantee the service cannot enforce — exactly the
+boundary-vs-mint split e5b-D-9 named as a limit, now shown to have a logging consequence
+the plan missed. Negative test uses a well-formed v4 UUID embedding an SSN, the vector
+the pre-existing `test_no_phi_on_any_surface` (demographics/insurance only) could not
+reach.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
