@@ -486,6 +486,24 @@ Verify: `.venv` py3.12 `-m "not integration"` → **1296 passed, 5 deselected, 1
 (+1 the new negative test; xfail/deselected unmoved). Frontend untouched (Python + docs
 only).
 
+### CI — secret-scan (self-caught, 2026-08-14)
+
+Not a codex finding — the PR #79 `secret-scan` (gitleaks) job was **red from the first
+push** (`8bcc1e6`), which the impl gate and Delivery missed. Root cause: the synthetic
+`REGISTRATION_FINGERPRINT_KEY` test fixture `REAL_KEY` (a repeated `0123456789abcdef`,
+64 hex chars) trips the default `generic-api-key` entropy rule in
+`tests/test_intake_idempotency.py:54` and `tests/test_intake_schema_guard.py:45`. No
+`.gitleaks.toml` existed, so CI ran the bare default ruleset. Owner-approved mechanism
+(scoped `.gitleaks.toml` allowlist over inline `gitleaks:allow` or a value change): a
+config that **extends** the default ruleset (`[extend] useDefault = true`) and allowlists
+only that exact 64-hex value — not a path, not the `tests/` tree — so any real
+high-entropy leak still fails (the D9 recurrence guard is preserved); `ci.yml` passes
+`--config=/repo/.gitleaks.toml` explicitly. Verified locally against the pinned
+`gitleaks:v8.18.4` image: both `REAL_KEY` findings clear, default rules still fire on
+other high-entropy strings; the remaining local hits (`.venv/`, `frontend/.next/`,
+`.env.registration`) are untracked/gitignored and absent from CI's `actions/checkout`
+tracked tree. Fixed @<pending>.
+
 ## Delivery
 
 Status: delivery DRAFT — impl gate not yet run (the `IMPLEMENTED` stamp lands when

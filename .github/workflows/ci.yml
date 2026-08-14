@@ -125,7 +125,8 @@ jobs:
         run: |
           docker run --rm -v "${{ github.workspace }}:/repo" \
             zricethezav/gitleaks:v8.18.4 \
-            detect --source=/repo --no-git --redact --verbose --exit-code 1
+            detect --source=/repo --config=/repo/.gitleaks.toml \
+            --no-git --redact --verbose --exit-code 1
 
   docker-build:
     runs-on: ubuntu-latest
