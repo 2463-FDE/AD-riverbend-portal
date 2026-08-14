@@ -539,6 +539,18 @@ One finding. Round-3 rule remains in effect.
 
 Verify: no code change; suite unchanged at **1300 passed, 5 deselected, 1 xfailed**.
 
+### Review — round 5, 2026-08-14
+
+One finding, three sub-recommendations. (The bot's first r5 reply was a race — it ran
+before seeing @e29ab82 and answered "no new commits"; re-tagged, this is the real pass.)
+Round-3 rule remains in effect.
+
+| # | Spec | Finding | Disposition |
+|---|---|---|---|
+| 1 | e5b-SPEC-25 / e5b-D-14 | A database predating this branch 503s every registration until the DDL is applied by hand: compose initdb runs `db/schema.sql` on a fresh volume only, and no runner applies `db/migrations/`. Recommends (a) a `schema-apply`/migration-runner target wired into the deploy path, (b) an upgrade test from a pre-010 database, (c) gateway waiting on intake health at startup. | **E · declined: all three restate recorded decisions/registry entries.** (a) The upgrade command is a **documented exclusion**: e5b-SPEC-25's row text — "upgrade *command* is out of scope → e6" — with the `schema-apply` cherry-pick queued for the restarted e6, and the class filed as debt-log cross-cutting **"No migration runner"** (measured 2026-08-13 on PR #76 r6; three earlier migrations share the class; operator path = runbook §"Upgrading a database that predates a migration"). e5b ships the *signal* half by design: healthz names the missing table (r2 deepened it to shape), and `/intake` answers the controlled 503, never a 500 (r3). (b) The upgrade test belongs to e6's command; e5b's tests already pin the recorded scope — `test_stale_db_is_unhealthy`, `test_intake_refuses_controlled_503_when_ledger_missing`, plus Verification 6's live break-then-restore. (c) Is the **exact overruled alternative recorded in e5b-D-14**: `depends_on` stays `service_started` because `service_healthy` turns one stale table into an estate-wide boot failure — an accurate red beats a stable lie (owner 2026-08-13, re-deriving the e5 r7 overrule). Reopening is owner-only. |
+
+Verify: no code change; suite unchanged at **1300 passed, 5 deselected, 1 xfailed**.
+
 ## Delivery
 
 Status: delivery DRAFT — impl gate not yet run (the `IMPLEMENTED` stamp lands when

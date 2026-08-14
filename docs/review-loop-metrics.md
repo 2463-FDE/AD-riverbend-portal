@@ -927,6 +927,18 @@ check a "no recovery" claim against the recovery *mechanism's input*, not a mark
 mechanism ignores — and check a "recovery exists" refutation against the mechanism's
 *trigger*, not just its coverage.
 
+PR #79 r5 — 1 finding: **0 A / 0 B / 0 C / 1 E**, answered entirely from the record.
+"New table has no upgrade path" with three sub-asks: a schema-apply/runner target
+(documented exclusion — e5b-SPEC-25's own row text defers the upgrade *command* to e6,
+class filed as debt-log "No migration runner", operator path in the runbook), an upgrade
+test (belongs to e6's command; e5b's stale-db signal tests pin the recorded scope), and
+gateway-waits-on-intake-health (the exact overruled alternative recorded in e5b-D-14 —
+`service_healthy` turns one stale table into an estate-wide boot failure). This is the
+harvest doing its job: PR #76's r6 raised the same class, and e5b's answer was recorded
+*before* the review asked — the disposition is citations, not argument. Loop signal
+worth reading: r4 and r5 both produced zero code change; the reviewer is now re-raising
+registered items, which is the round-3 rule's definition of dry.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
