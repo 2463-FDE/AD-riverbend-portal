@@ -911,6 +911,22 @@ exists to prevent. Answered from the record, not re-litigated. Pattern note: r1 
 are the same lesson at two sites — a caller-controlled value is PHI-capable on *every*
 egress surface, explicit log lines and exception tracebacks alike.
 
+PR #79 r4 — 1 finding: **0 A / 0 B / 0 C / 1 E** + named residual (D5c), round-3 rule.
+Claim: a crash between registration commit and `_evaluate_match_key` leaves a patient
+"skipped forever" by duplicate detection because the replay branch never re-runs eval
+and no failure marker exists. The "no recovery" premise is refuted at runtime: the
+retroactive pass sweeps **every** patient row, marker-independent (`retro_match.py::run`;
+failure rows are summary bookkeeping, not the sweep's input) — `tests/test_retro_match.py`
+proves pairs queue from marker-less patients — and any later same-SSN registration
+re-derives the whole clique. But the owner's clarifying question ("is retro_match
+actually scheduled?") surfaced the half worth keeping: the pass is operator-run only and
+the crash-window patient is signal-less, so recovery is unprompted — filed as debt-log
+D5c rather than argued away. Both proposed fixes blocked by record: eval-on-replay
+violates frozen e5b-SPEC-7, persisted match state is new state → stage 3. Two lessons:
+check a "no recovery" claim against the recovery *mechanism's input*, not a marker the
+mechanism ignores — and check a "recovery exists" refutation against the mechanism's
+*trigger*, not just its coverage.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`

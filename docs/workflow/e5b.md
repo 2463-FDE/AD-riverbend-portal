@@ -529,6 +529,16 @@ Verify: `.venv` py3.12 `-m "not integration"` → **1300 passed, 5 deselected, 1
 (+2: the lookup negative test and the endpoint drift test; xfail/deselected unmoved).
 Frontend untouched (finding 2 produced no change by design).
 
+### Review — round 4, 2026-08-14
+
+One finding. Round-3 rule remains in effect.
+
+| # | Spec | Finding | Disposition |
+|---|---|---|---|
+| 1 | e5b-SPEC-7 (W2-SPEC-23/32) | A crash between the registration commit and `_evaluate_match_key` leaves a patient whose replayed retries never run matching — claimed "no queue row and no failure row for retroactive recovery", i.e. duplicate detection skipped forever. Recommends persisting match state in the registration transaction or running eval on the replay path. | **E · declined on the "skipped forever / no recovery" claim, + named residual → D5c** (owner 2026-08-14, round-3 rule). The refuted half: the retroactive pass is a **full sweep over every patient row**, marker-independent (`retro_match.py::run` — "Classify every patient row"; `MatchEvaluationFailure` rows are summary bookkeeping, not the sweep's input). Runtime evidence: `tests/test_retro_match.py` (7 passed) — pairs are queued from patients carrying **no** failure row and no queue row, exactly the crash-window state. Second healing path: any later same-SSN registration re-derives the whole clique (`_evaluate_match_key` deliberately does not limit the insert set to the new row's pairs). The conceded half, checked at disposition time: the retro pass is **operator-run only** (runbook command; no schedule anywhere) and the crash-window patient is **signal-less** — no marker prompts the run. That residual is filed once as `docs/debt-log.md` **D5c**; this cell carries the ID only. Both proposed fixes stay blocked by the record — eval-on-replay violates frozen e5b-SPEC-7 ("creating and modifying nothing" on replay); persisted match state is new state → structural → stage 3, unwarranted against the registered residual. Reopening is owner-only. |
+
+Verify: no code change; suite unchanged at **1300 passed, 5 deselected, 1 xfailed**.
+
 ## Delivery
 
 Status: delivery DRAFT — impl gate not yet run (the `IMPLEMENTED` stamp lands when
