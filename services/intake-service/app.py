@@ -353,16 +353,28 @@ def create_intake(req: IntakeRequest, db: Session = Depends(get_db)):
 
 
 def _lookup_submission(db: Session, submission_id: str) -> Optional[RegistrationSubmission]:
-    """The recorded attempt for this identifier, or None (e5b-SPEC-7)."""
-    return (
-        db.execute(
-            select(RegistrationSubmission).where(
-                RegistrationSubmission.submission_id == submission_id
+    """The recorded attempt for this identifier, or None (e5b-SPEC-7).
+
+    Guarded like _create_registration (PR #79 codex r3): this is the first DB
+    operation on every /intake request, and an unguarded statement-level error
+    would escape as an uncontrolled 500 whose traceback embeds the bound
+    caller-controlled submission_id — the r1 PHI vector by another door. Roll
+    back, class name only, same controlled 503 both call sites already expect.
+    """
+    try:
+        return (
+            db.execute(
+                select(RegistrationSubmission).where(
+                    RegistrationSubmission.submission_id == submission_id
+                )
             )
+            .scalars()
+            .first()
         )
-        .scalars()
-        .first()
-    )
+    except SQLAlchemyError as e:
+        db.rollback()
+        log.error("intake: submission lookup failed (%s)", type(e).__name__)
+        raise HTTPException(status_code=503, detail="registration store unavailable")
 
 
 def _replay_or_conflict(

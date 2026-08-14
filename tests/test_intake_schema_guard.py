@@ -181,6 +181,23 @@ def test_missing_unique_constraint_is_unhealthy(constraintless_schema):
     assert REAL_KEY not in detail
 
 
+def test_intake_refuses_controlled_503_when_ledger_missing(stale_schema):
+    """PR #79 codex r3 F1, endpoint half: with registration_submissions absent
+    (the schema-drift case healthz makes red), POST /intake must answer the
+    controlled 503, not an uncontrolled 500 from the unguarded first lookup."""
+    client = _client(stale_schema, REAL_KEY)
+    r = client.post(
+        "/intake",
+        json={
+            "submission_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+            "demographics": {"name": "Pat Doe", "dob": "1990-01-31", "ssn": "123-45-6789"},
+            "consents": ["npp_ack"],
+        },
+    )
+    assert r.status_code == 503
+    assert r.json()["detail"] == "registration store unavailable"
+
+
 def test_missing_column_is_unhealthy(columnless_schema):
     """PR #79 round 2: a declared column absent from the live table is schema
     drift the request path would only surface as a 500 mid-write; the guard

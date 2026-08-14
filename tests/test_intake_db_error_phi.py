@@ -209,3 +209,49 @@ def test_consent_insert_failure_is_no_longer_swallowed(caplog):
             app_mod._create_registration(db, _request(), "deadbeeffingerprint")
     assert exc_info.value.status_code == 503
     assert db.rollbacks == 1
+
+
+class _FailingLookupSession:
+    """Session double whose execute raises the statement-level error an
+    un-hidden engine produces — the lookup analogue of _FailingSession. The
+    bound parameter is the caller-controlled submission_id, which cannot be
+    proven non-PHI at this boundary (PR #79 codex r1), so nothing of the
+    statement, parameters, or driver message may survive into a log or body.
+    """
+
+    def __init__(self, statement: str, params: tuple, orig_message: str):
+        self._exc = DataError(statement, params, Exception(orig_message))
+        self.rollbacks = 0
+
+    def execute(self, *_args, **_kwargs):
+        raise self._exc
+
+    def rollback(self):
+        self.rollbacks += 1
+
+
+def test_ledger_lookup_failure_is_controlled_and_leak_free(caplog):
+    """PR #79 codex r3 F1: _lookup_submission is the first DB operation on
+    every /intake request; unguarded, a statement-level error escaped as an
+    uncontrolled 500 whose traceback embeds the bound caller-controlled
+    submission_id — the r1 PHI vector by another door. It must roll back and
+    answer the same controlled 503, class name only."""
+    sentinel = "LOOKUP-DRIVER-SENTINEL-3311"
+    db = _FailingLookupSession(
+        "SELECT * FROM registration_submissions WHERE submission_id = %s",
+        (SUBMISSION_ID,),
+        orig_message=f"no such table: {sentinel}",
+    )
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(app_mod.HTTPException) as exc_info:
+            app_mod._lookup_submission(db, SUBMISSION_ID)
+    assert exc_info.value.status_code == 503
+    assert db.rollbacks == 1
+    assert SUBMISSION_ID not in str(exc_info.value.detail)
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert errors, "lookup failure must log an ERROR record"
+    for msg in errors:
+        assert sentinel not in msg
+        assert SUBMISSION_ID not in msg
+        assert "[SQL" not in msg and "[parameters" not in msg
+        assert "DataError" in msg
