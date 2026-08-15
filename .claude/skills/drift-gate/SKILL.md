@@ -27,11 +27,11 @@ context is the mechanism, not a nicety.
    `Status:` stamp (plus the matching header line). Revisions happen in stage 3
    (`.claude/skills/plan-authoring/`), and the revised plan gets a full fresh gate run
    against its final text. No stamping a plan amended mid-gate — analyze-and-amend in one
-   motion leaves the final text never checked as a whole (the e1 lesson). The adversarial
-   read itself gets partial tool enforcement beyond this sentence: the spawned agent
-   (below) carries no Edit/Write, so file edits are structurally blocked; its Bash is
-   limited to read-only checks by its own definition — instruction, not enforcement. The
-   sentence stays as intent for what this session writes.
+   motion leaves the final text never checked as a whole (the e1 lesson). The spawned
+   agent (below) adds partial enforcement: Edit/Write are absent, so it cannot edit or
+   stamp through those tools — but its `Bash` can still write the tree, so shell
+   read-only behavior is a behavioral rule in the agent's definition, not tool
+   enforcement. The sentence stays as intent for what this session writes.
 
 ## Process
 

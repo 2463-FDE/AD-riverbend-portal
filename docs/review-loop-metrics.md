@@ -1126,3 +1126,14 @@ now stated in the three agent frontmatters and bodies, both SKILL.md rule-2 note
 CLAUDE.md §11, and the workflow README. Lesson: **"read-only by toolset" is only true
 of a toolset with no shell** — a Bash grant downgrades tool enforcement to instruction
 for everything Bash can reach, and the docs must say which half is which.
+
+**PR #82 r2 — 2026-08-15.** 1 finding (r1 B1 carried, partial), **1 A / 0 B / 0 C**,
+fixed on the branch: the r1 fix added the Bash-is-behavioral sentence but left "file
+edits are structurally blocked" standing in the same sections at four sites (both gate
+SKILL.md rule-2 notes, CLAUDE.md §11, the workflow README) — two sentences contradicting
+each other in place. All four now carry one scoped claim: Edit/Write are absent, so the
+agents cannot edit or stamp through those tools; `Bash` can still write the tree, so
+shell read-only behavior is a behavioral rule in each agent's definition, not tool
+enforcement. Lesson: **fixing an overclaim by appending the correction leaves the
+overclaim shipped** — the fix is replacing the false sentence, not adding a true one
+after it.

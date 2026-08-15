@@ -27,11 +27,11 @@ own drift (same lesson as `.claude/skills/drift-gate/`).
    stage 4 wrote in `## Delivery`.** It writes exactly two things: Impl-gate rounds in
    `## Findings`, and — on a clean run — the delivery-axis header stamp plus its short
    gate record appended to `## Delivery`, which is this gate's only Delivery write. Fixes
-   happen in stage 4; the fixed branch gets a full fresh gate run. The adversarial read
-   itself gets partial tool enforcement beyond this sentence: the spawned agents (below)
-   carry no Edit/Write, so file edits are structurally blocked; their Bash is limited to
-   read-only checks by their own definitions — instruction, not enforcement. The sentence
-   stays as intent for what this session writes.
+   happen in stage 4; the fixed branch gets a full fresh gate run. The spawned agents
+   (below) add partial enforcement: Edit/Write are absent, so they cannot edit or stamp
+   through those tools — but their `Bash` can still write the tree, so shell read-only
+   behavior is a behavioral rule in each agent's definition, not tool enforcement. The
+   sentence stays as intent for what this session writes.
 
 ## Process
 
