@@ -137,8 +137,8 @@ asserted the *intended* shape.
   than a number to update.
   The **duplicate-patient half of that clause closed deliberately in W2** (ADR 0005 tier 1):
   `tests/test_matching_parity.py`, `tests/test_intake_match_key.py` and `tests/test_retro_match.py`
-  now cover it. A moved gap is itself a reportable event, so the closure is named here, in the
-  W2 PR body, and in the `CLAUDE.md` §6 baseline note rather than absorbed into a new pass count.
+  now cover it. A moved gap is itself a reportable event, so the closure is named here and in the
+  W2 PR body (`docs/workflow/w2/pr-body.md`) rather than absorbed into a new pass count.
   The input-normalization half stays open: W2 adds no intake input canonicalization — the
   matcher's `normalize_ssn`/`normalize_name` are matcher-side only and never touch what is stored.
 - Run an adversarial pass over the diff **before** opening a PR that touches auth, PHI or ROI. The
