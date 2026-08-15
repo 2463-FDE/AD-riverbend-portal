@@ -205,3 +205,22 @@ CREATE TABLE IF NOT EXISTS match_evaluation_failures (
     error_class     TEXT NOT NULL,                    -- exception class name, never a message
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- The POST /intake idempotency ledger (e5b, migration 010). One row per
+-- registration attempt, keyed by the portal's mint-random version-4 UUID. The
+-- UNIQUE constraint on submission_id is the sole arbiter of a retry: the first
+-- committer wins and every retry of the same attempt re-reads this row inside a
+-- bounded lock wait, so a commit whose response was lost no longer forks a
+-- second chart (e5b-D-12). No PHI columns — submission_id is non-PHI by
+-- construction, payload_fingerprint is a keyed HMAC of the validated content
+-- from which no patient value is recoverable (e5b-D-8/D-11), and no eligibility
+-- verdict is persisted (e5b-SPEC-29). D8 (zero CREATE INDEX) is untouched: the
+-- only new index is the one backing the UNIQUE constraint.
+CREATE TABLE IF NOT EXISTS registration_submissions (
+    id                  SERIAL PRIMARY KEY,
+    submission_id       TEXT NOT NULL,                -- portal-minted version-4 UUID, non-PHI
+    payload_fingerprint TEXT NOT NULL,                -- keyed HMAC of validated content, not reversible
+    patient_id          INTEGER NOT NULL REFERENCES patients(id),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_registration_submission_id UNIQUE (submission_id)
+);

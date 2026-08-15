@@ -249,13 +249,21 @@ def test_redis_password_template_exists_and_ships_empty():
 def test_ci_seeds_every_env_file_the_topology_requires():
     # Compose refuses to parse when a listed env_file is missing, so adding one
     # without seeding it in CI turns the image build red. Asserted over EVERY
-    # service's env_file list rather than the two we happen to know about.
+    # service's env_file list rather than the ones we happen to know about. A file
+    # with a shipped template is copied; a GENERATED, template-less one (e.g.
+    # .env.registration, e5b-D-13) must be created by its make recipe instead.
     ci = (COMPOSE.parent / ".github/workflows/ci.yml").read_text()
     required = {path for svc in _all_services().values() for path in _env_file_paths(svc)}
     for path in sorted(required):
-        assert f"cp {path}.example {path}" in ci, (
-            f"CI must seed {path} from its template before `docker compose build`"
-        )
+        if (COMPOSE.parent / f"{path}.example").exists():
+            assert f"cp {path}.example {path}" in ci, (
+                f"CI must seed {path} from its template before `docker compose build`"
+            )
+        else:
+            assert f"make {path}" in ci, (
+                f"{path} ships no template (generated secret) — CI must generate it "
+                f"with `make {path}` before `docker compose build`"
+            )
 
 
 # --- the health probe's budget fits inside the healthcheck's (round 2) --------
@@ -401,6 +409,119 @@ def test_no_scoped_env_template_can_override_the_registration_bound():
             "templates after the shared .env, so a value here silently wins over the "
             "one the budget invariant checks"
         )
+
+
+# --- the registration content-binding key is scoped, generated, fail-closed ---
+# e5b-D-13, on the .env.redis precedent: REGISTRATION_FINGERPRINT_KEY reaches
+# intake-service ONLY, is GENERATED (no template ships) and loaded AFTER .env, is
+# gitignored, and every compose target depends on it. The r5 invariant
+# (e5b-SPEC-24): the committed boot path must produce a config that satisfies the
+# fail-closed key guard — proven by running the make recipe and feeding what it
+# wrote to the actual key-real predicate.
+REGISTRATION_SECRET_ENV_FILE = ".env.registration"
+REGISTRATION_SECRET_KEY = "REGISTRATION_FINGERPRINT_KEY"
+REGISTRATION_SECRET_HOLDERS = {"intake-service"}
+
+
+def test_registration_key_reaches_only_intake():
+    for name, svc in _all_services().items():
+        holds_file = REGISTRATION_SECRET_ENV_FILE in _env_file_paths(svc)
+        holds_env = REGISTRATION_SECRET_KEY in _environment_keys(svc)
+        if name in REGISTRATION_SECRET_HOLDERS:
+            assert holds_file, f"{name} must load {REGISTRATION_SECRET_ENV_FILE}"
+        else:
+            assert not holds_file and not holds_env, (
+                f"{name} must not receive {REGISTRATION_SECRET_KEY}: the "
+                "content-binding key belongs to intake-service alone"
+            )
+
+
+def test_registration_key_file_loads_after_the_shared_env():
+    files = _env_file_paths(_service("intake-service"))
+    assert ".env" in files and REGISTRATION_SECRET_ENV_FILE in files
+    assert files.index(".env") < files.index(REGISTRATION_SECRET_ENV_FILE), (
+        "the shared .env must be listed before .env.registration so the scoped "
+        "key layers on top, never under, the shared environment (e5b-D-13)"
+    )
+
+
+def test_registration_key_ships_no_template_and_is_not_in_the_shared_env():
+    # Generated, never copied (e5b-D-13): no .env.registration.example exists, and
+    # the shared template carries only the non-secret lock-wait knob, never the key.
+    assert not (COMPOSE.parent / f"{REGISTRATION_SECRET_ENV_FILE}.example").exists(), (
+        "no .env.registration.example may ship — the key is generated, and a "
+        "template value would be a shared secret that also passes no key-real check"
+    )
+    env_example = (COMPOSE.parent / ".env.example").read_text()
+    assert not re.search(rf"^\s*{REGISTRATION_SECRET_KEY}\s*=", env_example, re.MULTILINE), (
+        f"{REGISTRATION_SECRET_KEY} must never be templated in the shared .env"
+    )
+
+
+def test_registration_key_file_is_gitignored():
+    ignored = (COMPOSE.parent / ".gitignore").read_text().splitlines()
+    assert REGISTRATION_SECRET_ENV_FILE in [line.strip() for line in ignored], (
+        f"{REGISTRATION_SECRET_ENV_FILE} must be gitignored — it holds a generated secret"
+    )
+
+
+def test_every_compose_target_depends_on_the_generated_key_file():
+    # Compose refuses to parse when a listed env_file is missing, so every target
+    # that runs `docker compose ...` must have .env.registration as a prerequisite
+    # (mirrors .env.redis). A target that forgets it fails on a fresh checkout.
+    makefile = (COMPOSE.parent / "Makefile").read_text()
+    assert f"\n{REGISTRATION_SECRET_ENV_FILE}:\n" in makefile, (
+        "the Makefile must define a generate recipe for .env.registration"
+    )
+    for target in ("up", "down", "logs", "ps", "build", "seed", "psql", "config"):
+        line = re.search(rf"^{target}:[^\n]*", makefile, re.MULTILINE)
+        assert line and REGISTRATION_SECRET_ENV_FILE in line.group(0), (
+            f"`make {target}` must list {REGISTRATION_SECRET_ENV_FILE} as a prerequisite"
+        )
+
+
+def test_the_boot_path_recipe_writes_a_key_the_guard_accepts():
+    # e5b-SPEC-24, the r5 invariant end to end: run the committed make recipe in an
+    # isolated temp dir, read what it wrote, and feed the value to intake's ACTUAL
+    # key-real predicate. A recipe that emitted an empty or sentinel value would
+    # boot a stack that then refuses every registration — the exact healthy-but-503
+    # failure r5 rejected.
+    import subprocess
+    import sys
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(
+            ["make", "-f", str(COMPOSE.parent / "Makefile"), REGISTRATION_SECRET_ENV_FILE],
+            cwd=tmp,
+            check=True,
+            capture_output=True,
+        )
+        written = (Path(tmp) / REGISTRATION_SECRET_ENV_FILE).read_text()
+
+    match = re.search(rf"^{REGISTRATION_SECRET_KEY}=(.+)$", written, re.MULTILINE)
+    assert match, "the recipe must write REGISTRATION_FINGERPRINT_KEY=<value>"
+    key = match.group(1).strip()
+
+    # Load intake's app to reach the real predicate (sibling-pinning idiom).
+    _SIBLINGS = ("config", "db", "logging_config", "models", "schemas", "breaker", "matching")
+    _saved = {name: sys.modules.pop(name, None) for name in _SIBLINGS}
+    try:
+        for mod in _SIBLINGS:
+            sys.modules[mod] = load_module(
+                f"services/intake-service/{mod}.py", f"intake_{mod}_boot"
+            )
+        app_mod = load_module("services/intake-service/app.py", "intake_app_boot")
+        assert app_mod._fingerprint_key_is_real(key), (
+            "the make recipe wrote a key intake's fail-closed guard rejects — the "
+            "documented boot path would produce a healthy-but-refusing stack (r5)"
+        )
+    finally:
+        for name, module in _saved.items():
+            if module is not None:
+                sys.modules[name] = module
+            else:
+                sys.modules.pop(name, None)
 
 
 # --- every domain service is network-internal (ADR 0016, debt-log D15) --------

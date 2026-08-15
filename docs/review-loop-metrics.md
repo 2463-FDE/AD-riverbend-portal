@@ -875,6 +875,113 @@ operator path and filed the runner. Class-closing tests over a one-instance inte
 test: +24 structural, including the hand-sync parity that reddens if any future migration
 and the flattened schema drift.
 
+PR #79 r1 — 1 finding: **1 A / 0 B / 0 C**, 0 refuted · e5b's first review round.
+Caller-controlled `submission_id` logged raw at all four request-path sites; the v4
+format check proves shape, not randomness (e5b-D-9), so a direct gateway caller can
+smuggle an identifier into the UUID's 122 free bits and land PHI in logs (SPEC-20).
+Fixed with a keyed HMAC digest (`_submission_log_id` → `submission_ref`) — a pure
+transform over the already-provisioned fail-closed key, so **trivial route, no re-gate**
+despite touching a secret. The finding is worth reading as the anti-narrowing rule
+(e5b-REQ-6) paying off *after* freeze: e5b-D-10 accepted raw logging on SPEC-18
+mint-independence, which is a portal guarantee the service cannot enforce — exactly the
+boundary-vs-mint split e5b-D-9 named as a limit, now shown to have a logging consequence
+the plan missed. Negative test uses a well-formed v4 UUID embedding an SSN, the vector
+the pre-existing `test_no_phi_on_any_surface` (demographics/insurance only) could not
+reach.
+
+PR #79 r2 — 1 finding: **1 A / 0 B / 0 C**, 0 refuted. `healthz` checked table-name
+presence only; a partially applied migration leaving `registration_submissions` without
+`uq_registration_submission_id` read healthy while the sole retry arbiter (e5b-SPEC-8)
+was absent — the duplicate-chart bug back, silently. Fixed by extending the same guard
+to verify declared columns and the UNIQUE constraint (matched by covered column set),
+plus two drift regression tests. Read-only inspection, no state → trivial route, no
+re-gate; e5b-D-14 chose the presence check but recorded nothing on shape, so the fix
+deepens the decision rather than reopening it. Lesson: a guard that proves *presence*
+of a structure whose *property* carries the invariant is half a guard.
+
+PR #79 r3 — 2 findings: **1 A / 0 B / 0 C / 1 E**, round-3 close. F1 (A): the ledger
+lookup ran unguarded as the first DB operation on every `/intake` request — an escaped
+DBAPIError's traceback embeds the bound caller-controlled `submission_id`, the r1 PHI
+vector by another door; fixed with the write path's rollback/class-only/503 idiom inside
+the helper, negative + endpoint tests. F2 (E): "don't re-mint on edit after ambiguous
+failure" restates the frozen spec's recorded choice — e5b-SPEC-14 mandates the re-mint
+and records the second-chart consequence in the row itself (visible pair, SPEC-16 queue,
+never a silent discard); the proposed alternative is the PR #76 r2 failure e5b-REQ-2
+exists to prevent. Answered from the record, not re-litigated. Pattern note: r1 and r3-F1
+are the same lesson at two sites — a caller-controlled value is PHI-capable on *every*
+egress surface, explicit log lines and exception tracebacks alike.
+
+PR #79 r4 — 1 finding: **0 A / 0 B / 0 C / 1 E** + named residual (D5c), round-3 rule.
+Claim: a crash between registration commit and `_evaluate_match_key` leaves a patient
+"skipped forever" by duplicate detection because the replay branch never re-runs eval
+and no failure marker exists. The "no recovery" premise is refuted at runtime: the
+retroactive pass sweeps **every** patient row, marker-independent (`retro_match.py::run`;
+failure rows are summary bookkeeping, not the sweep's input) — `tests/test_retro_match.py`
+proves pairs queue from marker-less patients — and any later same-SSN registration
+re-derives the whole clique. But the owner's clarifying question ("is retro_match
+actually scheduled?") surfaced the half worth keeping: the pass is operator-run only and
+the crash-window patient is signal-less, so recovery is unprompted — filed as debt-log
+D5c rather than argued away. Both proposed fixes blocked by record: eval-on-replay
+violates frozen e5b-SPEC-7, persisted match state is new state → stage 3. Two lessons:
+check a "no recovery" claim against the recovery *mechanism's input*, not a marker the
+mechanism ignores — and check a "recovery exists" refutation against the mechanism's
+*trigger*, not just its coverage.
+
+PR #79 r5 — 1 finding: **0 A / 0 B / 0 C / 1 E**, answered entirely from the record.
+"New table has no upgrade path" with three sub-asks: a schema-apply/runner target
+(documented exclusion — e5b-SPEC-25's own row text defers the upgrade *command* to e6,
+class filed as debt-log "No migration runner", operator path in the runbook), an upgrade
+test (belongs to e6's command; e5b's stale-db signal tests pin the recorded scope), and
+gateway-waits-on-intake-health (the exact overruled alternative recorded in e5b-D-14 —
+`service_healthy` turns one stale table into an estate-wide boot failure). This is the
+harvest doing its job: PR #76's r6 raised the same class, and e5b's answer was recorded
+*before* the review asked — the disposition is citations, not argument. Loop signal
+worth reading: r4 and r5 both produced zero code change; the reviewer is now re-raising
+registered items, which is the round-3 rule's definition of dry.
+
+PR #79 r6 — 1 finding: **0 A / 0 B / 0 C / 1 E** — a verbatim re-raise of r5 F1 (same
+class, same three sub-asks) against an identical code diff, dispositioned by citing the
+r5 disposition. Confirms the r5 loop signal: three consecutive zero-diff rounds, the
+last a pure repeat. The reviewer has no memory of dispositions, so once findings cycle,
+the loop's value is exhausted — the record, not another round, is what answers repeats.
+
+Mechanism behind the cycling, worth acting on (2026-08-14): the reviewer's context is the
+diff plus the PR body — **PR comments are not in it**, so a disposition that lives only in
+a comment is invisible to the next round, and a routing target that exists only in
+engagement records reads as an unresolved name (e.g. "queued for e6": e6 is a successor
+work item with nothing on `main`, so the reviewer cannot see what the exclusion points
+at). Remedy adopted on PR #79: carry a compact dispositions-of-record section in the PR
+body itself — the one reviewer-visible surface we control without bloating the artifact —
+naming each declined class, the decision it rests on, and what "routed to eN" means.
+
+PR #79 r7 — 1 finding: **0 A / 0 B / 0 C / 1 E** — a re-raise of r4 F1 (the crash-window
+match-evaluation gap), dispositioned by citing the r4 disposition and debt-log D5c. The
+result worth recording: r7 re-raised a class that **was already carried in the PR body's
+dispositions-of-record** (the r6 remedy) — so the reviewer-visible surface, on its own,
+did not stop the re-raise. Read together with r6 (a verbatim re-raise of r5), the signal
+is four consecutive zero-diff rounds cycling registered items. Lesson refined: the PR-body
+record is necessary for *human* readers and for anchoring the fix session, but it does not
+prevent a memoryless reviewer from re-raising — nothing in the diff-plus-body context
+tells the reviewer a class was raised and declined *before*. Once the loop is cycling
+registered items, the terminating move is the round-3 rule's — hand to the owner for the
+merge call — not another re-tag, which only buys another repeat.
+
+PR #79 r8 — 2 findings: **0 A / 0 B / 0 C / 2 E**, one new debt row (D16). The first
+round since r3 to raise a genuinely **new surface**, not a verbatim re-raise: F1 pointed
+at the raw-stored `submission_id` — the data-at-rest twin of the r1 PHI-smuggle vector
+that r1 accepted and closed on the *log* surface only. Worth recording because it refines
+the r6/r7 lesson in the other direction: a memoryless reviewer does not only re-raise
+declined items, it can also find the **untouched instance of a class an earlier round
+half-closed** — here a real gap the record answered (frozen SPEC-18 + D-9 named limit)
+but which deserved its own registry entry rather than a bare "answered from record". F2
+was the documented key-rotation residual (runbook), a clean E. Disposition took the r8
+findings to the owner rather than auto-declining, because F1 touched a §1 PHI zone and a
+frozen spec with genuine tension against the r1 disposition — the round-3 rule's "owner's
+call, per finding" applied to a *new* finding, not a repeat. Lesson: distinguish a
+re-raise (answer from record, no new work) from a new surface of a half-closed class
+(answer from record **and** file the missing registry entry, escalate if it touches a §1
+zone) — the two look alike in a zero-diff round but are not the same signal.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`

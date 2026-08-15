@@ -57,6 +57,10 @@ MEMBER_ID = "BCBS4471"
 GROUP = "GRP-77812"
 PHI = (NAME, DOB, SSN, MEMBER_ID, GROUP)
 
+# The now-required submission_id (e5b-SPEC-4). A valid v4 so construction reaches
+# the write path under test, not a boundary rejection; not itself PHI.
+SUBMISSION_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
+
 
 NEW_ID = 4242
 
@@ -91,6 +95,16 @@ class _FailingSession:
     def add(self, obj):
         self.added.append(obj)
 
+    def get_bind(self):
+        # _create_registration checks the dialect to gate the Postgres-only
+        # SET lock_timeout (e5b-D-12); this stub is a non-Postgres bind, so the
+        # SET is skipped and the write path under test is unchanged.
+        class _Bind:
+            class dialect:
+                name = "sqlite"
+
+        return _Bind()
+
     def flush(self):
         if self._fail_on == "flush":
             raise self._exc
@@ -121,6 +135,7 @@ def _assert_no_phi(caplog, exc_info):
 
 def _request(**kwargs):
     payload = {
+        "submission_id": SUBMISSION_ID,
         "demographics": {"name": NAME, "dob": DOB, "ssn": SSN},
         "consents": ["npp_ack"],
     }
@@ -136,7 +151,7 @@ def test_patient_insert_failure_does_not_leak_row(caplog):
     )
     with caplog.at_level(logging.ERROR):
         with pytest.raises(app_mod.HTTPException) as exc_info:
-            app_mod._create_registration(db, _request())
+            app_mod._create_registration(db, _request(), "deadbeeffingerprint")
     assert exc_info.value.status_code == 503
     _assert_no_phi(caplog, exc_info)
 
@@ -150,7 +165,9 @@ def test_coverage_insert_failure_does_not_leak_member_id(caplog):
     with caplog.at_level(logging.ERROR):
         with pytest.raises(app_mod.HTTPException) as exc_info:
             app_mod._create_registration(
-                db, _request(insurance={"member_id": MEMBER_ID, "group_number": GROUP})
+                db,
+                _request(insurance={"member_id": MEMBER_ID, "group_number": GROUP}),
+                "deadbeeffingerprint",
             )
     assert exc_info.value.status_code == 503
     _assert_no_phi(caplog, exc_info)
@@ -169,7 +186,7 @@ def test_consent_insert_failure_logs_class_only(caplog):
     )
     with caplog.at_level(logging.ERROR):
         with pytest.raises(app_mod.HTTPException):
-            app_mod._create_registration(db, _request())
+            app_mod._create_registration(db, _request(), "deadbeeffingerprint")
     errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
     assert errors, "consent failure must log an ERROR record"
     for msg in errors:
@@ -189,6 +206,52 @@ def test_consent_insert_failure_is_no_longer_swallowed(caplog):
     )
     with caplog.at_level(logging.ERROR):
         with pytest.raises(app_mod.HTTPException) as exc_info:
-            app_mod._create_registration(db, _request())
+            app_mod._create_registration(db, _request(), "deadbeeffingerprint")
     assert exc_info.value.status_code == 503
     assert db.rollbacks == 1
+
+
+class _FailingLookupSession:
+    """Session double whose execute raises the statement-level error an
+    un-hidden engine produces — the lookup analogue of _FailingSession. The
+    bound parameter is the caller-controlled submission_id, which cannot be
+    proven non-PHI at this boundary (PR #79 codex r1), so nothing of the
+    statement, parameters, or driver message may survive into a log or body.
+    """
+
+    def __init__(self, statement: str, params: tuple, orig_message: str):
+        self._exc = DataError(statement, params, Exception(orig_message))
+        self.rollbacks = 0
+
+    def execute(self, *_args, **_kwargs):
+        raise self._exc
+
+    def rollback(self):
+        self.rollbacks += 1
+
+
+def test_ledger_lookup_failure_is_controlled_and_leak_free(caplog):
+    """PR #79 codex r3 F1: _lookup_submission is the first DB operation on
+    every /intake request; unguarded, a statement-level error escaped as an
+    uncontrolled 500 whose traceback embeds the bound caller-controlled
+    submission_id — the r1 PHI vector by another door. It must roll back and
+    answer the same controlled 503, class name only."""
+    sentinel = "LOOKUP-DRIVER-SENTINEL-3311"
+    db = _FailingLookupSession(
+        "SELECT * FROM registration_submissions WHERE submission_id = %s",
+        (SUBMISSION_ID,),
+        orig_message=f"no such table: {sentinel}",
+    )
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(app_mod.HTTPException) as exc_info:
+            app_mod._lookup_submission(db, SUBMISSION_ID)
+    assert exc_info.value.status_code == 503
+    assert db.rollbacks == 1
+    assert SUBMISSION_ID not in str(exc_info.value.detail)
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert errors, "lookup failure must log an ERROR record"
+    for msg in errors:
+        assert sentinel not in msg
+        assert SUBMISSION_ID not in msg
+        assert "[SQL" not in msg and "[parameters" not in msg
+        assert "DataError" in msg

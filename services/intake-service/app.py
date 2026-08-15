@@ -37,6 +37,8 @@ Inherited shortcomings (left as-is from the handoff):
     transit still leaves a row the operator never sees confirmed, which needs
     an idempotency key on POST /intake (D4 follow-up, still open).
 """
+import hashlib
+import hmac
 import json
 import os
 import time
@@ -46,15 +48,15 @@ from typing import Any, Optional
 import httpx
 import yaml
 from fastapi import Depends, FastAPI, HTTPException
-from sqlalchemy import select, text, update
+from sqlalchemy import inspect, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import matching
 from breaker import CircuitBreaker, EligibilityBreakerOpen
 from config import settings
-from db import get_db
+from db import Base, get_db
 from logging_config import configure
 from models import (
     Consent,
@@ -62,6 +64,7 @@ from models import (
     InsuranceCoverage,
     MatchEvaluationFailure,
     Patient,
+    RegistrationSubmission,
 )
 from schemas import (
     Demographics,
@@ -93,8 +96,170 @@ _breaker = CircuitBreaker(
 )
 
 
+# --------------------------------------------------------------------------- #
+# registration idempotency (e5b) — fail-closed key, content binding, bounded wait
+# --------------------------------------------------------------------------- #
+# Values a config file might carry that are NOT a real secret. A short or
+# whitespace value is caught by length alone; these catch a 32+char placeholder.
+_KEY_SENTINELS = frozenset(
+    {"changeme", "change-me", "replace-me", "placeholder", "example", "unset", "todo"}
+)
+# The generated key is `openssl rand -hex 32` = 64 hex chars; a real secret is at
+# least 32 chars. One predicate, shared by the request path and /healthz, so a
+# probe can never go green on a value the request path refuses (e5b-D-11/D-14).
+_MIN_KEY_LEN = 32
+
+
+def _fingerprint_key_is_real(key: Optional[str]) -> bool:
+    """Is REGISTRATION_FINGERPRINT_KEY a usable secret (e5b-SPEC-22, e5b-D-8)?
+
+    Fail-closed: unset, whitespace-only, a known sentinel, or under 32 chars are
+    all treated as "not a real secret". An unkeyed or guessable-keyed HMAC of
+    guessable fields would be a dictionary-reversible offline confirmation oracle
+    (e5b-SPEC-21) — so registration refuses to run rather than write a weak
+    binding.
+    """
+    if key is None:
+        return False
+    k = key.strip()
+    if len(k) < _MIN_KEY_LEN:
+        return False
+    if k.lower() in _KEY_SENTINELS:
+        return False
+    return True
+
+
+def _fingerprint(req: IntakeRequest) -> str:
+    """Keyed HMAC of the VALIDATED content, minus the identifier (e5b-D-11).
+
+    Fingerprinting the pydantic-validated model — not the raw body — makes a
+    reordered-consents or whitespace-equivalent retry the SAME attempt. Canonical
+    form: the model dumped without submission_id, consents sorted, then
+    json.dumps with sorted keys, compact separators, ascii-escaped — so the byte
+    string is stable across any client-side reserialization. Keyed with
+    REGISTRATION_FINGERPRINT_KEY (checked real before we get here), which is what
+    makes the stored binding non-reversible (e5b-SPEC-21).
+    """
+    canonical = req.model_dump(exclude={"submission_id"})
+    canonical["consents"] = sorted(canonical["consents"])
+    blob = json.dumps(
+        canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
+    return hmac.new(
+        settings.registration_fingerprint_key.encode(), blob.encode(), hashlib.sha256
+    ).hexdigest()
+
+
+def _submission_log_id(submission_id: str) -> str:
+    """A server-keyed digest of the identifier, for log correlation only.
+
+    The portal mints the submission_id from a source independent of patient data
+    (e5b-SPEC-18), but the service cannot PROVE that: a caller reaching the
+    gateway directly bypasses the mint, and the version-4 format check narrows
+    accidental derivation without proving randomness (e5b-D-9). A well-formed v4
+    UUID still carries 122 caller-controlled bits — enough to smuggle an SSN or
+    MRN into the hex digits — so logging the raw value would make the PHI-log
+    boundary depend on the portal being the only minting authority (PR #79 codex
+    r1). Logging a REGISTRATION_FINGERPRINT_KEY-keyed HMAC digest keeps replay
+    and collision lines correlatable while making the logged token non-reversible
+    to any identifier the caller embedded (e5b-SPEC-20). The key is checked real
+    before any request-path log site runs, so a digest is never taken over a weak
+    key. 16 hex chars (64 bits) is ample to distinguish attempts in a log scan.
+    """
+    return hmac.new(
+        settings.registration_fingerprint_key.encode(),
+        submission_id.encode(),
+        hashlib.sha256,
+    ).hexdigest()[:16]
+
+
+def _lock_timeout_ms() -> int:
+    """The bounded wait as Postgres lock_timeout milliseconds (e5b-D-12).
+
+    UNITS TRAP: the knob is seconds, lock_timeout is milliseconds. The default 5
+    must issue '5000ms', and tests/test_intake_idempotency.py pins the issued
+    string so a dropped ×1000 cannot ship a 1000×-shorter bound.
+    """
+    return int(settings.registration_lock_wait_seconds * 1000)
+
+
+class _SubmissionCollision(Exception):
+    """Internal signal: a concurrent request committed this submission_id first.
+
+    The UNIQUE constraint is the only arbiter (e5b-SPEC-8). The loser rolls back
+    its own patient/coverage/consent writes and re-reads the winner's row.
+    """
+
+
 @app.get("/healthz")
-def healthz():
+def healthz(db: Session = Depends(get_db)):
+    """Report unhealthy while registration could not work (e5b-SPEC-23/25).
+
+    Three fail-closed conditions checked here so the health signal can never be
+    a stable lie (e5b-D-14): the fingerprint key must be real, every table
+    declared on Base.metadata (the class, not a session instance) must exist — a
+    database predating this item's state is missing registration_submissions and
+    must read red — and registration_submissions must carry its declared columns
+    and the UNIQUE constraint on submission_id. Presence is not shape (PR #79
+    round 2): a partially applied migration can leave the table without
+    uq_registration_submission_id, and that constraint is the sole arbiter of a
+    retry (e5b-SPEC-8) — without it duplicate charts return silently. The
+    refusal detail names the variable, table, column, or constraint, never a
+    value and never a secret.
+    """
+    if not _fingerprint_key_is_real(settings.registration_fingerprint_key):
+        # Name the configuration, never its value (e5b-SPEC-22).
+        raise HTTPException(
+            status_code=503,
+            detail="registration unavailable: REGISTRATION_FINGERPRINT_KEY not configured",
+        )
+    ledger = Base.metadata.tables["registration_submissions"]
+    try:
+        insp = inspect(db.get_bind())
+        existing = set(insp.get_table_names())
+        if ledger.name in existing:
+            live_columns = {c["name"] for c in insp.get_columns(ledger.name)}
+            uniques = insp.get_unique_constraints(ledger.name)
+        else:
+            live_columns, uniques = set(), []
+    except SQLAlchemyError as e:
+        log.error("healthz: schema inspection failed (%s)", type(e).__name__)
+        raise HTTPException(status_code=503, detail="database unavailable")
+    missing = sorted(set(Base.metadata.tables.keys()) - existing)
+    if missing:
+        # Table names carry no PHI and no secret (e5b-SPEC-25).
+        log.error("healthz: registration schema incomplete, missing %s", ",".join(missing))
+        raise HTTPException(
+            status_code=503,
+            detail=f"registration schema incomplete: missing {','.join(missing)}",
+        )
+    missing_columns = sorted(set(ledger.columns.keys()) - live_columns)
+    if missing_columns:
+        # Column names carry no PHI and no secret (e5b-SPEC-25).
+        log.error(
+            "healthz: registration_submissions missing columns %s", ",".join(missing_columns)
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "registration schema incomplete: registration_submissions missing "
+                f"{','.join(missing_columns)}"
+            ),
+        )
+    # Match by covered column set, not constraint name — the name is DDL
+    # cosmetics; uniqueness of submission_id is what idempotency rests on.
+    if not any(u.get("column_names") == ["submission_id"] for u in uniques):
+        log.error(
+            "healthz: registration_submissions missing unique constraint "
+            "uq_registration_submission_id"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "registration schema incomplete: registration_submissions lacks "
+                "unique constraint uq_registration_submission_id (submission_id)"
+            ),
+        )
     return {"status": "ok", "service": settings.service_name}
 
 
@@ -116,48 +281,159 @@ def intake_config():
 def create_intake(req: IntakeRequest, db: Session = Depends(get_db)):
     started = time.time()
 
+    # Fail-closed BEFORE any read or write (e5b-SPEC-22): without a real secret
+    # the content binding would be forgeable and dictionary-reversible, so
+    # registration refuses rather than writing a weak binding. Names the config,
+    # never a value.
+    if not _fingerprint_key_is_real(settings.registration_fingerprint_key):
+        log.error("intake: REGISTRATION_FINGERPRINT_KEY missing or not a real secret")
+        raise HTTPException(
+            status_code=503,
+            detail="registration unavailable: REGISTRATION_FINGERPRINT_KEY not configured",
+        )
+
     # D1 (remediated 2026-07): the front desk still gets a record of every
     # registration, but we log only an allowlisted, non-PHI metadata shape —
     # never the request body or any raw request string. Redacting the body was
     # insufficient because pattern redaction misses names/DOBs smuggled into
-    # free-text fields (Codex review). See docs/phi-logging-policy.md.
-    log.info('POST /intake meta=%s', json.dumps(log_metadata(req)))
+    # free-text fields (Codex review). See docs/phi-logging-policy.md. The
+    # identifier is logged only as a server-keyed digest (submission_ref), never
+    # raw — the raw value is caller-controllable and cannot be proven non-PHI at
+    # this boundary (_submission_log_id; e5b-SPEC-20; PR #79 codex r1).
+    meta = log_metadata(req)
+    meta["submission_ref"] = _submission_log_id(req.submission_id)
+    log.info('POST /intake meta=%s', json.dumps(meta))
 
-    # D5 (partly remediated, ADR 0005 / W2): still no MPI, and every intake
-    # inserts a brand new chart even for a returning patient — W2 merges
-    # nothing. What it adds is detection: the match key is evaluated AFTER the
-    # patient row is committed, so a matcher fault can never block or slow a
-    # registration, and a candidate match is queued for a human rather than
-    # acted on.
-    patient_id = _create_registration(db, req)
+    fingerprint = _fingerprint(req)
+
+    # Idempotency (e5b-SPEC-7/13): a recorded identifier is either an identical
+    # replay — answered with the original outcome, creating nothing — or a
+    # corrected retry, which is a 409 that never acknowledges the changed content
+    # as saved. An unrecorded identifier is a genuine new registration, always
+    # (e5b-SPEC-15; D5/no-MPI stays open).
+    existing = _lookup_submission(db, req.submission_id)
+    if existing is not None:
+        return _replay_or_conflict(existing, fingerprint, req, started)
+
+    # D5 (partly remediated, ADR 0005 / W2): still no MPI, and every genuine
+    # intake inserts a brand new chart even for a returning patient — W2 merges
+    # nothing. The match key is evaluated AFTER the patient row is committed, so
+    # a matcher fault can never block or slow a registration.
+    try:
+        patient_id = _create_registration(db, req, fingerprint)
+    except _SubmissionCollision:
+        # A concurrent request committed this submission_id first (e5b-SPEC-8).
+        # Our own writes were rolled back; re-read the winner's row and answer
+        # with its result (or 409 if the loser's content differs).
+        existing = _lookup_submission(db, req.submission_id)
+        if existing is None:
+            # The winner rolled back after all — nothing recorded. Surface as the
+            # existing system-failure branch; the next retry gets a clean run.
+            log.error("intake: submission collision left no recorded winner")
+            raise HTTPException(status_code=503, detail="registration store unavailable")
+        return _replay_or_conflict(existing, fingerprint, req, started)
+
     _evaluate_match_key(db, patient_id, req.demographics)
 
     # D4 / RIV-088 / RIV-141 (bounded, ADR 0010): eligibility verification still
-    # runs on this request thread — it DOES delay the 201, by at most
-    # ELIGIBILITY_TIMEOUT_SECONDS, and the intake-side breaker drops that to ~0
-    # once the dependency is known-bad. So a slow/hung payer degrades
-    # registration instead of freezing it (RIV-141), but this is not yet true
-    # deferral. The registration is already committed above, so a degraded
-    # result only changes what the eligibility *field* reports, never whether
-    # the patient is saved. Register-first + async re-verification is the
-    # remaining follow-up (ADR 0010, docs/debt-log.md D4).
+    # runs on this request thread, bounded by a timeout and the intake-side
+    # breaker. The registration is already committed above, so a degraded result
+    # only changes what the eligibility *field* reports, never whether the
+    # patient is saved.
     eligibility = _verify_eligibility_guarded(req.insurance)
 
     elapsed = round(time.time() - started, 2)
-    log.info("POST /intake 201 patient_id=%s elapsed=%.2fs", patient_id, elapsed)
+    log.info(
+        "POST /intake 201 patient_id=%s submission_ref=%s elapsed=%.2fs",
+        patient_id,
+        _submission_log_id(req.submission_id),
+        elapsed,
+    )
     return IntakeResponse(patient_id=patient_id, elapsed_seconds=elapsed, eligibility=eligibility)
 
 
-def _create_registration(db: Session, req: IntakeRequest) -> int:
-    """Patient + coverage + consents, or nothing (E4-SPEC-4).
+def _lookup_submission(db: Session, submission_id: str) -> Optional[RegistrationSubmission]:
+    """The recorded attempt for this identifier, or None (e5b-SPEC-7).
 
-    One transaction, one commit. The three writes used to commit separately —
-    and a consent failure was swallowed outright — so a fault between them left
-    a patient with no consent rows, a 201 at the desk, and nothing to say the
-    registration was half-written (docs/debt-log.md D4 residual 2). What a
-    caller owes a failed registration is now decided here: nothing survives it.
+    Guarded like _create_registration (PR #79 codex r3): this is the first DB
+    operation on every /intake request, and an unguarded statement-level error
+    would escape as an uncontrolled 500 whose traceback embeds the bound
+    caller-controlled submission_id — the r1 PHI vector by another door. Roll
+    back, class name only, same controlled 503 both call sites already expect.
     """
     try:
+        return (
+            db.execute(
+                select(RegistrationSubmission).where(
+                    RegistrationSubmission.submission_id == submission_id
+                )
+            )
+            .scalars()
+            .first()
+        )
+    except SQLAlchemyError as e:
+        db.rollback()
+        log.error("intake: submission lookup failed (%s)", type(e).__name__)
+        raise HTTPException(status_code=503, detail="registration store unavailable")
+
+
+def _replay_or_conflict(
+    existing: RegistrationSubmission,
+    fingerprint: str,
+    req: IntakeRequest,
+    started: float,
+) -> IntakeResponse:
+    """Serve an identical replay, or refuse a corrected retry (e5b-SPEC-7/13).
+
+    Constant-time compare, though the fingerprint is not itself a secret: the
+    two outcomes are indistinguishable to a caller except by the content they
+    sent. An identical replay creates and modifies NOTHING and carries no replay
+    indication; its eligibility is re-verified LIVE at replay time — the original
+    verdict is never persisted or replayed (e5b-SPEC-28/29). A differing content
+    is a 409 with a constant non-PHI detail that never acknowledges the changed
+    content as saved (e5b-REQ-2); the gateway relays it and the portal renders
+    its existing system-failure message (e5b-D-15).
+    """
+    if not hmac.compare_digest(existing.payload_fingerprint, fingerprint):
+        log.info(
+            "intake: submission_id replay content mismatch submission_ref=%s",
+            _submission_log_id(req.submission_id),
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="registration content does not match the original submission",
+        )
+    eligibility = _verify_eligibility_guarded(req.insurance)
+    elapsed = round(time.time() - started, 2)
+    log.info(
+        "intake: submission_id replay served submission_ref=%s patient_id=%s elapsed=%.2fs",
+        _submission_log_id(req.submission_id),
+        existing.patient_id,
+        elapsed,
+    )
+    return IntakeResponse(
+        patient_id=existing.patient_id, elapsed_seconds=elapsed, eligibility=eligibility
+    )
+
+
+def _create_registration(db: Session, req: IntakeRequest, fingerprint: str) -> int:
+    """Patient + coverage + consents + the submission ledger row, or nothing.
+
+    One transaction, one commit (E4-SPEC-4). The submission row is inserted in
+    the SAME transaction that creates the chart (e5b-SPEC-6/12): a transaction
+    that does not commit records neither, so no chart exists without its ledger
+    row and no ledger row without its chart. The bounded wait is issued as
+    Postgres lock_timeout at the top of the transaction (e5b-D-12) — a concurrent
+    request for the same submission_id blocks on the UNIQUE index at most that
+    long, then either sees the winner's commit (IntegrityError → collision) or
+    the wait expires (OperationalError → the existing 503 branch, e5b-SPEC-9).
+    """
+    try:
+        # Postgres-only: the units-trapped bound (e5b-D-12). sqlite has no
+        # lock_timeout and the unit suites don't exercise real lock contention;
+        # the real-Postgres proof is the integration marker (verification 8).
+        if db.get_bind().dialect.name == "postgresql":
+            db.execute(text(f"SET LOCAL lock_timeout = '{_lock_timeout_ms()}ms'"))
         patient = Patient(
             name=req.demographics.name,
             dob=req.demographics.dob,
@@ -186,16 +462,31 @@ def _create_registration(db: Session, req: IntakeRequest) -> int:
             )
         for kind in req.consents:
             db.add(Consent(patient_id=patient_id, kind=kind))
+        db.add(
+            RegistrationSubmission(
+                submission_id=req.submission_id,
+                payload_fingerprint=fingerprint,
+                patient_id=patient_id,
+            )
+        )
         db.commit()
         return patient_id
+    except IntegrityError as e:
+        # The submission_id UNIQUE constraint is the sole arbiter (e5b-SPEC-8): a
+        # concurrent request committed this identifier first. Roll back our own
+        # patient/coverage/consent writes and signal the caller to replay the
+        # winner. Class name only — never stringify a DBAPIError (rule 3).
+        db.rollback()
+        log.info("intake: submission_id collision (%s)", type(e).__name__)
+        raise _SubmissionCollision() from e
     except SQLAlchemyError as e:
         db.rollback()
         # PHI policy rule 3: never stringify a statement-level DB error — a
         # DBAPIError embeds [SQL: ...] [parameters: (...)], i.e. the full bound
         # row (name, DOB, SSN, notes for the patient write; member_id and
         # group_number for the coverage one). Class name only, same idiom as
-        # _verify_eligibility's 2026-07-08 fix.
-        # Test: tests/test_intake_db_error_phi.py.
+        # _verify_eligibility's 2026-07-08 fix. A lock_timeout expiry lands here
+        # too (e5b-SPEC-9). Test: tests/test_intake_db_error_phi.py.
         log.error("intake: failed to create registration (%s)", type(e).__name__)
         raise HTTPException(status_code=503, detail="registration store unavailable")
 

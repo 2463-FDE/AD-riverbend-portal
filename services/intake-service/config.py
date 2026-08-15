@@ -95,6 +95,25 @@ class Settings:
         eligibility_degraded_slow_seconds,
     )
 
+    # --- registration idempotency (e5b) ------------------------------------
+    # Server-side secret keying the content-binding HMAC (e5b-D-8/D-11). NO
+    # default value: it is generated into the gitignored, intake-scoped
+    # .env.registration by `make up` (the .env.redis precedent, e5b-D-13), never
+    # templated. An unset/whitespace/sentinel/short value is treated as "not a
+    # real secret" and fails registration closed (e5b-SPEC-22) — the key-real
+    # predicate lives in app.py and serves both the request path and /healthz.
+    registration_fingerprint_key = os.getenv("REGISTRATION_FINGERPRINT_KEY", "")
+    # Bounded wait for the idempotency UNIQUE arbiter (e5b-SPEC-8/D-12). Issued
+    # as Postgres lock_timeout on the registration transaction. UNITS TRAP: this
+    # knob is SECONDS, lock_timeout is MILLISECONDS — app.py does the s->ms
+    # conversion and a test pins the issued '5000ms' so a dropped ×1000 cannot
+    # ship a 1000×-shorter bound. Enters intake's request-thread budget; the
+    # sum-shape is guarded by tests/test_eligibility_budget_alignment.py
+    # (8s eligibility + 5s lock wait + 1s margin <= the gateway's 30s timeout).
+    registration_lock_wait_seconds = float(
+        os.getenv("REGISTRATION_LOCK_WAIT_SECONDS", "5")
+    )
+
     # payer settings kept for parity with the legacy module; the real X12 270/271
     # round-trip is owned by eligibility-service.
     payer_api_url = os.getenv("PAYER_API_URL", "https://edi.example.com/v1/eligibility")

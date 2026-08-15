@@ -46,6 +46,14 @@ for _name, _module in _saved.items():
 
 NEW_ID = 9001
 SSN = "412-55-9981"
+# The now-required submission_id (e5b-SPEC-4). create_intake fails closed without
+# a real fingerprint key (e5b-SPEC-22), so pin a synthetic 64-char one on this
+# file's own settings instance — never a live key.
+app_mod.settings.registration_fingerprint_key = (
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+)
+SUBMISSION_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
+SUBMISSION_ID_2 = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
 
 
 def _row(pid, name, dob, address, ssn=SSN):
@@ -61,6 +69,16 @@ class _StubResult:
 
     def all(self):
         return list(self._rows)
+
+    # e5b: _lookup_submission reads any recorded attempt via .scalars().first().
+    # The stub never persists a queryable submission row, so this always reports
+    # "no prior attempt" — these tests exercise the match-key hook, not replay
+    # (idempotency has its own suite, tests/test_intake_idempotency.py).
+    def scalars(self):
+        return self
+
+    def first(self):
+        return self._rows[0] if self._rows else None
 
 
 class _StubSession:
@@ -86,6 +104,16 @@ class _StubSession:
     # -- SQLAlchemy Session surface used by app.py -------------------------
     def add(self, obj):
         self.added.append(obj)
+
+    def get_bind(self):
+        # _create_registration gates the Postgres-only SET lock_timeout on the
+        # dialect (e5b-D-12); a non-Postgres bind skips it, leaving the match-key
+        # path under test unchanged.
+        class _Bind:
+            class dialect:
+                name = "sqlite"
+
+        return _Bind()
 
     def commit(self):
         self.commits += 1
@@ -129,8 +157,10 @@ def _demographics(name="Maria Gonzalez", dob="1971-03-02", address="12 Elm St", 
     )
 
 
-def _intake_request(**kwargs):
-    return schemas_mod.IntakeRequest(demographics=_demographics(**kwargs), insurance=None)
+def _intake_request(submission_id=SUBMISSION_ID, **kwargs):
+    return schemas_mod.IntakeRequest(
+        submission_id=submission_id, demographics=_demographics(**kwargs), insurance=None
+    )
 
 
 def _queued_pairs(db):
@@ -220,9 +250,11 @@ def test_repeat_intake_of_the_same_person_queues_no_duplicate_rows():
     which raises IntegrityError on a repeated pair whose INSERT lacks
     ON CONFLICT DO NOTHING (W2-SPEC-31)."""
     db = _StubSession(ssn_rows=MARIA_ROWS)
-    app_mod.create_intake(_intake_request(), db)
+    # Two genuine registrations (distinct attempt ids, e5b-SPEC-15) re-derive the
+    # same SSN group; the queue's UNIQUE constraint absorbs the repeat.
+    app_mod.create_intake(_intake_request(submission_id=SUBMISSION_ID), db)
     first = list(db.queue)
-    app_mod.create_intake(_intake_request(), db)
+    app_mod.create_intake(_intake_request(submission_id=SUBMISSION_ID_2), db)
     assert db.queue == first
     assert len(db.queue) == 3
 

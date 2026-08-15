@@ -341,6 +341,58 @@ def test_the_gateway_registration_bound_never_preempts_intake():
         )
 
 
+def _registration_budget_sources_with_lock():
+    """(label, gateway bound, intake eligibility budget, intake lock wait).
+
+    e5b adds the idempotency lock wait to intake's request-thread budget: a
+    registration can spend ELIGIBILITY_TIMEOUT_SECONDS verifying coverage AND up
+    to REGISTRATION_LOCK_WAIT_SECONDS blocked on the UNIQUE arbiter. Both sources
+    of truth, same fail-closed reason as every invariant above.
+    """
+    raw = _env_example_values()
+    missing = [
+        name
+        for name in (
+            "INTAKE_TIMEOUT_SECONDS",
+            "ELIGIBILITY_TIMEOUT_SECONDS",
+            "REGISTRATION_LOCK_WAIT_SECONDS",
+        )
+        if name not in raw
+    ]
+    assert not missing, f".env.example is missing {missing} — a fresh deploy would not seed them"
+    return [
+        (
+            "config.py defaults",
+            _gw.intake_timeout_seconds,
+            _intake.eligibility_timeout_seconds,
+            _intake.registration_lock_wait_seconds,
+        ),
+        (
+            ".env.example",
+            float(raw["INTAKE_TIMEOUT_SECONDS"]),
+            float(raw["ELIGIBILITY_TIMEOUT_SECONDS"]),
+            float(raw["REGISTRATION_LOCK_WAIT_SECONDS"]),
+        ),
+    ]
+
+
+def test_the_gateway_bound_absorbs_eligibility_plus_the_idempotency_lock_wait():
+    """e5b-SPEC-8. The idempotency lock wait (e5b) enters intake's request-thread
+    budget on top of the eligibility hop. The gateway's POST /intake bound must
+    stay a margin above the SUM, or a legitimately-waiting-then-verifying
+    registration is aborted mid-write — the one outcome E4-SPEC-4's per-request
+    atomicity cannot help with. Today 8 + 5 + 1 = 14 <= 30, both sources.
+    """
+    for label, gw_timeout, elig_timeout, lock_wait in _registration_budget_sources_with_lock():
+        budget = elig_timeout + lock_wait
+        assert gw_timeout >= budget + MARGIN_SECONDS, (
+            f"[{label}] the gateway's INTAKE_TIMEOUT_SECONDS ({gw_timeout}s) must be at "
+            f"least {MARGIN_SECONDS}s above intake's eligibility budget + registration "
+            f"lock wait ({elig_timeout}s + {lock_wait}s = {budget}s) — below that the "
+            "gateway aborts a registration intake is still legitimately processing"
+        )
+
+
 def _proxy_timeout_seconds():
     """The gateway's uniform proxy bound (e5, requirements D-4).
 

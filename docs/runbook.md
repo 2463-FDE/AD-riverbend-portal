@@ -216,6 +216,30 @@ put sessions and visit memory on an open store — that is the guard working, no
 a Redis outage. Fix the credential; do not work around it by pointing
 `REDIS_URL` at an unauthenticated instance.
 
+### Rotating the registration content-binding key
+`REGISTRATION_FINGERPRINT_KEY` keys the HMAC that lets intake tell an identical
+registration retry from a corrected one (`e5b`). It lives in `.env.registration`
+(gitignored, loaded by intake-service only); `make up` generates a random one on
+first run, and intake fails closed — `GET /healthz` and `POST /intake` both 503,
+naming the variable, never a value — if it is missing or not a real secret.
+
+```bash
+# check the key is present and real (>= 32 chars, not a placeholder)
+grep REGISTRATION_FINGERPRINT_KEY .env.registration
+# rotate it (see the bounded, visible cost below)
+rm .env.registration && make down && make up
+```
+
+**Rotation invalidates every recorded fingerprint** — that is accepted and
+bounded, not a fault to avoid. A registration submitted *before* the rotation
+and retried *after* it will have its content re-fingerprinted under the new key,
+which cannot match the stored one, so the retry answers **409** (the constant
+"content does not match the original submission" message, surfaced at the desk as
+a system-failure) instead of replaying. The window is only submissions
+straddling the rotation; there is no key-versioning machinery by design (`e5b`
+accepted residual, `docs/debt-log.md`). Rotate at a quiet time if a
+straddling-retry 409 matters.
+
 ### Gateway is unhealthy with "session store" in the log
 `GET /healthz` sends an authenticated Redis `PING` (each socket operation bounded
 by `REDIS_PROBE_TIMEOUT_SECONDS`, default 0.5s), so the container goes red when

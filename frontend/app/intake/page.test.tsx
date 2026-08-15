@@ -239,3 +239,76 @@ describe("registration outcome (E4)", () => {
     expect(JSON.stringify(body)).not.toContain("policy_holder");
   });
 });
+
+// The submission-attempt identifier: minted per attempt, constant across an
+// identical retry, fresh after an edit or a new registration (e5b-SPEC-3/14/17).
+const UUID4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function submittedId(callIndex: number): string {
+  const call = apiFetch.mock.calls[callIndex];
+  return JSON.parse((call[1] as { body: string }).body).submission_id;
+}
+
+// Click submit against a mocked response and wait for the page to settle.
+// Only for non-success responses, where the submit button persists.
+async function reSubmit(status: number, body: unknown) {
+  apiFetch.mockResolvedValueOnce(jsonResponse(status, body));
+  fireEvent.click(screen.getByRole("button", { name: /submit intake/i }));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: /submit intake/i })?.hasAttribute("disabled")).not
+      .toBe(true),
+  );
+}
+
+// After a non-success the page sits on the Review step; go Back to Consents,
+// toggle an optional consent (an edit that funnels through touch()), and return.
+function editAConsent() {
+  fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+  fireEvent.click(screen.getByLabelText(/financial responsibility/i));
+  fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+}
+
+describe("submission-attempt identifier (e5b)", () => {
+  it("attaches a version-4 identifier to every submission (e5b-SPEC-3)", async () => {
+    render(<IntakePage />);
+    await submitWith(201, { patient_id: 5001 });
+    expect(submittedId(0)).toMatch(UUID4_RE);
+  });
+
+  it("reuses the same identifier on an identical retry — no edit (e5b-SPEC-3)", async () => {
+    render(<IntakePage />);
+    await submitWith(502, { detail: "intake service unreachable" });
+    await reSubmit(502, { detail: "intake service unreachable" });
+    expect(submittedId(1)).toBe(submittedId(0)); // identical retry replays
+  });
+
+  it("re-mints on the first edit after a failure (e5b-SPEC-14)", async () => {
+    render(<IntakePage />);
+    await submitWith(502, { detail: "intake service unreachable" });
+    editAConsent();
+    await reSubmit(201, { patient_id: 5002 });
+    expect(submittedId(1)).not.toBe(submittedId(0)); // corrected retry is a new attempt
+  });
+
+  it("treats a never-delivered submit as undelivered — an edit re-mints (e5b-SPEC-14)", async () => {
+    render(<IntakePage />);
+    await fillWizard();
+    apiFetch.mockRejectedValueOnce(new Error("NetworkError"));
+    fireEvent.click(screen.getByRole("button", { name: /submit intake/i }));
+    await screen.findByText(/could not reach the portal/i);
+    editAConsent();
+    await reSubmit(201, { patient_id: 5003 });
+    expect(submittedId(1)).not.toBe(submittedId(0));
+  });
+
+  it("mints a fresh identifier for a new registration (e5b-SPEC-17)", async () => {
+    render(<IntakePage />);
+    await submitWith(201, { patient_id: 5001 });
+    const first = submittedId(0);
+    cleanup();
+    apiFetch.mockReset();
+    render(<IntakePage />);
+    await submitWith(201, { patient_id: 5002 });
+    expect(submittedId(0)).not.toBe(first);
+  });
+});

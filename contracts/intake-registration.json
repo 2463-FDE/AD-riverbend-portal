@@ -8,7 +8,7 @@
     "communications_opt_in"
   ],
   "request_fields": {
-    "root": ["demographics", "insurance", "consents"],
+    "root": ["submission_id", "demographics", "insurance", "consents"],
     "demographics": [
       "name",
       "dob",
@@ -26,6 +26,7 @@
     "demographics": ["notes"]
   },
   "sample_request": {
+    "submission_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
     "demographics": {
       "name": "Sample Patient",
       "dob": "1985-03-12",

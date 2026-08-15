@@ -48,6 +48,11 @@ export interface InsuranceForm {
 export type ConsentsForm = Record<ConsentKey, boolean>;
 
 export interface IntakePayload {
+  // The submission-attempt identifier (e5b-SPEC-3/4). Minted by newSubmissionId,
+  // constant across re-submissions of the same attempt, fresh per new
+  // registration. Non-PHI by construction — a random v4 UUID, derived from
+  // nothing the patient entered (e5b-SPEC-18).
+  submission_id: string;
   demographics: {
     name: string;
     dob: string | null;
@@ -73,6 +78,35 @@ function orNull(value: string): string | null {
 }
 
 /**
+ * Mint a fresh submission-attempt identifier (e5b-SPEC-17/18).
+ *
+ * The randomness guarantee lives HERE (e5b-D-9): the id is drawn from a CSPRNG,
+ * independent of all patient data and form content, so nothing it carries is
+ * derived from PHI. The service only narrows the accidental-derivation class
+ * with a version-4 format check — it cannot prove randomness, which is why the
+ * mint owns it.
+ *
+ * `crypto.randomUUID` is preferred; the `getRandomValues` fallback covers a
+ * portal served over a non-secure context, where `randomUUID` may be absent but
+ * `getRandomValues` is not. Both are CSPRNG-backed.
+ */
+export function newSubmissionId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") {
+    return c.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  c.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10xx
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0"));
+  return (
+    `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-` +
+    `${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10, 16).join("")}`
+  );
+}
+
+/**
  * Build the POST /intake body from the wizard's three form objects.
  *
  * `notes` is deliberately omitted rather than sent empty — it is a staff field,
@@ -86,6 +120,7 @@ export function buildIntakePayload(
   demo: DemographicsForm,
   ins: InsuranceForm,
   consents: ConsentsForm,
+  submissionId: string,
 ): IntakePayload {
   // Every insurance field blank means no coverage was offered — send null, not
   // an empty object, so a self-pay walk-in does not get an empty coverage row.
@@ -100,6 +135,7 @@ export function buildIntakePayload(
   const hasInsurance = Object.values(insuranceFields).some((v) => v !== null);
 
   return {
+    submission_id: submissionId,
     demographics: {
       // The 422 the whole defect starts from: the service takes ONE name field.
       name: `${demo.first_name} ${demo.last_name}`.trim(),

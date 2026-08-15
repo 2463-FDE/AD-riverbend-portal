@@ -1,5 +1,5 @@
 """ORM models intake-service touches. (Copy-paste per service — no shared lib yet.)"""
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text, UniqueConstraint
 from sqlalchemy.sql import func
 
 from db import Base
@@ -85,3 +85,30 @@ class MatchEvaluationFailure(Base):
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
     error_class = Column(Text, nullable=False)        # class name, never a message
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class RegistrationSubmission(Base):
+    """One recorded registration attempt — the idempotency ledger (e5b).
+
+    No PHI columns by design (e5b-SPEC-18/20/21). ``submission_id`` is the
+    portal's mint-random version-4 UUID, non-PHI by construction, and the UNIQUE
+    constraint on it is the sole arbiter of a retry: the first committer wins and
+    every retry of the same attempt re-reads this row rather than forking a
+    second chart (e5b-D-12). ``payload_fingerprint`` is a keyed HMAC of the
+    validated content from which no patient value is recoverable (e5b-D-8/D-11) —
+    it distinguishes an identical replay from a corrected one without storing any
+    field. No eligibility verdict is persisted here (e5b-SPEC-29); the row is an
+    id, a fingerprint, an FK, and a timestamp.
+    """
+
+    __tablename__ = "registration_submissions"
+
+    id = Column(Integer, primary_key=True)
+    submission_id = Column(Text, nullable=False)      # portal-minted v4 UUID, non-PHI
+    payload_fingerprint = Column(Text, nullable=False)  # keyed HMAC, not reversible
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("submission_id", name="uq_registration_submission_id"),
+    )

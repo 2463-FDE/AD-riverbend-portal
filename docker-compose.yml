@@ -113,7 +113,14 @@ services:
 
   intake-service:
     build: ./services/intake-service
-    env_file: .env
+    # .env.registration is loaded AFTER .env and carries only the generated
+    # REGISTRATION_FINGERPRINT_KEY, scoped to this service (e5b-D-13). Generated
+    # by `make up`, never templated; intake fails closed without a real key
+    # (e5b-SPEC-22). depends_on stays service_started (below) so a stale-schema
+    # or keyless intake reads red without blocking the estate (e5b-D-14).
+    env_file:
+      - .env
+      - .env.registration
     environment:
       ELIGIBILITY_URL: http://eligibility-service:8072
     # Network-internal, like every domain service (ADR 0016, debt-log D15): no
