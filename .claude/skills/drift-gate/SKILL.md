@@ -27,38 +27,28 @@ context is the mechanism, not a nicety.
    `Status:` stamp (plus the matching header line). Revisions happen in stage 3
    (`.claude/skills/plan-authoring/`), and the revised plan gets a full fresh gate run
    against its final text. No stamping a plan amended mid-gate — analyze-and-amend in one
-   motion leaves the final text never checked as a whole (the e1 lesson).
+   motion leaves the final text never checked as a whole (the e1 lesson). The adversarial
+   read itself is tool-enforced beyond this sentence: the spawned agent (below) carries
+   no Edit/Write, so it structurally cannot edit; the sentence stays as intent for what
+   this session writes.
 
 ## Process
 
-**Mechanical half** (each check is a lookup, scriptable later):
+The adversarial read runs in a spawned read-only agent —
+`.claude/agents/drift-gate-agent.md` owns the check procedure (mechanical and judgment
+halves), one place. This skill owns the ceremony: input-state check, spawn, rounds,
+stamp.
 
-1. **Check map complete:** every SPEC row carries exactly one `test:` / `cmd:` / `gate:`
-   mechanism (`.claude/skills/spec-authoring/` owns the column's rules).
-2. **⚠ coverage:** every ⚠ row is covered by an approval recorded in the plan's
-   Landmines block, citing a decision ID (`.claude/skills/plan-authoring/` owns the
-   block's rules). A zone entered with no recorded approval is a finding, always.
-3. **Freeze scope:** the frozen set contains no SPEC rows for requirements marked
-   `DEFERRED → <item>`.
-4. **Cites resolve:** every SPEC and decision ID the plan cites exists in this file;
-   spot-verify the plan's in-repo facts (paths, symbols, config values) against the
-   working tree — a wrong fact is a finding.
-
-**Judgment half:**
-
-5. **Read the Spec section first, alone.** List every SPEC id and note what you would
-   expect a plan to do about each — expectations from the contract, then the plan tested
-   against them, not the reverse.
-6. **Close the change list both ways:** every SPEC id is served by a change (or by an
-   existing behavior the plan names); every change traces to a SPEC id, a decision ID, or
-   named registry upkeep. Unmapped either way is a finding.
-7. **Run the three checks** from `.claude/skills/plan-authoring/` (self-consistency, gate
-   interaction, residual honesty) against the final text, cold.
-8. **Per-SPEC verdict**, every id: **satisfied** / **residual-named** (partial, residual
-   written in the Landmines block) / **FINDING**. A partial whose residual is not written
-   down is a finding, not a residual.
-9. **Verification is runnable:** numbered commands with expected output, SPEC-cited,
-   including negative (break-then-revert) checks.
+1. **Verify input state:** `## Spec` at `FROZEN`, `## Plan` at `DRAFT`, and hard rule 1
+   holds for this session.
+2. **Spawn `drift-gate-agent`** (Agent tool). The spawning prompt is the item name only —
+   no characterization of the work. The agent reads the artifact and the tree itself;
+   that self-read is the structural replacement for prompt-authorship bias, and the agent
+   reports any characterization it does receive as a finding.
+3. **Receive the report:** findings as round-ready rows, per-SPEC verdicts, and the
+   `checked:` scope line.
+4. **Write the outcome** (below). The agent never writes; rounds and the stamp are this
+   session's only writes.
 
 ## Outcome
 

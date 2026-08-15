@@ -27,72 +27,49 @@ own drift (same lesson as `.claude/skills/drift-gate/`).
    stage 4 wrote in `## Delivery`.** It writes exactly two things: Impl-gate rounds in
    `## Findings`, and — on a clean run — the delivery-axis header stamp plus its short
    gate record appended to `## Delivery`, which is this gate's only Delivery write. Fixes
-   happen in stage 4; the fixed branch gets a full fresh gate run.
+   happen in stage 4; the fixed branch gets a full fresh gate run. The adversarial read
+   itself is tool-enforced beyond this sentence: the spawned agents (below) carry no
+   Edit/Write, so they structurally cannot edit; the sentence stays as intent for what
+   this session writes.
 
 ## Process
 
-**Mechanical half** (each check is a command or lookup, scriptable later; skill-run, so
-advisory by construction — `CLAUDE.md` §11 — until the owner moves one into CI or the
-Makefile):
+The adversarial read runs in spawned read-only agents; the check procedures live in the
+agent definitions, one place each. This skill owns the ceremony: input-state check,
+spawns, `gate:` observations, rounds, stamp.
 
-1. **Pinned-test diff** (the rule is the freeze scope in `.claude/skills/spec-authoring/`
-   step 6 — the check is owned here). Diff the frozen spec table's `test:` cells against
-   the branch: every cell filled with a real test id, and **no pinned test renamed,
-   removed, or behaviourally rewritten without a matching owner decision ID in the
-   register**. A changed pinned test with no decision is a red finding — the executable
-   half of the contract moves only the way the prose half does. The lifecycle, so the two
-   are not confused: **filling a planned name with the final test id is the expected
-   motion of implementation, not a spec change**; renaming, removing, or rewriting a test
-   the spec already pinned is, and takes an owner decision.
-2. **Size budget** (the threshold and its rationale are the README's dated 2026-08-12
-   shape decision — the check is owned here). `wc -l docs/workflow/<item>.md` — over the
-   **400-line default budget** is a red finding unless a stage-tagged decision in the
-   item's own register raises the budget and says why.
-3. **`cmd:` checks.** Run every `cmd:` cell in the spec table; expected output must
-   match.
-4. **`gate:` checks.** Execute every `gate:` cell (hand-run assertions, click-ops state
-   reads); the observation is recorded — quote it in the round or, on a clean run, note
-   it for `## Delivery` via the stage-4 session. A `gate:` row with no recordable
-   observation is a finding.
-
-**Judgment half:**
-
-5. **Read the Spec section first, alone** — expected behaviour per SPEC id — then the
-   plan's change list and Landmines block. Expectations from the contract, then the diff
-   tested against them.
-6. **Close the diff against the change list both ways:** `git diff main...HEAD --stat`,
-   then the full diff. Every changed file traces to a planned change; every planned
-   change appears in the diff or `## Delivery` records why not. A missing Delivery
-   section is itself a finding. An untraceable file is a finding — unplanned scope,
-   however helpful-looking, goes back to stage 4.
-7. **Planted-defect check.** For any hunk near known defects (`docs/debt-log.md`,
-   `docs/landmines.md` §1, the phi-logging register), confirm the change does not
-   silently repair or disturb a teaching artifact. A "helpful" fix of a planted defect is
-   a finding, always.
-8. **Baseline.** Full-suite result against the header's `Baseline at branch:`: passed
-   grows by exactly the tests the branch adds; xfailed and deselected must not move.
-   Prefer re-running (`make test-docker` or the 3.12 venv); accept recorded counts only
-   if re-running is impossible, and say so in the record.
-9. **Idiom and rule sweep over the diff only:** gateway routes not on
-   `_get_checked`/`_post_checked` (CLAUDE.md §4); exception logging with `str(e)` or
-   PHI-bearing fields on touched paths (`docs/phi-logging-policy.md`); `Co-Authored-By`
-   trailers (`CONTRIBUTING.md:53`); §1 zones in the diff without a recorded approval in
-   the Landmines block.
-10. **Delivery evidence.** The plan's Verification ran end-to-end including negatives,
-    recorded per the stage-4 evidence rule (references and ≤5-line notes, isolation
-    clause present for landmine-adjacent live runs); deviations and test-first
-    disclosures present; residuals are registry IDs only.
+1. **Verify input state:** `## Spec` `FROZEN`, `## Plan` `GATED`, the branch complete,
+   and hard rule 1 holds for this session.
+2. **Spawn two agents in parallel** (Agent tool), each with the item name and branch
+   only — no characterization of the work. The agents read the artifact and the diff
+   themselves; that self-read is the structural replacement for prompt-authorship bias,
+   and each agent reports any characterization it does receive as a finding.
+   - `impl-gate-agent` (`.claude/agents/impl-gate-agent.md`) — the full check procedure:
+     mechanical half (pinned-test diff, size budget, `cmd:` cells, baseline re-run) and
+     judgment half (spec-first read, diff closure both ways, planted-defect check, idiom
+     sweep, delivery evidence).
+   - `adv-reviewer-agent` (`.claude/agents/adv-reviewer-agent.md`) — independent
+     correctness/spec review over the frozen Spec section and the diff only, **never the
+     plan** — plan-bias is the failure mode it exists to escape.
+3. **Collect `gate:` observations yourself.** Hand-run assertions and click-ops state
+   reads cannot run inside an agent; `impl-gate-agent` lists every `gate:` cell as
+   "human observation required" and this session records each observation — quoted in
+   the round or, on a clean run, noted for `## Delivery` via the stage-4 session. A
+   `gate:` row with no recordable observation is a finding.
+4. **Write the outcome** (below). The agents never write; rounds and the stamp are this
+   session's only writes.
 
 ## Outcome
 
-- **Any finding → no stamp.** Append `### Impl gate — round N, <date>` to `## Findings`
-  (README owns the round format), SPEC-cited where applicable, one line each, disposition
-  column empty for stage 4. Branch returns to stage 4; re-gate is a full re-run, fresh
-  session.
-- **Clean → stamp.** Advance the header's **delivery axis** to `delivery IMPLEMENTED
-  <date>` — one axis, never the whole line; `plan GATED` stays as the drift gate set it
-  (README) — and append a short
-  gate record in `## Delivery`: date, "impl-gated fresh-context", branch and HEAD commit,
+- **Any finding → no stamp** — from either agent. Gate-agent findings go in an
+  `### Impl gate — round N, <date>` round; adv-reviewer findings get their own
+  `### Adv review — round N, <date>` round (README owns the round format), each
+  SPEC-cited where applicable, one line each, disposition column empty for stage 4.
+  Branch returns to stage 4; re-gate is a full re-run, fresh session, both agents.
+- **Clean → stamp** — both agents clean and every `gate:` observation recorded.
+  Advance the header's **delivery axis** to `delivery IMPLEMENTED <date>` — one axis,
+  never the whole line; `plan GATED` stays as the drift gate set it (README) — and
+  append a short gate record in `## Delivery`: date, "impl-gated fresh-context", branch and HEAD commit,
   baseline observed, `gate:` observations, residuals accepted here. The plan stamp stays
   exactly as the drift gate set it. Close with a dry `checked:` round line. The stamp
   means push-ready; **push itself stays human-gated** per

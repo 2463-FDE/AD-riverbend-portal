@@ -197,7 +197,10 @@ workflow (`docs/workflow/README.md`) defines each stage. Currently:
 surfaces; output stays scratch, outside the repo), `skills/drift-gate/` (plan/spec gate),
 `skills/implementation/` (stage 4) with its inner loop `skills/tdd/`, `skills/impl-gate/`
 (pre-push gate), `skills/noncode-merge/` (gated fast path landing non-code changes on
-`main`). Nothing else — no hooks, no agents.
+`main`); and, added 2026-08-15, `agents/` with three read-only gate agents —
+`drift-gate-agent`, `impl-gate-agent`, `adv-reviewer-agent` (`Read`/`Grep`/`Glob`/`Bash`
+only, no Edit/Write) — spawned by the two gate skills to do the adversarial read.
+Nothing else — no hooks.
 
 **The prior engagement's tooling is deliberately not adopted.** It is not lost — 42 files under
 `.claude/` exist on branch `chore/noref-track-claude-tooling` (PR #36, and a second attempt in

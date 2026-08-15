@@ -46,7 +46,12 @@ requirement synthesis → spec (EARS) → code plan
   gate stamps the plan section `GATED` (required by the implement skill at entry); the
   impl gate checks the finished branch against plan and spec pre-push and stamps the
   delivery `Status:` `IMPLEMENTED` — the plan stamp is untouched (push stays
-  human-gated). All six stages are defined. One optional stage input is
+  human-gated). Since 2026-08-15 both gate skills delegate the adversarial read to
+  read-only agents in `.claude/agents/` — `drift-gate-agent`, `impl-gate-agent`, and
+  `adv-reviewer-agent` (a spec-and-diff-only reviewer the impl gate spawns in parallel;
+  its findings land as their own **Adv review** rounds) — while the skills stay the
+  stage owners: ceremony, rounds, and stamps. The fresh-session rule above is
+  unchanged. All six stages are defined. One optional stage input is
   also defined: a spec-anchored mockup for items whose spec names the portal as a system
   element (`.claude/skills/mockup/`, decided 2026-08-07 on first reach with W3) — plan-stage
   evidence only, kept scratch outside the repo, never a tracked artifact; items without a
@@ -88,7 +93,7 @@ authoring rules — this README owns only the shape-level rules below the table.
 | `## Requirements` | `Status: DRAFT \| AGREED <date>` · owner-decision table, `<item>-REQ-n` | `requirement-synthesis` |
 | `## Spec` | `Status: DRAFT \| FROZEN <date>` · EARS table with the check column | `spec-authoring` |
 | `## Plan` | `Status: DRAFT \| GATED <date>` · deltas only | `plan-authoring` |
-| `## Findings` | round log; one `### <Stage> — round N, <date>` per round, stages in pipeline order: **Req-review** (`requirement-synthesis`) · **Gate** (`drift-gate`) · **Impl gate** (`impl-gate`) · **Review** (`implementation`) | this README (round shape) · the stage skill (what it checks) |
+| `## Findings` | round log; one `### <Stage> — round N, <date>` per round, stages in pipeline order: **Req-review** (`requirement-synthesis`) · **Gate** (`drift-gate`) · **Impl gate** (`impl-gate`) · **Adv review** (`impl-gate`, findings of its spawned `adv-reviewer-agent`) · **Review** (`implementation`) | this README (round shape) · the stage skill (what it checks) |
 | `## Delivery` | PR #, merge sha, baseline movement, deviations from the gated plan, live-run evidence, residual IDs | `implementation` |
 
 Shape-level rules, owned here:
