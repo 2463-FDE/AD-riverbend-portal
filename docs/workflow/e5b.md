@@ -582,6 +582,24 @@ Loop signal: r4–r7 four consecutive zero-diff rounds; r7 re-raises r4's dispos
 finding despite the class sitting in the PR body's dispositions-of-record. The loop is
 exhausted — the record, not another round, answers repeats.
 
+### Review — round 8, 2026-08-15
+
+Two findings — the first round since r3 to raise a genuinely new surface, not a verbatim
+re-raise. Round-3 rule remains in effect; both dispositioned E from the record per the
+owner decision at close.
+
+| # | Spec | Finding | Disposition |
+|---|---|---|---|
+| 1 | e5b-SPEC-18/20 | `registration_submissions.submission_id` is stored raw `TEXT` (`models.py:107`) and never pruned; a direct API caller bypassing the portal mint can embed an SSN/MRN in the UUID's 122 free bits, landing PHI at rest in the table and every backup. Recommends a server-keyed digest column with the raw value kept in memory only. This is the storage-surface twin of the r1 PHI-smuggle vector — r1 accepted the premise (label A) and digested the *log* sites (`cf19d96`) but left storage raw. | **E · declined from record → e5b-SPEC-18 (FROZEN) + e5b-D-10 + e5b-D-9; residual filed `docs/debt-log.md` D16** (owner 2026-08-15, round-3 rule). SPEC-18 freezes `submission_id` non-PHI *by construction* and D-10 chose raw storage on it; the construction guarantee is the portal mint, and the service's inability to prove randomness of a direct-API caller is the named limit **e5b-D-9**. The r1 fix was defense-in-depth on the **log/egress** surface (`docs/phi-logging-policy.md` governs logs, not data-at-rest) — it does not overturn SPEC-18 for storage. The real residual — a non-portal caller's identifiers persisting in the unpruned ledger — is filed once as debt-log **D16** (this cell carries the ID only). The proposed fix (keyed digest column) is a §1 PHI-column + migration change → structural → stage 3, unwarranted against the registered residual; reopening frozen SPEC-18 is owner-only, and the owner declined to reopen this session. |
+| 2 | e5b-D-13 / Makefile | Rotating `REGISTRATION_FINGERPRINT_KEY` recomputes every stored `payload_fingerprint` under the new key, so an identical retry of a pre-rotation submission reads as changed content and 409s — defeating the lost-response recovery this PR exists for. Recommends key-versioning / an overlap keyring. | **E · declined: documented accepted residual → `docs/runbook.md:233-239` + PR body §Secrets.** "Rotation invalidates every recorded fingerprint — that is accepted and bounded... there is no key-versioning machinery by design (`e5b`)" is the runbook's own text; the keyring the reviewer proposes is exactly the machinery the record declined by design (e5b-D-13). Not re-litigated; reopening is owner-only. |
+
+Verify: no code change; suite unchanged at **1300 passed, 5 deselected, 1 xfailed**.
+Loop signal: r8 raised one new surface (raw-stored id) of the r1 PHI class and one
+documented rotation residual; both answered from the frozen record, one new debt row
+(D16) filed for the storage twin the r1 log fix did not cover. The reviewer's memoryless
+context re-derives from diff + PR body; the r8 classes are now added to the PR body's
+dispositions-of-record so a repeat is answered from that surface.
+
 ## Delivery
 
 Status: see the header status line — the single delivery axis (stamped `IMPLEMENTED

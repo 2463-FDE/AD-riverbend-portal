@@ -966,6 +966,22 @@ tells the reviewer a class was raised and declined *before*. Once the loop is cy
 registered items, the terminating move is the round-3 rule's — hand to the owner for the
 merge call — not another re-tag, which only buys another repeat.
 
+PR #79 r8 — 2 findings: **0 A / 0 B / 0 C / 2 E**, one new debt row (D16). The first
+round since r3 to raise a genuinely **new surface**, not a verbatim re-raise: F1 pointed
+at the raw-stored `submission_id` — the data-at-rest twin of the r1 PHI-smuggle vector
+that r1 accepted and closed on the *log* surface only. Worth recording because it refines
+the r6/r7 lesson in the other direction: a memoryless reviewer does not only re-raise
+declined items, it can also find the **untouched instance of a class an earlier round
+half-closed** — here a real gap the record answered (frozen SPEC-18 + D-9 named limit)
+but which deserved its own registry entry rather than a bare "answered from record". F2
+was the documented key-rotation residual (runbook), a clean E. Disposition took the r8
+findings to the owner rather than auto-declining, because F1 touched a §1 PHI zone and a
+frozen spec with genuine tension against the r1 disposition — the round-3 rule's "owner's
+call, per finding" applied to a *new* finding, not a repeat. Lesson: distinguish a
+re-raise (answer from record, no new work) from a new surface of a half-closed class
+(answer from record **and** file the missing registry entry, escalate if it touches a §1
+zone) — the two look alike in a zero-diff round but are not the same signal.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
