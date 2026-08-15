@@ -138,19 +138,11 @@ reddens on an unconverted new route, and a structural scan with a positive contr
 - `tests/`, pytest, one marker (`integration`). No shared package, so tests load modules by file
   path via `tests/conftest.py::load_module`. Bare sibling names (`config`) collide across services
   — pin `sys.modules` first.
-- **Baseline, measured 2026-08-10 under `make test-docker`: `969 passed, 1 xfailed, 5 deselected`**
-  (was 940 earlier the same day, 923 on 2026-08-08, and 821 on 2026-08-06; W2 added 100 and closed
-  one deliberate gap on purpose — `docs/landmines.md` §3 records which — then 2 more for the
-  PR #63 codex round-1 regressions; W1 added 11 as a deliberate addition, no gap moved: 4 timeout
-  tests, 6 PHI negative tests over the LLM-path log sites, and 1 parametrize case; then 6 more for
-  the PR #69 codex round-1 request-id retention fix — 4 in `tests/test_llm_client.py`, 1 intake, 1
-  visit-chat; `e4` added 29 as a deliberate addition — 11 gateway registration proxy, 7 intake
-  endpoint, 6 payload contract, 2 compose override guards, 1 budget invariant, 1 consent-enum pin,
-  1 no-longer-swallowed consent failure. The `POST /intake` endpoint gap it closed was **not** one
-  of the deliberate ones: `docs/landmines.md` §3's list is unchanged).
+- **Baseline, measured 2026-08-15 under `make test-docker`: `1300 passed, 5 deselected, 1 xfailed`.**
   The xfail is the HL7 AL1/RXA gap; the deselected 5 are the integration tests. These counts are
   load-bearing — a moved count means a deliberate gap moved, which is a finding to report, not a
-  number to update.
+  number to update. Which additions were deliberate, and what each item added, lives in
+  `docs/workflow/<item>` and git history — not here.
 - `docs/landmines.md` §3 owns the negative-test rule, the characterization-tests-first rule, and
   the list of deliberate coverage gaps that must stay visible. Read it there before adding or
   changing a test on a PHI, authz, or sanitization path.
@@ -168,22 +160,11 @@ SvelteKit rebuild was descoped 2026-08-05). Read them as decisions-as-taken, nev
 
 ## 8. Findings from the 2026-08-06 read
 
-A full read of the repo turned up twelve issues that no landmine, ADR, or debt entry covered. They
-are now filed where the registry contract puts them (`docs/todo.md:8-11` — specs own requirements,
-`debt-log.md` owns risk, `todo.md` owns unscheduled loose ends), so there is nothing to restate
-here. Two of the twelve turned out to be already documented, which is the standing lesson: **check
-the registries before reporting a finding as new.**
-
-- `docs/debt-log.md` — D2 (audit_logs has no writers at all), D5b (slots are never marked taken, a
-  second double-booking path needing no race), D8 (the schema has zero indexes, not one gap), D11
-  (`?q=%25` dumps the corpus with no id-walking), D15 residual (the 5432 publish rests on a working
-  `changeme` default), plus cross-cutting rows for recomputable seed hashes and front-desk SSN
-  access. **The rotation runbook step 1 was missing `BEDROCK_API_KEY`** — a live gap in a
-  human-run, irreversible procedure, now corrected.
-- `docs/landmines.md` §1 — `auth.yaml` is declarative only and enforces nothing; the IDOR bullet's
-  "size the fix against the whole set" now includes the wildcard path.
-- `docs/todo.md` — TODO-50 (`next.config.mjs` inlining), TODO-51 (the seed plants N double-bookings,
-  not one), TODO-52 (the doc-drift sweep).
+A full read of the repo turned up twelve issues that no landmine, ADR, or debt entry covered. All
+twelve are filed where the registry contract puts them (`docs/todo.md:8-11` — specs own
+requirements, `debt-log.md` owns risk, `todo.md` owns unscheduled loose ends); read them there,
+not here. Two of the twelve turned out to be already documented, which is the standing lesson:
+**check the registries before reporting a finding as new.**
 
 ## 9. Conventions
 
