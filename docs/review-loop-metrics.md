@@ -1115,3 +1115,31 @@ append-only contract, and the full-restructure variant stays declined per the r1
 record. Lesson: a reviewer restating a dispositioned style finding converges when the
 third round's variant is concrete enough to accept partially — the round-3 rule turned
 a stalemate into a bounded improvement, at the cost of the owner's time to decide it.
+
+**PR #82 r1 — 2026-08-15.** 1 finding, **1 A / 0 B / 0 C**, fixed on the branch:
+[blocker] the three gate-agent definitions grant `Bash` while the diff and docs claimed
+the agents "structurally cannot edit" — `Bash` can write the tree, so the claim
+overstated the enforcement. Disposition: keep `Bash` (the impl-gate agent's mechanical
+half — `cmd:` cells, the baseline re-run, `git diff` — cannot run without it) and make
+every claim precise: Edit/Write removal is structural, Bash discipline is behavioral,
+now stated in the three agent frontmatters and bodies, both SKILL.md rule-2 notes,
+CLAUDE.md §11, and the workflow README. Lesson: **"read-only by toolset" is only true
+of a toolset with no shell** — a Bash grant downgrades tool enforcement to instruction
+for everything Bash can reach, and the docs must say which half is which.
+
+**PR #82 r2 — 2026-08-15.** 1 finding (r1 B1 carried, partial), **1 A / 0 B / 0 C**,
+fixed on the branch: the r1 fix added the Bash-is-behavioral sentence but left "file
+edits are structurally blocked" standing in the same sections at four sites (both gate
+SKILL.md rule-2 notes, CLAUDE.md §11, the workflow README) — two sentences contradicting
+each other in place. All four now carry one scoped claim: Edit/Write are absent, so the
+agents cannot edit or stamp through those tools; `Bash` can still write the tree, so
+shell read-only behavior is a behavioral rule in each agent's definition, not tool
+enforcement. Lesson: **fixing an overclaim by appending the correction leaves the
+overclaim shipped** — the fix is replacing the false sentence, not adding a true one
+after it.
+
+**PR #82 r3 — 2026-08-15, approve.** 0 findings; loop closed dry in 3 rounds
+(1 A r1, 1 A r2 — the r2 A being the r1 fix's own residue). The PR's one real
+finding class was the enforcement overclaim on the new gate agents' toolset; the
+class closed only when the false sentence was replaced everywhere it appeared,
+not merely contradicted by a true one appended after it.
