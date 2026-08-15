@@ -1,0 +1,22 @@
+{
+  "//": "Shared Claude Code permission allowlist — read-only inspection of tracked state and the documented test/eval gates (CLAUDE.md §3) only. Prefix rules cannot path-scope generic file readers (rg/wc/ls/cat), so those are deliberately NOT allowlisted — a prompt is the guard. Git history readers (git diff/log/show) are excluded for the same reason plus one more: the historical .env blob is recoverable from object history (docs/debt-log.md '.env committed with secrets', OPEN until the remediation runbook runs), and a path deny cannot reach content pulled out of git objects. The deny block keeps .env* and other untracked secret files out of reach even if a future allow entry widens. Nothing here may push, merge, rewrite history, or touch .env* / secret files; entries with side effects beyond running the suite are rejected in review. Machine-local additions belong in .claude/settings.local.json (gitignored).",
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(make test-docker)",
+      "Bash(make eval)",
+      "Bash(make ps)",
+      "Bash(.venv/bin/python -m pytest:*)",
+      "Bash(npm --prefix frontend test:*)"
+    ],
+    "deny": [
+      "Read(./.env*)",
+      "Read(./logs/**)",
+      "Bash(git diff --no-index:*)"
+    ]
+  }
+}

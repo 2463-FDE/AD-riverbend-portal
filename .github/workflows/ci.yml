@@ -128,12 +128,45 @@ jobs:
             detect --source=/repo --config=/repo/.gitleaks.toml \
             --no-git --redact --verbose --exit-code 1
 
+  # Size cap for the one-file workflow artifacts (docs/workflow/*.md, top level
+  # only — the legacy multi-file dirs beneath are out of scope). A workflow file
+  # is a working document, not an archive; past ~400 lines it stops being
+  # readable in one sitting and history keeps the detail anyway.
+  workflow-doc-cap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cap docs/workflow/*.md at 400 lines
+        run: |
+          fail=0
+          for f in docs/workflow/*.md; do
+            lines=$(wc -l < "$f")
+            cap=400
+            case "$(basename "$f")" in
+              # Ratchet exemption list: entries may only shrink or tighten —
+              # never add one, never raise one. e5b.md measured 740 at
+              # introduction (2026-08-15, item already merged); the next touch
+              # of the file must not regrow it, and this entry is deleted when
+              # the file falls under 400 or is archived.
+              e5b.md) cap=750 ;;
+            esac
+            if [ "$lines" -gt "$cap" ]; then
+              echo "::error file=$f::$f is $lines lines (cap $cap)"
+              fail=1
+            else
+              echo "$f: $lines lines (cap $cap) ok"
+            fi
+          done
+          exit $fail
+
   docker-build:
     runs-on: ubuntu-latest
     # Terminal fan-in: branch protection and any deploy automation read this job.
     # frontend-boot is in the list (codex r2) so a boot-broken frontend image
-    # cannot present a green terminal signal.
-    needs: [frontend, frontend-boot, services, tests, secret-scan, eval]
+    # cannot present a green terminal signal. workflow-doc-cap is in the list
+    # for the same reason — an over-cap artifact must not ship a green terminal
+    # signal either.
+    needs: [frontend, frontend-boot, services, tests, secret-scan, eval, workflow-doc-cap]
     steps:
       - uses: actions/checkout@v4
       # .env and .env.ai-proxy are gitignored (untracked secret files). Compose
