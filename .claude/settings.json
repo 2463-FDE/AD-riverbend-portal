@@ -1,5 +1,5 @@
 {
-  "//": "Shared Claude Code permission allowlist — read-only inspection and the documented test/eval gates only (CLAUDE.md §3). Nothing here may push, merge, rewrite history, or touch .env* / secret files; entries with side effects beyond running the suite are rejected in review. Machine-local additions belong in .claude/settings.local.json (gitignored).",
+  "//": "Shared Claude Code permission allowlist — read-only inspection of tracked state and the documented test/eval gates (CLAUDE.md §3) only. Prefix rules cannot path-scope generic file readers (rg/wc/ls/cat), so those are deliberately NOT allowlisted — a prompt is the guard. The deny block keeps .env* and other untracked secret files out of reach even if a future allow entry widens. Nothing here may push, merge, rewrite history, or touch .env* / secret files; entries with side effects beyond running the suite are rejected in review. Machine-local additions belong in .claude/settings.local.json (gitignored).",
   "permissions": {
     "allow": [
       "Bash(git status:*)",
@@ -14,10 +14,12 @@
       "Bash(make eval)",
       "Bash(make ps)",
       "Bash(.venv/bin/python -m pytest:*)",
-      "Bash(cd frontend && npm test:*)",
-      "Bash(wc:*)",
-      "Bash(ls:*)",
-      "Bash(rg:*)"
+      "Bash(npm --prefix frontend test:*)"
+    ],
+    "deny": [
+      "Read(./.env*)",
+      "Read(./logs/**)",
+      "Bash(git diff --no-index:*)"
     ]
   }
 }

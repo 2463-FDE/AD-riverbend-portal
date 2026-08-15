@@ -31,7 +31,7 @@ updates:
     schedule:
       interval: weekly
 
-  # Base-image bumps for every Dockerfile in the estate (7 services + frontend).
+  # Base-image bumps for every Dockerfile in the estate (8 services + frontend).
   - package-ecosystem: docker
     directories:
       - /frontend
