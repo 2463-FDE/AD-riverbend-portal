@@ -9,12 +9,13 @@ updates:
     schedule:
       interval: weekly
 
-  # Root requirements-dev.txt (the test suite) plus every service's runtime
-  # requirements.txt. No shared Python library (ADR 0001), so each service dir
-  # is its own ecosystem root.
+  # Root requirements-dev.txt (the test suite), every service's runtime
+  # requirements.txt, and the RIV-160 eval harness pins (eval/rag). No shared
+  # Python library (ADR 0001), so each dir is its own ecosystem root.
   - package-ecosystem: pip
     directories:
       - /
+      - /eval/rag
       - /services/gateway
       - /services/intake-service
       - /services/eligibility-service
