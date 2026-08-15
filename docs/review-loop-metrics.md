@@ -1137,3 +1137,9 @@ shell read-only behavior is a behavioral rule in each agent's definition, not to
 enforcement. Lesson: **fixing an overclaim by appending the correction leaves the
 overclaim shipped** — the fix is replacing the false sentence, not adding a true one
 after it.
+
+**PR #82 r3 — 2026-08-15, approve.** 0 findings; loop closed dry in 3 rounds
+(1 A r1, 1 A r2 — the r2 A being the r1 fix's own residue). The PR's one real
+finding class was the enforcement overclaim on the new gate agents' toolset; the
+class closed only when the false sentence was replaced everywhere it appeared,
+not merely contradicted by a true one appended after it.
