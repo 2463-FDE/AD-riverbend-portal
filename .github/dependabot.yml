@@ -1,0 +1,47 @@
+# Dependency update automation. Bumps arrive as ordinary PRs and go through the
+# normal review loop — a human dispositions every one; no auto-merge anywhere.
+# Weekly cadence and default open-PR limits on purpose: this repo's review
+# bandwidth is the constraint, not update latency.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+
+  # Root requirements-dev.txt (the test suite) plus every service's runtime
+  # requirements.txt. No shared Python library (ADR 0001), so each service dir
+  # is its own ecosystem root.
+  - package-ecosystem: pip
+    directories:
+      - /
+      - /services/gateway
+      - /services/intake-service
+      - /services/eligibility-service
+      - /services/records-service
+      - /services/scheduling-service
+      - /services/interop-service
+      - /services/roi-service
+      - /services/ai-assistant
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Base-image bumps for every Dockerfile in the estate (7 services + frontend).
+  - package-ecosystem: docker
+    directories:
+      - /frontend
+      - /services/gateway
+      - /services/intake-service
+      - /services/eligibility-service
+      - /services/records-service
+      - /services/scheduling-service
+      - /services/interop-service
+      - /services/roi-service
+      - /services/ai-assistant
+    schedule:
+      interval: weekly

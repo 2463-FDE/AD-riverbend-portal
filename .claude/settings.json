@@ -1,0 +1,23 @@
+{
+  "//": "Shared Claude Code permission allowlist — read-only inspection and the documented test/eval gates only (CLAUDE.md §3). Nothing here may push, merge, rewrite history, or touch .env* / secret files; entries with side effects beyond running the suite are rejected in review. Machine-local additions belong in .claude/settings.local.json (gitignored).",
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(make test-docker)",
+      "Bash(make eval)",
+      "Bash(make ps)",
+      "Bash(.venv/bin/python -m pytest:*)",
+      "Bash(cd frontend && npm test:*)",
+      "Bash(wc:*)",
+      "Bash(ls:*)",
+      "Bash(rg:*)"
+    ]
+  }
+}
