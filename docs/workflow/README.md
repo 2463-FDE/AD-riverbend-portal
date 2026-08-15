@@ -47,7 +47,8 @@ requirement synthesis → spec (EARS) → code plan
   impl gate checks the finished branch against plan and spec pre-push and stamps the
   delivery `Status:` `IMPLEMENTED` — the plan stamp is untouched (push stays
   human-gated). Since 2026-08-15 both gate skills delegate the adversarial read to
-  read-only agents in `.claude/agents/` — `drift-gate-agent`, `impl-gate-agent`, and
+  spawned agents in `.claude/agents/` that carry no Edit/Write tools (Bash retained for
+  read-only checks) — `drift-gate-agent`, `impl-gate-agent`, and
   `adv-reviewer-agent` (a spec-and-diff-only reviewer the impl gate spawns in parallel;
   its findings land as their own **Adv review** rounds) — while the skills stay the
   stage owners: ceremony, rounds, and stamps. The fresh-session rule above is

@@ -28,13 +28,14 @@ context is the mechanism, not a nicety.
    (`.claude/skills/plan-authoring/`), and the revised plan gets a full fresh gate run
    against its final text. No stamping a plan amended mid-gate — analyze-and-amend in one
    motion leaves the final text never checked as a whole (the e1 lesson). The adversarial
-   read itself is tool-enforced beyond this sentence: the spawned agent (below) carries
-   no Edit/Write, so it structurally cannot edit; the sentence stays as intent for what
-   this session writes.
+   read itself gets partial tool enforcement beyond this sentence: the spawned agent
+   (below) carries no Edit/Write, so file edits are structurally blocked; its Bash is
+   limited to read-only checks by its own definition — instruction, not enforcement. The
+   sentence stays as intent for what this session writes.
 
 ## Process
 
-The adversarial read runs in a spawned read-only agent —
+The adversarial read runs in a spawned agent with no Edit/Write tools —
 `.claude/agents/drift-gate-agent.md` owns the check procedure (mechanical and judgment
 halves), one place. This skill owns the ceremony: input-state check, spawn, rounds,
 stamp.

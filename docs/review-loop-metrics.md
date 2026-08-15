@@ -1115,3 +1115,14 @@ append-only contract, and the full-restructure variant stays declined per the r1
 record. Lesson: a reviewer restating a dispositioned style finding converges when the
 third round's variant is concrete enough to accept partially — the round-3 rule turned
 a stalemate into a bounded improvement, at the cost of the owner's time to decide it.
+
+**PR #82 r1 — 2026-08-15.** 1 finding, **1 A / 0 B / 0 C**, fixed on the branch:
+[blocker] the three gate-agent definitions grant `Bash` while the diff and docs claimed
+the agents "structurally cannot edit" — `Bash` can write the tree, so the claim
+overstated the enforcement. Disposition: keep `Bash` (the impl-gate agent's mechanical
+half — `cmd:` cells, the baseline re-run, `git diff` — cannot run without it) and make
+every claim precise: Edit/Write removal is structural, Bash discipline is behavioral,
+now stated in the three agent frontmatters and bodies, both SKILL.md rule-2 notes,
+CLAUDE.md §11, and the workflow README. Lesson: **"read-only by toolset" is only true
+of a toolset with no shell** — a Bash grant downgrades tool enforcement to instruction
+for everything Bash can reach, and the docs must say which half is which.

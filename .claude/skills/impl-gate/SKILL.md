@@ -28,14 +28,15 @@ own drift (same lesson as `.claude/skills/drift-gate/`).
    `## Findings`, and — on a clean run — the delivery-axis header stamp plus its short
    gate record appended to `## Delivery`, which is this gate's only Delivery write. Fixes
    happen in stage 4; the fixed branch gets a full fresh gate run. The adversarial read
-   itself is tool-enforced beyond this sentence: the spawned agents (below) carry no
-   Edit/Write, so they structurally cannot edit; the sentence stays as intent for what
-   this session writes.
+   itself gets partial tool enforcement beyond this sentence: the spawned agents (below)
+   carry no Edit/Write, so file edits are structurally blocked; their Bash is limited to
+   read-only checks by their own definitions — instruction, not enforcement. The sentence
+   stays as intent for what this session writes.
 
 ## Process
 
-The adversarial read runs in spawned read-only agents; the check procedures live in the
-agent definitions, one place each. This skill owns the ceremony: input-state check,
+The adversarial read runs in spawned agents with no Edit/Write tools; the check
+procedures live in the agent definitions, one place each. This skill owns the ceremony: input-state check,
 spawns, `gate:` observations, rounds, stamp.
 
 1. **Verify input state:** `## Spec` `FROZEN`, `## Plan` `GATED`, the branch complete,
