@@ -1,6 +1,6 @@
 # e5b — registration idempotency, restarted
 
-Status: plan GATED 2026-08-13 · delivery PUSHED PR #79 2026-08-14 (spec FROZEN 2026-08-13)
+Status: plan GATED 2026-08-13 · delivery MERGED 135c18e 2026-08-15 (spec FROZEN 2026-08-13)
 Item: successor of e5 chunk 2 (PR #76, closed unmerged 2026-08-13) — make `POST /intake`
 safe to retry, restarted from requirements under the one-file pipeline
 Baseline at branch: 1247 passed, 1 xfailed, 5 deselected (`.venv` py3.12, `-m "not integration"`, 2026-08-13 at branch cut; `CLAUDE.md` §6's 969 confirmed stale per the e5 close record)
