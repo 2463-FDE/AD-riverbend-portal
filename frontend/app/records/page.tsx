@@ -8,10 +8,12 @@ import { apiFetch } from "../lib/session";
 import type {
   EncounterBlock,
   RecordItem,
+  RecordSearchHit,
   RelevantRecordItem,
   RelevantRecordsResponse,
 } from "../lib/types";
 import { fmtDate } from "../lib/format";
+import { isRecordSearch } from "./search";
 
 // Fixed, client-authored, non-PHI. Shown when the helper cannot be reached OR
 // answers something that is not its contract. It deliberately says BOTH things:
@@ -43,6 +45,21 @@ const REASON_LABEL: Record<RelevantRecordItem["reason"], string> = {
   medication: "Medication recorded",
   recent: "Recent",
 };
+
+// The withheld-results signal (e6-SPEC-6). The search response is bounded, and a
+// silent cap on a clinical search makes "no more matches" indistinguishable from
+// "matches withheld" (e6-D-4) — this banner is what makes a truncated response
+// distinguishable from an exhausted one to the person reading it.
+const SEARCH_TRUNCATED =
+  "More records matched than are shown here — these are the first matches only, " +
+  "not the complete set. Narrow the search to see the rest.";
+
+// Fixed, client-authored, non-PHI. Failed search is ONE state, distinct from an
+// empty result (the e5 idiom): a failed search must never read as "no records
+// matched", which is the fail-open version of the exact confusion above.
+const SEARCH_UNAVAILABLE =
+  "Search could not be completed. This is not a statement that no records matched — retry.";
+
 
 function isRelevantRecords(d: unknown): d is RelevantRecordsResponse {
   if (!d || typeof d !== "object") return false;
@@ -76,6 +93,41 @@ export default function RecordsPage() {
   const [relevant, setRelevant] = useState<RelevantRecordsResponse | null>(null);
   const [relevantFailed, setRelevantFailed] = useState(false);
   const [chartFailed, setChartFailed] = useState(false);
+
+  // Free-text records search — bounded and metacharacter-safe at the service
+  // (e6-SPEC-1/2/5); this surface renders the withheld signal (e6-SPEC-6).
+  const [term, setTerm] = useState("");
+  const [hits, setHits] = useState<RecordSearchHit[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
+  const [searchBusy, setSearchBusy] = useState(false);
+
+  async function runSearch() {
+    const query = term.trim();
+    if (!query) return;
+    setSearchBusy(true);
+    setHits(null);
+    setTruncated(false);
+    setSearchFailed(false);
+    try {
+      const res = await apiFetch(`/api/records/search?q=${encodeURIComponent(query)}`);
+      if (!res.ok) {
+        setSearchFailed(true);
+        return;
+      }
+      const json: unknown = await res.json();
+      if (!isRecordSearch(json)) {
+        setSearchFailed(true);
+        return;
+      }
+      setHits(json.hits);
+      setTruncated(json.truncated);
+    } catch {
+      setSearchFailed(true); // never setHits([]) — a failed search is not an empty one
+    } finally {
+      setSearchBusy(false);
+    }
+  }
 
   async function load() {
     setBusy(true);
@@ -164,6 +216,68 @@ export default function RecordsPage() {
           <span className="rb-field__hint">Demo patient ID defaults to 1042.</span>
         </div>
       </Card>
+
+      <Card>
+        <div className="rb-field" style={{ maxWidth: 480, marginBottom: 0 }}>
+          <label className="rb-field__label" htmlFor="rec-search">
+            Search records
+          </label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              id="rec-search"
+              className="rb-input"
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && runSearch()}
+              placeholder="Free-text search across record text"
+            />
+            <button
+              className="rb-btn rb-btn--primary"
+              onClick={runSearch}
+              disabled={searchBusy}
+              type="button"
+            >
+              {searchBusy ? "Searching…" : <><IconSearch width={16} height={16} /> Find records</>}
+            </button>
+          </div>
+          <span className="rb-field__hint">Results are capped; a withheld-results notice shows when there are more.</span>
+        </div>
+      </Card>
+
+      {searchFailed && (
+        <div className="rb-alert rb-alert--err" role="status">
+          {SEARCH_UNAVAILABLE}
+        </div>
+      )}
+
+      {truncated && (
+        <div className="rb-alert rb-alert--warn" role="status">
+          {SEARCH_TRUNCATED}
+        </div>
+      )}
+
+      {hits && hits.length > 0 && (
+        <Card title="Search results" icon={<IconSearch />}>
+          <div className="rb-list">
+            {hits.map((h) => (
+              <div key={h.id} className="rb-listrow" style={{ display: "block" }}>
+                <div className="rb-listrow__title">{h.title || h.kind || "Record"}</div>
+                <div className="rb-listrow__meta">
+                  {h.kind && <span>{h.kind}</span>}
+                  <span>Patient {h.patient_id}</span>
+                </div>
+                {h.body && <div>{h.body}</div>}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {hits && hits.length === 0 && !truncated && (
+        <div className="rb-alert rb-alert--info" role="status">
+          No records matched your search.
+        </div>
+      )}
 
       {status && (
         <div className="rb-alert rb-alert--info" role="status">

@@ -145,6 +145,25 @@ export interface RelevantRecordsResponse {
   items: RelevantRecordItem[];
 }
 
+// One hit from the bounded free-text records search
+// (services/records-service/schemas.py RecordSearchHit / RecordSearch). The
+// response is bounded: `truncated` is the withheld-results signal, so the portal
+// can tell a capped result set apart from an exhausted one (e6-SPEC-5/6). Shape
+// declared in contracts/records-search.json, asserted consumer-side by
+// frontend/app/records/search.contract.test.ts.
+export interface RecordSearchHit {
+  id: number;
+  patient_id: number;
+  kind?: string | null;
+  title?: string | null;
+  body?: string | null;
+}
+
+export interface RecordSearchResponse {
+  hits: RecordSearchHit[];
+  truncated: boolean;
+}
+
 export interface RoiRequest {
   id: number;
   patient_id: number;
