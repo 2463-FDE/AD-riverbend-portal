@@ -73,13 +73,15 @@ The round-3 escalation rule lives in `.claude/skills/drift-gate/`.
   have.
 - **Falsified-claims sweep:** for every behavior the plan changes, grep the claim
   registries for statements the diff will falsify: `docs/landmines.md`,
-  `docs/debt-log.md`, the `docs/phi-logging-policy.md` register, `CLAUDE.md`,
-  `ARCHITECTURE.md` §7, `docs/runbook.md`, and in-code debt markers on or near the
-  edited lines. Search by file path, route, and behavior name — stale line cites count.
-  Every hit gets a change row scoped to the falsified clause (surviving claims stay
-  verbatim, per the fix-wrong-claims rule in the `CLAUDE.md` preamble) or an explicit
-  out-of-scope entry. `README.md` stays human-gated (TODO-12) and is exempt. This check
-  exists because e6 gate rounds 2–4 each found one missed registry of this class.
+  `docs/debt-log.md`, the `docs/phi-logging-policy.md` register, `docs/todo.md`,
+  `CLAUDE.md`, `ARCHITECTURE.md` §7, `docs/runbook.md`, and in-code debt markers on or
+  near the edited lines. Search by file path, route, and behavior name — stale line
+  cites count. Every hit gets a change row scoped to the falsified clause (surviving
+  claims stay verbatim, per the fix-wrong-claims rule in the `CLAUDE.md` preamble) or an
+  explicit out-of-scope entry. The one exemption is `README.md` itself — its false
+  claims are human-gated (TODO-12); the TODO-12 row in `docs/todo.md` is swept like any
+  other. This check exists because e6 gate rounds 2–4 each found one missed registry of
+  this class.
 
 ## Template (the section)
 
