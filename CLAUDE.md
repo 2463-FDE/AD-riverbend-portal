@@ -52,7 +52,7 @@ services/
 config/roles.yaml   declared RBAC policy; enforced twin is gateway/authz.py (test-pinned equal)
 contracts/          cross-boundary payload declarations, asserted from BOTH suites
 db/schema.sql       flattened schema — the ONLY thing that runs on a fresh Postgres volume
-db/migrations/      ordered SQL files with no runner (see §8) — hand-synced to schema.sql
+db/migrations/      ordered SQL files applied by db/migrate.py (`make migrate`, e6) — hand-synced to schema.sql
 db/seed/generate_seed.py  deterministic generator → seed.sql
 adr/0001..0017      _template.md owns the required sections
 docs/               landmines.md · debt-log.md · phi-logging-policy.md · runbook.md ·
@@ -138,8 +138,10 @@ reddens on an unconverted new route, and a structural scan with a positive contr
 - `tests/`, pytest, one marker (`integration`). No shared package, so tests load modules by file
   path via `tests/conftest.py::load_module`. Bare sibling names (`config`) collide across services
   — pin `sys.modules` first.
-- **Baseline, measured 2026-08-15 under `make test-docker`: `1300 passed, 5 deselected, 1 xfailed`.**
-  The xfail is the HL7 AL1/RXA gap; the deselected 5 are the integration tests. These counts are
+- **Baseline, measured 2026-08-16 under `make test-docker`: `1316 passed, 18 deselected, 1 xfailed`.**
+  The xfail is the HL7 AL1/RXA gap; the deselected 18 are the integration tests (`tests/integration/`),
+  which need a live Postgres and run in CI's `migrations` job / `make test-migrations`, not the
+  default run — e6 added 13 of them with the migration runner. These counts are
   load-bearing — a moved count means a deliberate gap moved, which is a finding to report, not a
   number to update. Which additions were deliberate, and what each item added, lives in
   `docs/workflow/<item>` and git history — not here.

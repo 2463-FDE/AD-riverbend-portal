@@ -38,12 +38,15 @@ Sourced from `ARCHITECTURE.md` §7 and the handoff docs.
   patients. Since ADR 0017 each requires its role capability (`records.search`,
   `disclosures.read`), but **a capability is not a patient bind** — these reads are cross-patient
   by construction — so the D11 fix must be sized against this whole set, not against
-  `/patients/{id}/records` alone. **And the set includes a path that needs no ids at all**
-  (measured 2026-08-06): `q` reaches the search pattern un-escaped
-  (`services/records-service/app.py:48,159`), so `GET /records/search?q=%25` is a bare `%`
-  wildcard that matches every row and returns full `Record.body` for all of them, unbounded by any
-  `LIMIT`. Sizing the fix against "sequential ids are walkable" alone under-scopes it by the whole
-  corpus. Detail and candidate fixes in `docs/debt-log.md` D11.
+  `/patients/{id}/records` alone. **And the set included a path that needed no ids at all**
+  (measured 2026-08-06; the metacharacter-and-bound vector **closed by e6 2026-08-16**): `q`
+  reached the search pattern un-escaped (`services/records-service/app.py:339`, and the
+  patient-name filter at `:51-53`), so `GET /records/search?q=%25` was a bare `%`
+  wildcard that matched every row and returned full `Record.body` for all of them, unbounded by any
+  `LIMIT`. e6 escapes the LIKE metacharacters at both sites and bounds the result set
+  (e6-SPEC-1/2/5), closing that vector; the IDOR itself is not closed — these reads are still
+  cross-patient by construction and sessions are still not patient-bound, so the D11 fix is still
+  sized against this whole set. Detail and candidate fixes in `docs/debt-log.md` D11.
 - ⚠️ **Domain services are network-internal** (D15, ADR 0016) — no domain service has auth of its
   own; the gateway is the only session check, so 8071–8076 are `expose`-only and host publishing
   is a closed allowlist in `tests/test_compose_topology.py`. Do not add `ports:` to a service (or
@@ -72,9 +75,11 @@ Sourced from `ARCHITECTURE.md` §7 and the handoff docs.
   job runs `--no-git`, so it guards against *recurrence* in the tracked tree and does not scan
   history; there is still no dependency or image vulnerability scan. Do not add more secrets, and
   flag before rotating.
-- ⚠️ **Schema and migrations are hand-synced** — there is no migration runner, and on a fresh
-  volume only `db/schema.sql` runs. A mismatch breaks fresh-volume boots against existing
-  databases.
+- ⚠️ **Schema and migrations are hand-synced** — `db/schema.sql` and `db/migrations/*.sql` are
+  kept in sync by hand; since e6 a runner (`db/migrate.py`, `make migrate`) applies the migration
+  files to an existing volume, and on a fresh volume only `db/schema.sql` runs. A mismatch breaks
+  fresh-volume boots against existing databases; `tests/integration/test_schema_upgrade_path.py`
+  pins the hand-sync structurally (e6-SPEC-14).
 - ⚠️ **Intake registration — fixed 2026-08-10 (`e4`), and the guards are load-bearing.** It used
   to 422 at intake-service, relay as HTTP 200, and print success with no patient row created
   (inherited from handoff commit `3663c4b`). Two of the pieces that fixed it are things you must
