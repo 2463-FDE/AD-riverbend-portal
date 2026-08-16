@@ -114,3 +114,17 @@ class RecordSearchHit(BaseModel):
     kind: str | None = None
     title: str | None = None
     body: str | None = None
+
+
+class RecordSearch(BaseModel):
+    """Bounded free-text search response (e6-SPEC-5).
+
+    ``truncated`` is the whole point of the wrapper: a capped result set must be
+    distinguishable from an exhausted one, so a caller can tell "no more matches"
+    from "matches withheld" — a silent cap on a clinical search is a
+    patient-safety failure mode of its own (e6-D-4). Shape declared in
+    contracts/records-search.json and asserted from both suites.
+    """
+
+    hits: list[RecordSearchHit]
+    truncated: bool

@@ -17,6 +17,12 @@ class Settings:
     relevant_records_max_items = int(os.getenv("RELEVANT_RECORDS_MAX_ITEMS", "10"))
     relevant_records_max_scan = int(os.getenv("RELEVANT_RECORDS_MAX_SCAN", "500"))
 
+    # Serve-side cap on the free-text records search. The route over-fetches by
+    # one to tell a capped result set apart from an exhausted one (e6-SPEC-5);
+    # without this bound a single call could pull the whole record corpus
+    # (E6-REQ-1). Env-driven like the relevant-records bounds above.
+    records_search_max_hits = int(os.getenv("RECORDS_SEARCH_MAX_HITS", "50"))
+
     db_host = os.getenv("DB_HOST", "postgres")
     db_port = os.getenv("DB_PORT", "5432")
     db_name = os.getenv("DB_NAME", "riverbend")
