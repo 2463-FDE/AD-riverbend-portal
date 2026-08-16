@@ -159,14 +159,52 @@ jobs:
           done
           exit $fail
 
+  # Migration-runner integration tests (e6, E6-REQ-9). The `tests` job deselects
+  # @pytest.mark.integration and has no database, so without this job every
+  # migrations-zone `test:` pin (e6-SPEC-9..14, 17) would be advisory. A
+  # postgres:15 service container gives the runner a live server; riverbend_app
+  # is that image's superuser, so the baseline scratch-build's CREATE DATABASE
+  # needs no extra grant. Disjoint from `tests` (integration marker), so no test
+  # runs twice.
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: riverbend_migrations_ci
+          POSTGRES_USER: riverbend_app
+          POSTGRES_PASSWORD: testpw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U riverbend_app -d riverbend_migrations_ci"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test deps
+        run: pip install -r requirements-dev.txt
+      - name: Run migration-runner integration tests
+        env:
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_USER: riverbend_app
+          DB_PASSWORD: testpw
+          DB_NAME: riverbend_migrations_ci
+        run: pytest -m integration tests/integration/test_migration_runner.py tests/integration/test_schema_upgrade_path.py -q
+
   docker-build:
     runs-on: ubuntu-latest
     # Terminal fan-in: branch protection and any deploy automation read this job.
     # frontend-boot is in the list (codex r2) so a boot-broken frontend image
     # cannot present a green terminal signal. workflow-doc-cap is in the list
     # for the same reason — an over-cap artifact must not ship a green terminal
-    # signal either.
-    needs: [frontend, frontend-boot, services, tests, secret-scan, eval, workflow-doc-cap]
+    # signal either. migrations is in the list (e6) so a red migration-runner
+    # job blocks merge rather than being advisory.
+    needs: [frontend, frontend-boot, services, tests, secret-scan, eval, workflow-doc-cap, migrations]
     steps:
       - uses: actions/checkout@v4
       # .env and .env.ai-proxy are gitignored (untracked secret files). Compose
