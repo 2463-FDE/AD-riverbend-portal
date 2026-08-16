@@ -1143,3 +1143,13 @@ after it.
 finding class was the enforcement overclaim on the new gate agents' toolset; the
 class closed only when the false sentence was replaced everywhere it appeared,
 not merely contradicted by a true one appended after it.
+
+**PR #83 r1 — 2026-08-16.** 2 findings, **2 A / 0 B / 0 C**, both fixed on the branch:
+B1 — the class-sweep change edited both skills but not the executor:
+`drift-gate-agent.md` step 7 still ran "the three checks," so the new sweep would never
+run at the gate; fixed by pointing the agent at the four checks, mechanics cited from
+plan-authoring. M1 — the sweep's registry list omitted `docs/todo.md` while citing
+TODO-12 in the same paragraph; list extended, exemption scoped to `README.md` itself
+with the TODO-12 row swept like any other. Lesson: a procedure delegated to an agent
+definition changes only when the agent file changes — editing the skill that spawns it
+left the exact half-closed class this PR exists to prevent.

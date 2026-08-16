@@ -43,7 +43,7 @@ the PR body's "Risk & landmines" section is drafted from it.
    fails at the gate or, worse, at implementation.
 3. **Fill the spec's planned test names** where planning sharpens them; the check column
    is the test list — the plan does not restate it.
-4. **Run the three checks** (below), then show the owner; the plan goes to the gate.
+4. **Run the four checks** (below), then show the owner; the plan goes to the gate.
 
 ## Optional input: spec-anchored mockup
 
@@ -56,10 +56,13 @@ it stays scratch (untracked); what it teaches lands as `plan`-tagged decisions.
 Findings arrive as the latest `### Gate — round N` in `## Findings` — the round log is
 the handoff, not chat history. Address every finding, fill its disposition cell citing
 the decision register where a decision resolves it (never re-argue in the cell), re-run
-the three checks, and leave the plan at `Status: DRAFT` for a full fresh-session re-gate.
+the four checks, and leave the plan at `Status: DRAFT` for a full fresh-session re-gate.
+When a finding repeats a class an earlier round already dispositioned, close the class,
+not the instance: run the sweep for further sites of the same class and record its scope
+in the disposition cell (the drift-gate skill holds the matching round rule).
 The round-3 escalation rule lives in `.claude/skills/drift-gate/`.
 
-## Three checks (lessons of e1)
+## Four checks (lessons of e1 and e6)
 
 - **Self-consistency:** the plan's own new artifacts must pass the plan's own new gates.
   Walk every proposed check over every file the plan adds.
@@ -68,6 +71,17 @@ The round-3 escalation rule lives in `.claude/skills/drift-gate/`.
 - **Residual honesty:** where a change satisfies a SPEC only partially, the residual is
   named in the Landmines block — never let a change row imply full coverage it doesn't
   have.
+- **Falsified-claims sweep:** for every behavior the plan changes, grep the claim
+  registries for statements the diff will falsify: `docs/landmines.md`,
+  `docs/debt-log.md`, the `docs/phi-logging-policy.md` register, `docs/todo.md`,
+  `CLAUDE.md`, `ARCHITECTURE.md` §7, `docs/runbook.md`, and in-code debt markers on or
+  near the edited lines. Search by file path, route, and behavior name — stale line
+  cites count. Every hit gets a change row scoped to the falsified clause (surviving
+  claims stay verbatim, per the fix-wrong-claims rule in the `CLAUDE.md` preamble) or an
+  explicit out-of-scope entry. The one exemption is `README.md` itself — its false
+  claims are human-gated (TODO-12); the TODO-12 row in `docs/todo.md` is swept like any
+  other. This check exists because e6 gate rounds 2–4 each found one missed registry of
+  this class.
 
 ## Template (the section)
 

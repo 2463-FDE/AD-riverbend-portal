@@ -43,9 +43,10 @@ state-changing command is a finding, not a fix.
    (or by an existing behavior the plan names); every change traces to a SPEC
    id, a decision ID, or named registry upkeep. Unmapped either way is a
    finding.
-7. **Run the three checks** from `.claude/skills/plan-authoring/`
-   (self-consistency, gate interaction, residual honesty) against the final
-   text, cold.
+7. **Run the four checks** from `.claude/skills/plan-authoring/`
+   (self-consistency, gate interaction, residual honesty, falsified-claims
+   sweep) against the final text, cold — that skill owns each check's
+   mechanics, including the sweep's registry list.
 8. **Per-SPEC verdict**, every id: **satisfied** / **residual-named**
    (partial, residual written in the Landmines block) / **FINDING**. A
    partial whose residual is not written down is a finding, not a residual.

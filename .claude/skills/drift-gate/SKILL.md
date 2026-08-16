@@ -57,6 +57,13 @@ stamp.
   (README owns the round format), findings SPEC-cited, one line each, disposition column
   empty for stage 3. Plan returns to stage 3; spec unchanged. Re-gate is a full re-run,
   fresh session.
+- **Repeat of a dispositioned class → the class goes back, not the instance.** When a
+  finding is the same failure class as one dispositioned in an earlier round, the round
+  entry names the match, and stage 3 must close the class: the disposition cell records
+  that a sweep for further instances ran and what scope it covered, not just the cited
+  site's fix (sweep mechanics live in `.claude/skills/plan-authoring/`). A disposition
+  that fixes only the instance leaves the class open for the next round to hunt one site
+  at a time — the e6 rounds-2–4 lesson.
 - **Clean → stamp.** Set the Plan section to `Status: GATED <date>`, advance the header
   `Status:` line, and close with a dry round: one `checked:` line naming the scope
   covered (ids checked, map state, ⚠ coverage) — a dry round's value is knowing what it
