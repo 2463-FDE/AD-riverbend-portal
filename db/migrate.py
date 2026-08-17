@@ -54,6 +54,11 @@ class BaselineMismatchError(RuntimeError):
     """The live schema does not match the full migration set — refuse to stamp."""
 
 
+class MigrationFailedError(RuntimeError):
+    """A migration file raised — carries the filename and the exception class
+    name only, never the driver message (class-name-only idiom, CLAUDE.md §4)."""
+
+
 def conn_params(dbname=None):
     """Connection parameters from the environment, defaults matching the compose
     topology (same env contract as book.py / config.py)."""
@@ -138,12 +143,22 @@ def apply(conn, migrations_dir=None, out=print):
             sql = f.read()
         # One transaction per file: on failure `with conn` rolls the whole file
         # back — nothing recorded, no partial DDL left behind (e6-SPEC-11).
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(sql)
-                cur.execute(
-                    f"INSERT INTO {LEDGER_TABLE}(filename) VALUES (%s)", (fn,)
-                )
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql)
+                    cur.execute(
+                        f"INSERT INTO {LEDGER_TABLE}(filename) VALUES (%s)", (fn,)
+                    )
+        except Exception as e:
+            # Filename + exception class only, never the driver message: a DDL
+            # failure against live tables makes Postgres echo offending row
+            # values (`Key (ssn)=(...) already exists`) — PHI in operator
+            # stderr. The filename is the diagnostic anchor; the row is read
+            # with psql by someone who is allowed to see it.
+            raise MigrationFailedError(
+                f"migration failed at {fn} ({type(e).__name__})"
+            ) from e
         out(f"applied {fn}")
         applied_now.append(fn)
     return applied_now
@@ -283,11 +298,12 @@ def main(argv=None):
             baseline(conn)
         else:
             apply(conn)
-    except (LedgerlessDatabaseError, BaselineMismatchError) as e:
+    except (LedgerlessDatabaseError, BaselineMismatchError, MigrationFailedError) as e:
+        # These three carry runner-authored text only — no driver message.
         print(str(e), file=sys.stderr)
         return 1
-    except Exception as e:  # a failing migration file, a dead connection, etc.
-        print(f"migration failed ({type(e).__name__}): {e}", file=sys.stderr)
+    except Exception as e:  # a dead connection, an unreadable file, etc.
+        print(f"migration failed ({type(e).__name__})", file=sys.stderr)
         return 1
     finally:
         conn.close()

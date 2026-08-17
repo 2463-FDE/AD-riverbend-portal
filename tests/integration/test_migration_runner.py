@@ -109,6 +109,35 @@ def test_main_exits_nonzero_when_a_migration_fails(db, tmp_path, monkeypatch):
     assert migrate.main(["apply"]) == 1
 
 
+def test_a_failure_message_names_the_file_and_omits_driver_text(
+    db, tmp_path, monkeypatch, capsys
+):
+    """Negative test (docs/landmines.md §3): the driver message for a DDL
+    failure against live rows echoes the offending value — Postgres reports
+    `Key (v)=(123-45-6789) is duplicated`. Operator stderr gets the filename
+    and the exception class name and nothing else (impl gate r1 f4)."""
+    (tmp_path / "001_rows.sql").write_text(
+        "CREATE TABLE leak_probe (v TEXT);\n"
+        "INSERT INTO leak_probe VALUES ('123-45-6789'), ('123-45-6789');"
+    )
+    (tmp_path / "002_unique.sql").write_text(
+        "ALTER TABLE leak_probe ADD CONSTRAINT leak_probe_v_key UNIQUE (v);"
+    )
+    name = db.info.dbname
+    orig_connect = migrate.connect
+    monkeypatch.setattr(migrate, "MIGRATIONS_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        migrate, "connect",
+        lambda dbname=None: orig_connect(dbname=name if dbname is None else dbname),
+    )
+    assert migrate.main(["apply"]) == 1
+
+    err = capsys.readouterr().err
+    assert "002_unique.sql" in err                  # the diagnostic anchor
+    assert "UniqueViolation" in err                 # class name only
+    assert "123-45-6789" not in err                 # the row value never leaves psql
+
+
 # ------------------------------------------------------ ledgerless refuse (D-14)
 
 def test_a_ledgerless_nonempty_volume_is_refused(db):
