@@ -191,6 +191,29 @@ def test_records_for_encounters_dedupes(store):
     assert [r.id for r in repeated] == [r.id for r in once]
 
 
+# --- unmodelled provider (impl-gate r3 finding 2; no Spec row) --------------
+
+
+def test_assemble_unmodelled_provider_raises_typed_error():
+    """An encounter whose provider the corpus does not model is a corpus
+    defect, and assembly says so — it does not KeyError out of the middle of
+    the merge. The accessor drops ids it cannot resolve (it always has), so
+    the merge is where the gap becomes visible and where it gets named."""
+    corpus = kg_corpus.build_corpus()
+    pid = kg_corpus.FIXTURE_PATIENT_ID
+    expected = {e.provider_id for e in corpus.encounters if e.patient_id == pid}
+    assert expected, "fixture patient has no encounters"
+
+    store = kg_assemble.GraphStore(dataclasses.replace(corpus, providers=()))
+
+    with pytest.raises(kg_assemble.IncompleteCorpus) as excinfo:
+        kg_assemble.assemble_patient_view(
+            store, kg_assemble.Principal.for_patient(pid), pid
+        )
+
+    assert excinfo.value.provider_id in expected
+
+
 # --- bounded-retrieval-count (w4-SPEC-15) ----------------------------------
 
 EXPECTED_RETRIEVALS = 3  # encounters-for-patient · records-for-encounters · providers-by-id

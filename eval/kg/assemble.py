@@ -41,6 +41,20 @@ class NotAuthorized(Exception):
         self.patient_id = patient_id
 
 
+class IncompleteCorpus(Exception):
+    """An encounter points at a provider the sample does not model.
+
+    The provider accessor drops ids it cannot resolve, so the gap surfaces at
+    the merge. Naming it here keeps the two halves consistent: a defective
+    corpus fails with the id that is missing, rather than a bare ``KeyError``
+    raised from the middle of assembly.
+    """
+
+    def __init__(self, provider_id: int):
+        super().__init__(f"corpus models no provider {provider_id}")
+        self.provider_id = provider_id
+
+
 @dataclass(frozen=True)
 class Principal:
     """The seeded caller→patient binding the boundary decides against.
@@ -163,9 +177,16 @@ def assemble_patient_view(
     assembled = tuple(
         AssembledEncounter(
             encounter=enc,
-            provider=providers[enc.provider_id],
+            provider=_resolve_provider(providers, enc.provider_id),
             records=tuple(records_by_encounter.get(enc.id, ())),
         )
         for enc in encounters
     )
     return PatientView(patient_id=patient_id, encounters=assembled)
+
+
+def _resolve_provider(providers: Dict[int, Provider], provider_id: int) -> Provider:
+    try:
+        return providers[provider_id]
+    except KeyError:
+        raise IncompleteCorpus(provider_id) from None
