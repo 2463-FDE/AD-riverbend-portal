@@ -173,6 +173,24 @@ def test_assemble_complete(store):
     assert all(r.patient_id == pid for a in view.encounters for r in a.records)
 
 
+# --- batch read is a set read (impl-gate r2 finding 1; no Spec row) --------
+
+
+def test_records_for_encounters_dedupes(store):
+    """A repeated encounter id yields its records once, in first-seen order:
+    the batch accessor reads a set of encounters, it does not concatenate the
+    id list it is handed."""
+    pid = kg_corpus.FIXTURE_PATIENT_ID
+    enc_ids = [e.id for e in store.encounters_for_patient(pid)][:3]
+    assert len(enc_ids) == 3, "fixture patient has fewer than three encounters"
+
+    once = store.records_for_encounters(enc_ids)
+    assert once, "fixture encounters carry no records"
+    repeated = store.records_for_encounters(enc_ids + enc_ids)
+
+    assert [r.id for r in repeated] == [r.id for r in once]
+
+
 # --- bounded-retrieval-count (w4-SPEC-15) ----------------------------------
 
 EXPECTED_RETRIEVALS = 3  # encounters-for-patient · records-for-encounters · providers-by-id

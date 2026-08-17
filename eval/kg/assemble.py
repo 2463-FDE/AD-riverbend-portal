@@ -122,13 +122,14 @@ class GraphStore:
         """One read for all the encounters, not one per encounter — the whole
         point of the contrast with the production route."""
         self.retrievals += 1
-        wanted = set(encounter_ids)
-        return [
-            rec
-            for enc_id in encounter_ids
-            for rec in self._records_by_encounter.get(enc_id, ())
-            if enc_id in wanted
-        ]
+        seen = set()
+        records: List[Record] = []
+        for enc_id in encounter_ids:
+            if enc_id in seen:
+                continue
+            seen.add(enc_id)
+            records.extend(self._records_by_encounter.get(enc_id, ()))
+        return records
 
     def providers_by_id(self, provider_ids: Iterable[int]) -> Dict[int, Provider]:
         self.retrievals += 1
