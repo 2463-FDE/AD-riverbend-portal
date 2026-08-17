@@ -168,6 +168,69 @@ describe("records page relevant-records panel", () => {
   });
 });
 
+describe("records search surface (e6-SPEC-6)", () => {
+  function searchResponse(over: Record<string, unknown> = {}) {
+    return jsonResponse(200, {
+      hits: [{ id: 10, patient_id: 1042, kind: "note", title: "Chest pain follow-up", body: "stable" }],
+      truncated: false,
+      ...over,
+    });
+  }
+
+  async function runSearch(response?: Response) {
+    if (response) apiFetch.mockResolvedValueOnce(response);
+    render(<RecordsPage />);
+    fireEvent.change(screen.getByLabelText(/search records/i), { target: { value: "chest" } });
+    fireEvent.click(screen.getByRole("button", { name: /find records/i }));
+  }
+
+  const WITHHELD = /more records matched than are shown here/i;
+
+  it("renders the withheld-results banner when the response is truncated", async () => {
+    await runSearch(searchResponse({ truncated: true }));
+    const banner = await screen.findByText(WITHHELD);
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveClass("rb-alert--warn");
+    expect(await screen.findByText("Chest pain follow-up")).toBeInTheDocument();
+    expect(apiFetch).toHaveBeenCalledWith("/api/records/search?q=chest");
+  });
+
+  it("shows no withheld banner when the result set is exhausted", async () => {
+    await runSearch(searchResponse({ truncated: false }));
+    expect(await screen.findByText("Chest pain follow-up")).toBeInTheDocument();
+    expect(screen.queryByText(WITHHELD)).not.toBeInTheDocument();
+  });
+
+  it("renders an explicit empty state, not silence, when nothing matched", async () => {
+    await runSearch(searchResponse({ hits: [], truncated: false }));
+    expect(await screen.findByText(/no records matched your search/i)).toBeInTheDocument();
+    expect(screen.queryByText(WITHHELD)).not.toBeInTheDocument();
+  });
+
+  it("treats a failed search as failed, never as 'no records matched'", async () => {
+    apiFetch.mockRejectedValueOnce(new Error("connect ECONNREFUSED records-service:8073"));
+    await runSearch();
+    expect(await screen.findByText(/search could not be completed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no records matched your search/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ECONNREFUSED|records-service:8073/)).not.toBeInTheDocument();
+  });
+
+  it("treats a non-2xx search response as failed, not empty", async () => {
+    await runSearch(jsonResponse(503, { detail: "database unavailable" }));
+    expect(await screen.findByText(/search could not be completed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no records matched your search/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/database unavailable/)).not.toBeInTheDocument();
+  });
+
+  it("treats an off-contract body (no truncated flag) as failed", async () => {
+    // gateway `_get`/BFF proxy can answer 200 with a body it could not parse;
+    // rendering one would drop the withheld signal — the field that must not be
+    // assumed. A body missing `truncated` is rejected as failed.
+    await runSearch(jsonResponse(200, { hits: [] }));
+    expect(await screen.findByText(/search could not be completed/i)).toBeInTheDocument();
+  });
+});
+
 describe("patient chart read surface (E5-SPEC-5 .. E5-SPEC-8)", () => {
   // The sixth unchecked read, found by the e5 drift gate and covered by spec
   // D-12. `json.encounters ?? []` rendered an outage as "No records found for

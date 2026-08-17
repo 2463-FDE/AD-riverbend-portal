@@ -1,4 +1,4 @@
-.PHONY: up down logs ps build seed seed-gen psql test test-docker frontend-dev config eval
+.PHONY: up down logs ps build seed seed-gen psql test test-docker test-migrations migrate frontend-dev config eval
 
 # Scoped gateway->ai-assistant secret file. Compose refuses to parse when a
 # listed env_file is missing, so every compose target depends on this. The
@@ -101,6 +101,38 @@ frontend-dev:  ## run the Next.js dev server (port 3070)
 
 config: .env.ai-proxy .env.redis .env.registration ## validate the compose file
 	docker compose config -q && echo "compose OK"
+
+# Bring an EXISTING database up to the current schema by applying
+# db/migrations/*.sql in order (e6, E6-REQ-9). Runs the one-shot `migrate`
+# compose service (tools profile, no published ports). A fresh `make up` volume
+# is born pre-stamped from db/schema.sql, so this reports "nothing to apply"
+# there; it earns its keep on a volume created before a migration. For a legacy
+# volume with no ledger, record its already-applied migrations first with
+# `make migrate ARGS=baseline` (see docs/runbook.md — baseline verifies the
+# volume is at head before stamping and refuses otherwise).
+migrate: .env.ai-proxy .env.redis .env.registration ## apply pending migrations to the running db (ARGS=baseline for a legacy volume)
+	docker compose run --rm migrate $(ARGS)
+
+# Migration-runner integration tests against an ephemeral postgres:15 — the
+# local mirror of CI's `migrations` job (the default `tests`/`test-docker` run
+# deselects @pytest.mark.integration and has no Postgres). Spins a throwaway
+# server, runs the two integration files in the py312 test image on a shared
+# network, and tears the server down.
+test-migrations: ## run the migration-runner integration tests against an ephemeral postgres:15
+	@set -e; \
+	 net="rb-mig-net-$$$$"; pg="rb-mig-pg-$$$$"; \
+	 docker network create $$net >/dev/null; \
+	 trap 'docker rm -f $$pg >/dev/null 2>&1; docker network rm $$net >/dev/null 2>&1' EXIT; \
+	 docker run -d --rm --name $$pg --network $$net \
+	   -e POSTGRES_DB=riverbend -e POSTGRES_USER=riverbend_app -e POSTGRES_PASSWORD=testpw \
+	   postgres:15 >/dev/null; \
+	 for i in $$(seq 1 30); do \
+	   docker exec $$pg pg_isready -U riverbend_app -d riverbend >/dev/null 2>&1 && break; sleep 1; done; \
+	 docker build -q -t riverbend-test:py312 -f Dockerfile.test . >/dev/null; \
+	 docker run --rm --network $$net \
+	   -e DB_HOST=$$pg -e DB_PORT=5432 -e DB_USER=riverbend_app -e DB_PASSWORD=testpw -e DB_NAME=riverbend \
+	   -v "$$PWD":/repo -w /repo riverbend-test:py312 \
+	   pytest -m integration tests/integration/test_migration_runner.py tests/integration/test_schema_upgrade_path.py -q
 
 # `make status` is retired. It rendered docs/status/dashboard.html, and most of
 # what it rendered was the frontend rebuild's requirement and gate track, which

@@ -21,6 +21,7 @@ from schemas import (
     PatientPage,
     PatientSummary,
     RecordOut,
+    RecordSearch,
     RecordSearchHit,
     RelevantRecordItem,
     RelevantRecords,
@@ -36,6 +37,15 @@ def healthz():
     return {"status": "ok", "service": settings.service_name}
 
 
+def _escape_like(term: str) -> str:
+    """Neutralize LIKE/ILIKE metacharacters so a caller's search term matches as
+    literal text. Backslash first (it is the escape character), then % and _.
+    Paired with ``escape="\\"`` on the ``.ilike`` call at both search sites, a
+    bare ``%`` becomes a literal percent sign instead of "match every row"
+    (e6-SPEC-2/3, E6-REQ-1/2)."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 @app.get("/patients", response_model=PatientPage)
 def list_patients(
     q: str | None = Query(default=None, description="ILIKE filter on patient name"),
@@ -48,9 +58,9 @@ def list_patients(
         base = select(Patient)
         count_q = select(func.count()).select_from(Patient)
         if q:
-            pattern = f"%{q}%"
-            base = base.where(Patient.name.ilike(pattern))
-            count_q = count_q.where(Patient.name.ilike(pattern))
+            pattern = f"%{_escape_like(q)}%"
+            base = base.where(Patient.name.ilike(pattern, escape="\\"))
+            count_q = count_q.where(Patient.name.ilike(pattern, escape="\\"))
 
         total = db.execute(count_q).scalar_one()
         rows = (
@@ -321,7 +331,7 @@ def _duplicate_disclosure(db: Session, patient: Patient) -> str:
     return "candidate" if status == "candidate" else "none"
 
 
-@app.get("/records/search", response_model=list[RecordSearchHit])
+@app.get("/records/search", response_model=RecordSearch)
 def search_records(
     q: str = Query(..., min_length=1, description="free-text query"),
     db: Session = Depends(get_db),
@@ -329,14 +339,24 @@ def search_records(
     """
     Free-text search across records.
 
-    DEBT D8: full-table ILIKE scan on records.body with NO supporting index and
-    NO result limit. On a real chart corpus this scans every row every call.
+    DEBT D8: full-table ILIKE scan on records.body with NO supporting index — on
+    a real chart corpus this scans every row every call. The zero-index
+    condition stays deliberate (e6-D-2); the result set is bounded so a single
+    call can no longer return the whole corpus.
+
+    The query term is matched as literal text (metacharacters escaped) and the
+    response is capped at ``records_search_max_hits``. The route over-fetches by
+    one so a capped result set is distinguishable from an exhausted one via
+    ``truncated`` (e6-SPEC-1/2/5, E6-REQ-1/8).
     """
+    max_hits = settings.records_search_max_hits
     try:
-        # full-table scan on body — no index, no limit (deliberate debt)
         rows = (
             db.execute(
-                select(Record).where(Record.body.ilike(f"%{q}%"))
+                select(Record)
+                .where(Record.body.ilike(f"%{_escape_like(q)}%", escape="\\"))
+                .order_by(Record.id)
+                .limit(max_hits + 1)
             )
             .scalars()
             .all()
@@ -345,4 +365,6 @@ def search_records(
         log.error("search_records: database error (%s)", type(e).__name__)
         raise HTTPException(status_code=503, detail="database unavailable")
 
-    return [RecordSearchHit.model_validate(r) for r in rows]
+    truncated = len(rows) > max_hits
+    hits = [RecordSearchHit.model_validate(r) for r in rows[:max_hits]]
+    return RecordSearch(hits=hits, truncated=truncated)

@@ -52,42 +52,44 @@ make seed-gen
 
 ## Upgrading a database that predates a migration
 
-`db/migrations/*.sql` has **no runner**, and compose mounts only `db/schema.sql`
-and the seed into `/docker-entrypoint-initdb.d` (`docker-compose.yml:12-13`),
-which Postgres runs on a *fresh* volume only. So a `pgdata` volume created
-before a migration never receives it: the first service that reads the new
-table catches the error and answers `503` on **every** request through that
-path — with its container still reporting healthy, so it presents as "the
-portal is broken", not "the database is behind". Measured 2026-08-13 on the
-closed PR #76 branch (review round 6); `insurance_coverages` (migration 005),
-`roi_requests` (008) and `duplicate_review_queue` (009) all arrived by
-migration and are read the same unconditional way.
-
-After pulling a change that adds a table, against a running stack, re-apply the
-flattened schema **without** the seed:
+`make migrate` is the single upgrade command. It runs the migration runner
+(`db/migrate.py`) against the running stack's database, applying every
+`db/migrations/*.sql` the database has not already recorded — in filename order,
+each in its own transaction — and recording each in a `schema_migrations` ledger
+so an applied migration is never re-run:
 
 ```bash
-docker compose exec -T postgres psql -U "${DB_USER:-riverbend_app}" \
-  -d "${DB_NAME:-riverbend}" < db/schema.sql
+make migrate
 ```
 
-Every table in `db/schema.sql` is `CREATE TABLE IF NOT EXISTS` (14/14 today),
-so this creates what is missing and no-ops the rest; existing rows are
-untouched. Do **not** reach for `make seed` here — it pipes the schema first
-but then re-runs the seed, which is the doubling warned about above.
+A database initialized from `db/schema.sql` (a normal `make up` volume) is born
+with the ledger pre-stamped for every migration the flattened schema already
+contains, so `make migrate` reports "nothing to apply" there. It earns its keep
+on a `pgdata` volume created *before* a migration: without it, the first service
+that reads the new table catches the error and answers `503` on **every**
+request through that path — container still reporting healthy, so it presents as
+"the portal is broken", not "the database is behind".
 
-**What it does not do:** `IF NOT EXISTS` skips an existing table *whole*, so a
-migration that changes one — `ALTER TABLE ... ADD COLUMN`, a new constraint —
-is **not** applied by re-running the schema. Apply that migration file by hand:
+**One-time step for a volume created before the runner existed (no ledger).**
+Such a volume has no `schema_migrations` table, and the migration files are bare
+DDL, so `make migrate` refuses it rather than blindly re-running `001` and
+crashing. Record its already-applied migrations first:
 
 ```bash
-docker compose exec -T postgres psql -U "${DB_USER:-riverbend_app}" \
-  -d "${DB_NAME:-riverbend}" < db/migrations/00N_whatever.sql
+make migrate ARGS=baseline
 ```
 
-Nothing tracks which migrations a given database has already had, so read the
-file before running it. That gap is `docs/debt-log.md` cross-cutting, "No
-migration runner".
+`baseline` does not take the operator's word that the volume is current: it
+builds a throwaway database from the full migration set and compares the live
+schema against it structurally (tables, columns, types, nullability, defaults,
+PK/FK/UNIQUE constraints; indexes excluded). Only on a match does it stamp the
+ledger and run nothing. On a **mismatch it refuses and stamps nothing** — a
+volume that is *behind* head (missing a later migration's table or column) would
+otherwise be recorded as current, and the runner would then skip the very
+repairs it needs. A refused behind-head volume must be brought to head by hand
+(apply the missing `db/migrations/00N_*.sql` files, reading each first) before
+`baseline` will accept it. This one-time legacy step is the accepted residual of
+the migration-runner work (`docs/debt-log.md`, "No migration runner").
 
 ## Demo accounts
 

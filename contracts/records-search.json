@@ -1,0 +1,19 @@
+{
+  "$comment": "Single source of truth for the GET /records/search response contract (e6-SPEC-5, e6-D-16). Asserted by tests/test_records_search_bounds.py (service side) and frontend/app/records/search.contract.test.ts (portal side), so either half drifting reddens its own CI job. The response is bounded: `truncated` distinguishes a capped result set from an exhausted one. Synthetic values only — no real or seeded PHI.",
+  "response_fields": {
+    "root": ["hits", "truncated"],
+    "hit": ["id", "patient_id", "kind", "title", "body"]
+  },
+  "sample_response": {
+    "hits": [
+      {
+        "id": 1,
+        "patient_id": 1042,
+        "kind": "progress_note",
+        "title": "Example note",
+        "body": "example body text"
+      }
+    ],
+    "truncated": false
+  }
+}

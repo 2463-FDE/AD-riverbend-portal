@@ -245,6 +245,32 @@ services:
       timeout: 3s
       retries: 5
 
+  # One-shot migration runner (e6, E6-REQ-9). `tools` profile so `make up` never
+  # starts it — it is run explicitly with `make migrate`, connects to postgres,
+  # applies db/migrations/*.sql, and exits. Expose-only by omission: it is not a
+  # network service and publishes no host port (stays out of HOST_PUBLISHABLE,
+  # tests/test_compose_topology.py). Uses the shared .env like every domain
+  # service; DB_HOST defaults to `postgres` in db/migrate.py.
+  #
+  # The runner and the migration files are bind-mounted read-only over the image
+  # copy on purpose. `docker compose run` reuses an existing image and never
+  # rebuilds it, and this compose (v2.1.1) has no `run --build`; without the
+  # mount, `make migrate` after pulling a new migration would run the STALE image
+  # and report "nothing to apply" while the database stayed behind — the silent
+  # upgrade failure E6-REQ-9 exists to close. The image keeps its COPY so it also
+  # runs standalone; the mount only guarantees the tree wins.
+  migrate:
+    build: ./db
+    profiles: ["tools"]
+    env_file:
+      - .env
+    volumes:
+      - ./db/migrate.py:/db/migrate.py:ro
+      - ./db/migrations:/db/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # The inherited Next.js portal -- the only frontend. The SvelteKit rebuild that
   # was to replace it is descoped (branch alt/sveltekit-portal), so "it is being
   # replaced" no longer holds and this service is not a coexistence-window

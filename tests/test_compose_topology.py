@@ -685,3 +685,30 @@ def test_the_frontend_stays_published():
         "frontend must build from its own directory, not from a path that "
         "another service could quietly take over"
     )
+
+
+# --- the migration runner's freshness ----------------------------------------
+# `docker compose run` reuses an existing image and never rebuilds it, and the
+# compose in use has no `run --build`. With the runner and the migration files
+# baked in by COPY alone, `make migrate` after pulling a new migration would run
+# the STALE image and print "nothing to apply" while the database stayed behind
+# — the silent upgrade failure E6-REQ-9 exists to close (impl gate r1 f2). The
+# bind mounts are what make the tree win; this pins them.
+
+
+def test_the_migration_runner_reads_the_tree_not_a_stale_image():
+    svc = _service("migrate")
+    mounts = {str(v).split(":")[1]: str(v) for v in svc.get("volumes", [])}
+    for target, source in (("/db/migrate.py", "./db/migrate.py"),
+                           ("/db/migrations", "./db/migrations")):
+        assert target in mounts, (
+            f"the migrate service must bind-mount {source} over {target}: "
+            "without it `make migrate` can run a stale image and report "
+            "'nothing to apply' on a database that is behind (E6-REQ-9)"
+        )
+        assert mounts[target].startswith(source + ":"), (
+            f"{target} must be mounted from {source}, not from another path"
+        )
+        assert mounts[target].endswith(":ro"), (
+            f"{target} is runner input, never runner output — mount it read-only"
+        )

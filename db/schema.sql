@@ -3,7 +3,11 @@
 --
 -- This file is the flattened "current" schema loaded by docker-entrypoint on a
 -- fresh volume. The incremental history lives in db/migrations/*.sql and is kept
--- in sync with this file by hand (see ADR 0001 — no shared library / tooling yet).
+-- in sync with this file by hand (see ADR 0001). Since e6 a real migration
+-- runner (db/migrate.py, `make migrate`) applies db/migrations/*.sql to an
+-- existing volume, and tests/integration/test_schema_upgrade_path.py pins this
+-- flattened schema structurally equivalent to that migration set (e6-SPEC-14),
+-- so the hand-sync is now a checked single source rather than an unenforced one.
 
 -- ---------------------------------------------------------------------------
 -- Authentication
@@ -224,3 +228,33 @@ CREATE TABLE IF NOT EXISTS registration_submissions (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT uq_registration_submission_id UNIQUE (submission_id)
 );
+
+-- ---------------------------------------------------------------------------
+-- Migration ledger (e6, E6-REQ-9)
+-- ---------------------------------------------------------------------------
+-- db/migrate.py records each applied migration here so it is never re-run. A
+-- fresh volume is initialized from THIS file, not by the runner, so it would be
+-- born with nothing "applied" and the runner's first invocation would try to
+-- re-run 001 and crash. Pre-stamp the ledger with every migration this
+-- flattened schema already contains, so the runner treats a schema.sql volume
+-- as current and applies nothing (e6-SPEC-17, e6-D-9). This list and
+-- db/migrations/*.sql are the both-files sync point (CLAUDE.md §9): a new
+-- migration adds its file AND a row here, pinned by
+-- tests/integration/test_schema_upgrade_path.py. No PHI; no index beyond the PK.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    filename   TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO schema_migrations (filename) VALUES
+    ('001_init.sql'),
+    ('002_add_disclosures.sql'),
+    ('003_add_users.sql'),
+    ('004_patient_contact_and_mrn.sql'),
+    ('005_insurance_coverages.sql'),
+    ('006_providers_and_slots.sql'),
+    ('007_encounter_record_detail.sql'),
+    ('008_roi_requests.sql'),
+    ('009_duplicate_review_queue.sql'),
+    ('010_registration_submissions.sql'),
+    ('011_schema_migrations.sql')
+ON CONFLICT (filename) DO NOTHING;

@@ -22,14 +22,18 @@ def get_conn():
 
 def slot_taken(slot_id: int) -> bool:
     conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT 1 FROM appointments WHERE slot_id = %s AND status = 'confirmed'",
-        (slot_id,),
-    )
-    taken = cur.fetchone() is not None
-    conn.close()
-    return taken
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM appointments WHERE slot_id = %s AND status = 'confirmed'",
+            (slot_id,),
+        )
+        return cur.fetchone() is not None
+    finally:
+        # Release on every path, including a raising query — a leaked
+        # connection under load exhausts the pool (D5b). Lifecycle only: the
+        # check-then-insert race is unchanged (RIV-175, e6-SPEC-8).
+        conn.close()
 
 
 def insert_appointment(
@@ -41,17 +45,22 @@ def insert_appointment(
     scheduled_for=None,
 ) -> int:
     conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO appointments "
-        "(patient_id, slot_id, provider, reason, location, scheduled_for, status) "
-        "VALUES (%s, %s, %s, %s, %s, %s, 'confirmed') RETURNING id",
-        (patient_id, slot_id, provider, reason, location, scheduled_for),
-    )
-    aid = cur.fetchone()[0]
-    conn.commit()
-    conn.close()
-    return aid
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO appointments "
+            "(patient_id, slot_id, provider, reason, location, scheduled_for, status) "
+            "VALUES (%s, %s, %s, %s, %s, %s, 'confirmed') RETURNING id",
+            (patient_id, slot_id, provider, reason, location, scheduled_for),
+        )
+        aid = cur.fetchone()[0]
+        conn.commit()
+        return aid
+    finally:
+        # Release on every path, including a raising insert (D5b). Lifecycle
+        # only: no UNIQUE, no idempotency key added — RIV-175 stays seeded
+        # (e6-SPEC-8).
+        conn.close()
 
 
 def book(
