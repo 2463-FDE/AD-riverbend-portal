@@ -55,7 +55,10 @@ class Principal:
 
     @classmethod
     def for_patient(cls, patient_id: int) -> "Principal":
-        return cls(subject=f"sample-caller:{patient_id}", patient_ids=frozenset({patient_id}))
+        return cls(
+            subject=f"sample-caller:{patient_id}",
+            patient_ids=frozenset({patient_id}),
+        )
 
     def may_assemble(self, patient_id: int) -> bool:
         return patient_id in self.patient_ids
@@ -129,7 +132,11 @@ class GraphStore:
 
     def providers_by_id(self, provider_ids: Iterable[int]) -> Dict[int, Provider]:
         self.retrievals += 1
-        return {pid: self._providers[pid] for pid in set(provider_ids) if pid in self._providers}
+        return {
+            pid: self._providers[pid]
+            for pid in set(provider_ids)
+            if pid in self._providers
+        }
 
 
 def assemble_patient_view(

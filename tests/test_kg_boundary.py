@@ -112,6 +112,8 @@ def test_boundary_simulated_principal(store):
 
     # the binding is explicit data on the principal, not a token or a session
     # lookup: a multi-patient binding serves both, and nothing else is consulted
-    guardian = kg_assemble.Principal(subject="sample-guardian", patient_ids=frozenset({OWN, SIBLING}))
+    guardian = kg_assemble.Principal(
+        subject="sample-guardian", patient_ids=frozenset({OWN, SIBLING})
+    )
     assert guardian.may_assemble(OWN) and guardian.may_assemble(SIBLING)
     assert not kg_assemble.Principal.for_patient(OWN).may_assemble(SIBLING)
