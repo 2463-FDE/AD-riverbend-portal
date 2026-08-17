@@ -69,13 +69,14 @@ shape irrelevant. The fix is the bind; the id shape sets how cheap exploitation 
 §1 requires the D11 fix to be sized against every route with the same property, so the list
 is here even though w4 closes none of it. Most of it is already registered — `docs/landmines.md`
 §1 names `GET /patients`, `GET /records/search` and `GET /roi/requests`; `docs/debt-log.md` D11
-names the two per-patient chart routes. One row below was on neither list and is filed by w4:
+names the two per-patient chart routes. Two rows below were on neither list and are filed by w4:
 
 | Surface | Property | Status |
 |---|---|---|
 | `GET /patients/{id}/records` (`records-service/app.py:104`, gateway `:325`) | the captured route; per-patient chart read, session not patient-bound | OPEN |
 | `GET /patients/{id}/relevant-records` (`records-service/app.py:194`, gateway `:332`) | same property, same `records.read` capability — inherited in kind when W2 landed it, already listed in D11 | OPEN |
 | `GET /patients/{id}` (gateway `:320`) | returns `PatientDetail` — plaintext `ssn`, `dob`, `address` (`records-service/schemas.py:18-32`); same id walk, `patients.read` only | OPEN — **was on neither list**; filed by w4 into `docs/debt-log.md` D11 |
+| `GET /appointments?patient_id=` (`scheduling-service/app.py:71-93`, gateway `:365-371`) | same id walk against a different service: `schedule.read` only, no patient bind, returns `AppointmentOut` — free-text `reason`, `provider`, `location`, `scheduled_for` (`scheduling-service/schemas.py:27-38`). Write twin `POST /appointments/{appointment_id}/cancel` (gateway `:379`, `scheduling-service/app.py:138-139`) takes an appointment id and no patient bind either, so any `appointments.write` holder cancels any patient's appointment | OPEN — **was on neither list**; filed by w4 into `docs/debt-log.md` D11 |
 | `GET /patients?q=` (gateway `:305`) | name search across all patients — not per-patient at all, so it hands out the ids the walk needs | OPEN, already in `docs/landmines.md` §1 |
 | `GET /roi/requests` (gateway `:391`) | `patient_id` optional; returns disclosure records across patients under `disclosures.read` | OPEN, already in `docs/landmines.md` §1 (and D12) |
 | `GET /records/search?q=` (`records-service/app.py:335`, gateway `:343`) | was the worst vector: an un-escaped `q` let `%` match every row with no `LIMIT` — one request, whole corpus, no ids needed | **Corpus-read vector CLOSED by e6** (`e53cd81`, 2026-08-17): metacharacters escaped and the result set capped (e6-SPEC-1/2/5). Search is still not patient-scoped, so a bounded page of other patients' record bodies is still reachable — that residue is D11's, not e6's |
