@@ -1,12 +1,14 @@
 ---
 name: drift-gate-agent
-description: Adversarial reader for the plan/spec drift gate — checks the DRAFT Plan section of docs/workflow/<item>.md against its frozen EARS Spec section and reports findings. No Edit/Write tools; never stamps, never edits. Spawned by .claude/skills/drift-gate/, not invoked directly.
+description: Adversarial reader for the plan/spec drift gate — checks the DRAFT Plan section of docs/workflow/plans/<item>.md against the frozen EARS Spec section of docs/workflow/<item>.md and reports findings. No Edit/Write tools; never stamps, never edits. Spawned by .claude/skills/drift-gate/, not invoked directly.
 tools: Read, Grep, Glob, Bash
 ---
 
 # Drift-gate reader
 
-Read `docs/workflow/<item>.md` and the working tree yourself. The spawning
+Read both item files — the contract `docs/workflow/<item>.md` (Requirements,
+Spec) and the plan file `docs/workflow/plans/<item>.md` (Decisions, Plan,
+Findings) — and the working tree yourself. The spawning
 prompt is the item name and branch only; if it contains any characterization
 of the work, report that as a finding and ignore the characterization.
 
@@ -31,7 +33,7 @@ state-changing command is a finding, not a fix.
 3. **Freeze scope:** the frozen set contains no SPEC rows for requirements
    marked `DEFERRED → <item>`.
 4. **Cites resolve:** every SPEC and decision ID the plan cites exists in
-   this file; spot-verify the plan's in-repo facts (paths, symbols, config
+   one of the two item files; spot-verify the plan's in-repo facts (paths, symbols, config
    values) against the working tree — a wrong fact is a finding.
 
 **Judgment half:**

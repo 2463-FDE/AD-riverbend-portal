@@ -1153,3 +1153,29 @@ TODO-12 in the same paragraph; list extended, exemption scoped to `README.md` it
 with the TODO-12 row swept like any other. Lesson: a procedure delegated to an agent
 definition changes only when the agent file changes — editing the skill that spawns it
 left the exact half-closed class this PR exists to prevent.
+
+**PR #86 r1 — 2026-08-18.** 3 findings, **3 A / 0 B / 0 C**, all fixed on the branch:
+B1 — plan-file deletion could orphan decision IDs the durable contract cites; the
+carry-into-Delivery step was aspirational, now a blocking pre-delete sweep in
+`noncode-merge` with the README register rule aligned (cited IDs must be carried;
+only uncited decisions resolve through the deletion sha). M1 — no stage owned creating
+`## Findings`; create-on-first-write stated once in the README shape section, cited from
+stage 1. Minor — state-grammar example dropped the `delivery` prefix agents mutate
+exactly. Lesson: a lifecycle that ends in deletion needs its citation obligations
+checked at the delete, not described near it.
+
+**PR #86 r2 — 2026-08-18.** 2 findings (both new-in-fix), **2 A / 0 B / 0 C**, fixed on
+the branch: M2 — the landing bullet's broad "resolves through that sha" sentence
+contradicted the r1 carry rule, a documented escape hatch around the sweep; scoped to
+rounds and uncited decisions, contract-cited decisions resolve only through their
+carried `## Delivery` entry. Minor — the sweep's grep showed the `<item>` placeholder
+as a literal pattern. Lesson: when a fix adds an obligation, sweep the same file for
+older sentences that still describe the pre-obligation world — the r1 fix edited the
+register bullet but not the landing bullet two rules down.
+
+**PR #86 r3 — 2026-08-18, approve.** 0 findings; loop closed in 3 rounds
+(3 A r1, 2 A r2, both r2 findings new-in-fix). The PR's one real finding class was the
+durability of contract citations across the plan file's deletion; it closed when the
+carry became a blocking pre-delete sweep and the last sentence offering sha-only
+resolution was scoped away — same shape as the PR #82 lesson: the class closes when the
+contradicting sentence is removed, not merely outvoted by a true one elsewhere.

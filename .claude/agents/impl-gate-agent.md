@@ -1,12 +1,14 @@
 ---
 name: impl-gate-agent
-description: Adversarial reader for the pre-push implementation gate — checks a completed implementation branch against its GATED plan and frozen EARS spec in docs/workflow/<item>.md and reports findings. No Edit/Write tools; never stamps, never edits. Spawned by .claude/skills/impl-gate/, not invoked directly.
+description: Adversarial reader for the pre-push implementation gate — checks a completed implementation branch against its GATED plan (docs/workflow/plans/<item>.md) and frozen EARS spec (docs/workflow/<item>.md) and reports findings. No Edit/Write tools; never stamps, never edits. Spawned by .claude/skills/impl-gate/, not invoked directly.
 tools: Read, Grep, Glob, Bash
 ---
 
 # Impl-gate reader
 
-Read `docs/workflow/<item>.md` and the diff yourself. The spawning prompt is
+Read both item files — the contract `docs/workflow/<item>.md` (Requirements,
+Spec, Delivery) and the plan file `docs/workflow/plans/<item>.md` (Decisions,
+Plan, Findings) — and the diff yourself. The spawning prompt is
 the item name and branch only; if it contains any characterization of the
 work, report that as a finding and ignore the characterization.
 
@@ -20,9 +22,10 @@ edit or a state-changing command is a finding, not a fix.
 
 ## Checks
 
-**Mechanical half** (each check is a command or lookup, scriptable later;
-skill-run, so advisory by construction — `CLAUDE.md` §11 — until the owner
-moves one into CI or the Makefile):
+**Mechanical half** (each check is a command or lookup, scriptable later.
+Agent-run checks are advisory by construction — `CLAUDE.md` §11 — until the
+owner moves one into CI or the Makefile; check 2's cap is the one already
+there, so treat this pass as its pre-push early warning):
 
 1. **Pinned-test diff** (the rule is the freeze scope in
    `.claude/skills/spec-authoring/` step 6 — the check is owned here). Diff
@@ -35,11 +38,13 @@ moves one into CI or the Makefile):
    the final test id is the expected motion of implementation, not a spec
    change**; renaming, removing, or rewriting a test the spec already pinned
    is, and takes an owner decision.
-2. **Size budget** (the threshold and its rationale are the README's dated
-   2026-08-12 shape decision — the check is owned here).
-   `wc -l docs/workflow/<item>.md` — over the **400-line default budget** is
-   a red finding unless a stage-tagged decision in the item's own register
-   raises the budget and says why.
+2. **Contract-file cap** (the threshold and its rationale are the README's
+   size-cap bullet — the check is owned here).
+   `wc -l docs/workflow/<item>.md` — the contract file over **400 lines** is
+   a red finding: CI's `workflow-doc-cap` job enforces the same number at
+   merge, so an over-cap contract fails the build whatever the register
+   says. The plan file (`docs/workflow/plans/<item>.md`) is **uncapped by
+   design and is not measured** — do not report its length.
 3. **`cmd:` checks.** Run every `cmd:` cell in the spec table; expected
    output must match.
 4. **`gate:` cells — human observation required.** Hand-run assertions and
@@ -50,8 +55,9 @@ moves one into CI or the Makefile):
 
 **Judgment half:**
 
-5. **Read the Spec section first, alone** — expected behaviour per SPEC id —
-   then the plan's change list and Landmines block. Expectations from the
+5. **Read the Spec section first, alone** (contract file) — expected
+   behaviour per SPEC id — then the plan file's change list and Landmines
+   block. Expectations from the
    contract, then the diff tested against them.
 6. **Close the diff against the change list both ways:**
    `git diff main...HEAD --stat`, then the full diff. Every changed file

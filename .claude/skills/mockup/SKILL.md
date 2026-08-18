@@ -5,14 +5,14 @@ description: Optional plan-stage input of the delivery workflow (docs/workflow/R
 
 # Spec-anchored mockup (optional plan-stage input)
 
-Input: `docs/workflow/<item>/spec.md` with `Status: AGREED` (frozen). Refuse to start from
+Input: the item's `## Spec` at `Status: FROZEN` (`docs/workflow/<item>.md`). Refuse to start from
 a DRAFT — a mockup built against an unfrozen spec fills the spec's silence with invented
 UI and then reports its own inventions as spec gaps (observed on W3, 2026-08-07: four of
 five "open questions" turned out to be invented requirements).
 Output: a static mockup **outside the repo** (scratch, e.g.
 `~/Documents/Work/mockups/<item>/`), plus plan-decision candidates. The mockup is
 **evidence, not contract**: never tracked, never cited as normative by plan or gate. What
-it teaches lands as text in `plan.md` ("Decisions carried into this plan"); anything the
+it teaches lands as `plan`-tagged decisions in the item's register; anything the
 plan asserts from it becomes a plan fact the drift gate spot-verifies in-repo as usual.
 
 This skill supersedes the generic frontend-design skill for portal mockups here:
