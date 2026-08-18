@@ -16,6 +16,7 @@ integration xfail stays visible.
 Pinned test ids: boundary-authorized-served · boundary-cross-patient-refused ·
 boundary-before-traversal · boundary-simulated-principal.
 """
+import dataclasses
 import sys
 
 import pytest
@@ -117,3 +118,36 @@ def test_boundary_simulated_principal(store):
     )
     assert guardian.may_assemble(OWN) and guardian.may_assemble(SIBLING)
     assert not kg_assemble.Principal.for_patient(OWN).may_assemble(SIBLING)
+
+
+# --- boundary-misattributed-record (codex r1 f1) ----------------------------
+
+
+def test_boundary_misattributed_record_refused():
+    """A defective corpus — a record pointing at an authorized encounter but
+    claiming the sibling patient — fails assembly with a typed error instead of
+    silently attaching the sibling's record to the view. The adversarial case
+    for the record leg of the ownership claim (docs/landmines.md §3)."""
+    corpus = kg_corpus.build_corpus()
+    own_encounter = next(e for e in corpus.encounters if e.patient_id == OWN)
+    forged = kg_schema.Record(
+        id=max(r.id for r in corpus.records) + 1,
+        encounter_id=own_encounter.id,
+        patient_id=SIBLING,
+        kind=kg_schema.NOTE_KIND,
+        title="forged sibling note",
+        body="must never appear in the OWN view",
+    )
+    defective = dataclasses.replace(corpus, records=corpus.records + (forged,))
+    store = kg_assemble.GraphStore(defective)
+
+    with pytest.raises(kg_assemble.MisattributedRecord) as exc:
+        kg_assemble.assemble_patient_view(
+            store, kg_assemble.Principal.for_patient(OWN), OWN
+        )
+
+    # the failure names ids only — never the record's title or body
+    assert exc.value.record_id == forged.id
+    message = str(exc.value)
+    assert forged.title not in message
+    assert forged.body not in message

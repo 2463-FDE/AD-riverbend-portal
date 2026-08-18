@@ -55,6 +55,24 @@ class IncompleteCorpus(Exception):
         self.provider_id = provider_id
 
 
+class MisattributedRecord(Exception):
+    """A record points at an encounter of one patient but claims another.
+
+    ``Record.patient_id`` is denormalised from the encounter (schema.py); a
+    mismatch means the corpus is defective, and assembly cross-checks it at
+    the merge so the defect fails loudly rather than attaching one patient's
+    record to another patient's view. Carries ids only — never a record title
+    or body.
+    """
+
+    def __init__(self, record_id: int, encounter_id: int):
+        super().__init__(
+            f"corpus misattributes record {record_id} on encounter {encounter_id}"
+        )
+        self.record_id = record_id
+        self.encounter_id = encounter_id
+
+
 @dataclass(frozen=True)
 class Principal:
     """The seeded caller→patient binding the boundary decides against.
@@ -172,6 +190,8 @@ def assemble_patient_view(
 
     records_by_encounter: Dict[int, List[Record]] = {}
     for rec in records:
+        if rec.patient_id != patient_id:
+            raise MisattributedRecord(rec.id, rec.encounter_id)
         records_by_encounter.setdefault(rec.encounter_id, []).append(rec)
 
     assembled = tuple(

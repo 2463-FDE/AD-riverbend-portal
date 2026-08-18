@@ -67,9 +67,10 @@ class Record:
     """One document produced by an encounter — a lab result or a note.
 
     ``patient_id`` is denormalised from the encounter so the ownership check
-    can be argued about a record without a second hop; assembly never relies
-    on it, which is why a record can never enter a view whose encounter did
-    not (see eval/kg/assemble.py).
+    can be argued about a record without a second hop; assembly cross-checks
+    it at the merge, so a record claiming another patient fails assembly with
+    a typed error rather than riding in on its encounter (see
+    eval/kg/assemble.py, ``MisattributedRecord``).
     """
 
     id: int
