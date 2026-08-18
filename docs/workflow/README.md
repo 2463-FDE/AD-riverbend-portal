@@ -59,45 +59,66 @@ requirement synthesis → spec (EARS) → code plan
   element (`.claude/skills/mockup/`, decided 2026-08-07 on first reach with W3) — plan-stage
   evidence only, kept scratch outside the repo, never a tracked artifact; items without a
   UI surface skip it.
-- **One artifact-shape decision is recorded the same way (decided 2026-08-12, engagement
-  owner): every item from e6 onward carries all six stages in a single file** — the
-  one-file shape below. Items landed before it stay in the five-file shape as delivered.
-  The pipeline itself is unchanged: same six stages, same gates, same codex loop on every
-  PR.
+- **Artifact-shape decisions are recorded the same way.** Decided 2026-08-12 (engagement
+  owner): every item from e6 onward carries all six stages in one artifact rather than the
+  five-file dir. **Decided 2026-08-18 (engagement owner): from w4 onward the artifact is
+  two files** — the split shape below: a durable contract file (`docs/workflow/<item>.md`)
+  and a working plan file (`docs/workflow/plans/<item>.md`) deleted at delivery. Basis:
+  loop residue (gate rounds, disposition decisions) grows with review pressure, not
+  authoring choice — w4's authored sections held near 362 lines while nine gate and
+  impl-gate rounds drove its one file to 494, and cap housekeeping consumed gate findings
+  in three separate rounds. The dual-budget alternative was rejected (PR #85, closed
+  unmerged 2026-08-18; branch `chore/noref-size-budget-split` is the record). Items landed
+  before a shape decision stay as delivered. The pipeline itself is unchanged: same six
+  stages, same gates, same codex loop on every PR.
 
 ## Layout
 
-Two shapes coexist; the split is by item (decided 2026-08-12, above):
+Three shapes coexist; the split is by item (decisions of 2026-08-12 and 2026-08-18,
+above):
 
 ```
 docs/workflow/
-  <item>.md   ← one file per item, all six stages — every item from e6 onward, wN and
-                eN alike
-  wN/, eN/    ← five-file dirs (requirements / spec / plan / pr-body / findings) —
-                every item before e6 (w1–w3, e1, e2, e4, e5). Closed record, cited by
-                path, stays untouched. e2 alone is undelivered (parked at
-                requirements-DRAFT); whether it converts or continues five-file is an
-                owner call at resume.
+  <item>.md        ← contract file: header + Requirements + Spec + Delivery — every item
+                     from w4 onward
+  plans/<item>.md  ← plan file: Decisions + Plan + Findings — same items, in flight
+                     only; deleted at delivery, deletion sha recorded in the contract's
+                     ## Delivery
+  e5b.md, e6.md    ← one-file shape (all six stages in one file) — closed records as
+                     delivered, stay untouched
+  wN/, eN/         ← five-file dirs (requirements / spec / plan / pr-body / findings) —
+                     every item before e6 (w1–w3, e1, e2, e4, e5). Closed record, cited
+                     by path, stays untouched. e2 alone is undelivered (parked at
+                     requirements-DRAFT); its shape at resume is an owner call.
 ```
 
-The five-file shape's per-file rules and its three state-decode tables live in this
-README's pre-2026-08-12 history (`git log -- docs/workflow/README.md`); nothing still
-moving uses them.
+The one-file shape's rules live in this README's pre-2026-08-18 history, the five-file
+shape's in its pre-2026-08-12 history (`git log -- docs/workflow/README.md`); nothing
+still moving uses either.
 
-### The one-file shape (`docs/workflow/<item>.md`)
+### The split shape (`docs/workflow/<item>.md` + `docs/workflow/plans/<item>.md`)
 
-Sections in order. Each stage's skill authors its section and owns that section's
-authoring rules — this README owns only the shape-level rules below the table.
+Each stage's skill authors its section and owns that section's authoring rules — this
+README owns only the shape-level rules below the tables. Both files are created together
+at stage 1: req-review rounds and `req`-tagged decisions are plan-file content from the
+first session.
+
+**Contract file — `docs/workflow/<item>.md`.** Durable; outlives the item.
 
 | Section | Content | Rules owned by |
 |---|---|---|
 | header | `Status:` line (decode table below) · one-line item description · `Baseline at branch:` — the **single site** for the item's suite count, filled when the impl branch is cut | this README |
-| `## Decisions` | the item's single decision register | this README |
 | `## Requirements` | `Status: DRAFT \| AGREED <date>` · owner-decision table, `<item>-REQ-n` | `requirement-synthesis` |
 | `## Spec` | `Status: DRAFT \| FROZEN <date>` · EARS table with the check column | `spec-authoring` |
+| `## Delivery` | PR #, merge sha, baseline movement, deviations from the gated plan, live-run evidence, residual IDs, plan-file deletion sha | `implementation` |
+
+**Plan file — `docs/workflow/plans/<item>.md`.** Working state; deleted at delivery.
+
+| Section | Content | Rules owned by |
+|---|---|---|
+| `## Decisions` | the item's single decision register | this README |
 | `## Plan` | `Status: DRAFT \| GATED <date>` · deltas only | `plan-authoring` |
 | `## Findings` | round log; one `### <Stage> — round N, <date>` per round, stages in pipeline order: **Req-review** (`requirement-synthesis`) · **Gate** (`drift-gate`) · **Impl gate** (`impl-gate`) · **Adv review** (`impl-gate`, findings of its spawned `adv-reviewer-agent`) · **Review** (`implementation`) | this README (round shape) · the stage skill (what it checks) |
-| `## Delivery` | PR #, merge sha, baseline movement, deviations from the gated plan, live-run evidence, residual IDs | `implementation` |
 
 Shape-level rules, owned here:
 
@@ -119,20 +140,31 @@ Shape-level rules, owned here:
   Once delivery starts the line carries **both axes** (`plan GATED · delivery DRAFT`): a
   delivery transition never rolls back the plan stamp, and a section's own `Status:` and
   the header always agree. Each writing stage advances the header in the same edit that
-  stamps its own section — the two never diverge across sessions.
-- **Size budget (decided 2026-08-12 with the shape).** Default cap **400 lines** per
-  `docs/workflow/<item>.md`, checked at the impl gate (`.claude/skills/impl-gate/`),
-  raised only by a stage-tagged decision in the item's own register that says why. Basis:
-  e5 carried ~2,600 artifact lines across five files and the shape targets roughly an
-  order of magnitude less, so 400 is that target plus headroom — a backstop, not a target
-  to fill. The authoring rules (deltas only, evidence by reference, ≤5-line notes) do the
-  real work. Skill-run, so **advisory by construction** (`CLAUDE.md` §11): it fails no
-  build unless the owner moves it into CI or the `Makefile`.
-- **Decision register.** One per item, stage-tagged (`req` / `spec` / `plan`), IDs
-  `<item>-D-n` allocated once and **never renumbered** — withdrawn or revised entries stay
-  visible (strike-through, primes), same id discipline as `docs/todo.md`. Rationale that
-  outgrows a table cell lives in the register; every other section — and every round
-  disposition — cites the ID instead of restating the argument.
+  stamps its own section — the two never diverge across sessions. The header lives in the
+  contract file; a stage that stamps a plan-file section (`plan DRAFT`, `plan GATED`)
+  advances the contract header in that same edit — one write, two files.
+- **Size cap (decided 2026-08-12 with the one-file shape; rescoped 2026-08-18 with the
+  split).** **400 lines, contract file only, CI-enforced**: `.github/workflows/ci.yml`'s
+  `workflow-doc-cap` job caps every top-level `docs/workflow/*.md` at 400 (`e5b.md`
+  carries a shrink-only ratchet exemption; `docs/todo.md` TODO-68 tracks that the
+  exemption list is review-enforced) and is a `needs:` dependency of the terminal gate,
+  so an over-cap contract file blocks merge. This corrects in place the "advisory by
+  construction" claim this bullet carried from 2026-08-12 — falsified 2026-08-15 when
+  PR #80 (`e9c6009`) put the job in CI, and uncorrected until 2026-08-18. The impl gate
+  re-checks the same number pre-push as early warning. Basis unchanged: e5 carried ~2,600
+  artifact lines across five files; 400 is roughly an order of magnitude less plus
+  headroom — a backstop, not a target to fill. The plan file (`plans/<item>.md`) is
+  **outside the job's glob and uncapped by design**: rounds and register rows are
+  append-only, carry no compression duty, and the file is deleted at delivery — history
+  keeps it. Review pressure is never charged against an authoring cap.
+- **Decision register.** One per item, in the plan file, stage-tagged (`req` / `spec` /
+  `plan`), IDs `<item>-D-n` allocated once and **never renumbered** — withdrawn or
+  revised entries stay visible (strike-through, primes), same id discipline as
+  `docs/todo.md`. Rationale that outgrows a table cell lives in the register; every other
+  section — and every round disposition — cites the ID instead of restating the argument.
+  The register is deleted with the plan file at delivery: rationale that must outlive the
+  item lands in `## Delivery` or the registries before the stamp; anything else resolves
+  through the recorded deletion sha.
 - **Stable-ID citation.** Workflow artifacts are cited by stable ID — `e6-D-2`,
   `e5-SPEC-32`, `E-3` — **never by an artifact's line numbers**, within an item, across
   items, and from the registries. Artifact lines move; IDs do not. Code is still cited
@@ -142,10 +174,13 @@ Shape-level rules, owned here:
   in whichever section it grounds; everything else cites the ID. Where a durable ref
   exists — a sha, a tracked file — cite that instead. Recording is for what git cannot
   replay.
-- **Landing.** Before the impl branch is cut, the file is **working-tree only** (as
-  `pr-body.md` was). From branch cut, it **rides the code branch** and lands with the code
-  PR — the codex loop reviews it with the diff it describes. The post-merge status stamp
-  (`delivery MERGED <sha>`) is the only `noncode-merge` edit.
+- **Landing.** Before the impl branch is cut, both files are **working-tree only** (as
+  `pr-body.md` was). From branch cut, both **ride the code branch** and land with the code
+  PR — the codex loop reviews them with the diff they describe. Post-merge, `noncode-merge`
+  makes two commits on `main`: first delete `plans/<item>.md`, then stamp the contract
+  header `delivery MERGED <merge-sha>` and record the deletion sha in `## Delivery` (a
+  commit cannot cite its own sha). A decision or round cited from the merged record
+  resolves through that sha — the same delete-history-keeps-it rule as doc archiving.
 
 ### State decode (one table)
 
@@ -156,7 +191,11 @@ Status: requirements DRAFT → requirements AGREED → spec FROZEN → plan DRAF
         → plan GATED · delivery DRAFT → IMPLEMENTED → PUSHED PR #n → MERGED <sha>
 ```
 
-| `Status:` line + Findings rounds observed | State |
+Round-dependent rows decode an **in-flight** item from its plan file; once
+`delivery MERGED` the plan file is deleted, so a merged item decodes from the contract
+header alone — its rounds live in history behind the recorded deletion sha.
+
+| `Status:` line + rounds observed in `plans/<item>.md` | State |
 |---|---|
 | `requirements DRAFT` | stage 1 in progress; a Req-review round with empty dispositions = owner findings pending fold-in |
 | `requirements AGREED` | stage 2 may start |
@@ -172,7 +211,7 @@ Status: requirements DRAFT → requirements AGREED → spec FROZEN → plan DRAF
 | `delivery PUSHED PR #n`, no Review round | pushed; codex not yet run |
 | latest Review round has empty dispositions | stage-4 fix pending |
 | Review dispositions filled, delivery still `PUSHED` | re-review pending |
-| `delivery MERGED <sha>` | delivered; the stamp is the post-merge `noncode-merge` edit |
+| `delivery MERGED <sha>` | delivered; the stamp + plan-file deletion are the post-merge `noncode-merge` edits |
 
 A round with findings is a table, one row per finding:
 

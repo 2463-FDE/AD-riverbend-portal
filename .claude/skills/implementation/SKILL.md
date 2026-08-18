@@ -5,8 +5,9 @@ description: Stage 4 of the delivery workflow (docs/workflow/README.md). Turn a 
 
 # Implementation
 
-Input: `docs/workflow/<item>.md` with `## Plan` at `Status: GATED`. Refuse to start from
-a DRAFT plan — the gate runs first, and starting early is how drift ships.
+Input: the plan file `docs/workflow/plans/<item>.md` with `## Plan` at `Status: GATED`
+(contract file `docs/workflow/<item>.md` header agrees). Refuse to start from a DRAFT
+plan — the gate runs first, and starting early is how drift ships.
 Output: a merged PR whose changes trace to the plan's change list, with the spec
 untouched.
 
@@ -17,8 +18,9 @@ untouched.
   ROI/disclosure, migrations, secrets)? Confirm the human approval is recorded in the
   plan's Landmines block before writing code. No record → stop and ask.
 - Branch off `main` per `CONTRIBUTING.md`. Never implement on `main`.
-- **Commit `docs/workflow/<item>.md` on the branch as the first commit** — from branch
-  cut, the artifact rides the code branch (README landing rule) and every subsequent
+- **Commit both item files — `docs/workflow/<item>.md` and
+  `docs/workflow/plans/<item>.md` — on the branch as the first commit** — from branch
+  cut, both ride the code branch (README landing rule) and every subsequent
   artifact edit (round logs, dispositions, Delivery) is committed here, reviewed with the
   diff it describes. Fill the header's `Baseline at branch:` line now, from a fresh
   measurement — the header is the single site for the number.
@@ -70,7 +72,7 @@ Owned here; every stage-4 record follows it:
    Delivery records why not.
 5. Run the plan's Verification section end-to-end, including its negative
    (break-then-revert) checks; record outcomes in `## Delivery` per the evidence rule.
-6. Write `## Delivery` (advance the header's **delivery axis** to `delivery DRAFT`; every
+6. Write `## Delivery` (contract file; advance the header's **delivery axis** to `delivery DRAFT`; every
    header write moves one axis and leaves `plan GATED` standing — README): deviations with
    rationale; slices test-first vs not; any planned slice absent from the diff and why —
    an empty result is still recorded; live-run evidence; **residuals as registry IDs
@@ -104,8 +106,9 @@ across the artifact, the PR body, and the registry — one home, cited.
 - **After push:** advance the header's delivery axis to `delivery PUSHED PR #<n>` (the
   `plan GATED` half is untouched), commit, then comment
   `@codex-review`. Work each round per "Addressing a round"; iterate until dry. On merge,
-  the `delivery MERGED <sha>` stamp lands on `main` as the only `noncode-merge` edit
-  (README landing rule). This skill owns the push→review→merge segment; the artifact, not
+  `noncode-merge` makes the two post-merge commits on `main`: delete
+  `docs/workflow/plans/<item>.md`, then stamp `delivery MERGED <sha>` and record the
+  deletion sha in `## Delivery` (README landing rule). This skill owns the push→review→merge segment; the artifact, not
   memory, carries its state.
 
 ## Addressing a round (the fix session)
@@ -114,8 +117,8 @@ The procedure for responding to a codex round. Label definitions and the measure
 reasoning live in `docs/review-loop-metrics.md` (§1 labels, §3 baseline) — that file is
 the why, this section is the how.
 
-1. Append `### Review — round N, <date>` to `## Findings`, one row per finding (first
-   round's lead line names the PR # and reviewer once).
+1. Append `### Review — round N, <date>` to the plan file's `## Findings`, one row per
+   finding (first round's lead line names the PR # and reviewer once).
 2. **Label** each finding A/B/C/E per `docs/review-loop-metrics.md` §1. A finding
    believed wrong is refuted with runtime evidence (build it, run it, hit the endpoint —
    never inference from static config) and closed with an anchored comment, no code

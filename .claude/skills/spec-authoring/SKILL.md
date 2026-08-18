@@ -5,9 +5,10 @@ description: Stage 2 of the delivery workflow (docs/workflow/README.md). Turn an
 
 # Spec authoring (EARS)
 
-Input: `docs/workflow/<item>.md` with `## Requirements` at `Status: AGREED`. Refuse to
-start from a DRAFT — requirements change through their own stage, not here.
-Output: the `## Spec` section, agreed with the owner, then **frozen**
+Input: the contract file `docs/workflow/<item>.md` with `## Requirements` at
+`Status: AGREED`. Refuse to start from a DRAFT — requirements change through their own
+stage, not here.
+Output: the `## Spec` section (contract file), agreed with the owner, then **frozen**
 (`Status: FROZEN <date>`, header `Status:` advanced). It changes only by explicit human
 decision (`docs/workflow/README.md`). This stage produces **behavior contracts, not
 design** — no file paths, no module names, no implementation choices (that is the plan
@@ -39,7 +40,8 @@ stage).
    derived from it. PHI/authz/sanitization behavior inherits the `docs/landmines.md` §3
    negative-test rule — say so in Notes, don't restate the rule.
 6. **Ask the owner the open questions** (answers become `spec`-tagged entries in the
-   item's `## Decisions` register), and stop at agreement. Owner marks FROZEN; the frozen
+   item's `## Decisions` register, in the plan file `docs/workflow/plans/<item>.md`),
+   and stop at agreement. Owner marks FROZEN; the frozen
    contract is the EARS rows **and their pinned checks** — a pinned row or pinned test
    changes only by owner decision, and the impl gate diffs for it
    (`.claude/skills/impl-gate/`).

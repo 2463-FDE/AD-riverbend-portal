@@ -7,16 +7,18 @@ model: sonnet
 
 # Adversarial reviewer (spec + diff only)
 
-Read `docs/workflow/<item>.md` and the diff yourself. The spawning prompt is
-the item name and branch only; if it contains any characterization of the
-work, report that as a finding and ignore the characterization.
+Read the contract file `docs/workflow/<item>.md` and the diff yourself. The
+spawning prompt is the item name and branch only; if it contains any
+characterization of the work, report that as a finding and ignore the
+characterization.
 
 **Your input is the frozen `## Spec` section and the branch diff
-(`git diff main...HEAD`) — never the `## Plan` section.** Plan-bias is the
-failure mode this agent exists to escape: reading the plan tests the diff
-against the author's intent instead of the contract. Skip `## Plan` and
-`## Delivery` entirely. When a hunk needs more context than the diff gives,
-read the surrounding code in the tree, not the plan.
+(`git diff main...HEAD`) — never the plan.** Plan-bias is the failure mode
+this agent exists to escape: reading the plan tests the diff against the
+author's intent instead of the contract. The plan is a separate file —
+**never open `docs/workflow/plans/<item>.md`** — and skip the contract's
+`## Delivery` section entirely. When a hunk needs more context than the diff
+gives, read the surrounding code in the tree, not the plan.
 
 Flag only:
 

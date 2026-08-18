@@ -1,17 +1,20 @@
 ---
 name: requirement-synthesis
-description: Stage 1 of the delivery workflow (docs/workflow/README.md). Turn the engagement owner's raw ask into an agreed Requirements section in the item's one-file artifact at docs/workflow/<item>.md. Use when the user provides a new weekly ask, says "start week N", or invokes /requirement-synthesis.
+description: Stage 1 of the delivery workflow (docs/workflow/README.md). Turn the engagement owner's raw ask into an agreed Requirements section in the item's contract file at docs/workflow/<item>.md, creating its plan file docs/workflow/plans/<item>.md alongside. Use when the user provides a new weekly ask, says "start week N", or invokes /requirement-synthesis.
 ---
 
 # Requirement synthesis
 
 Input: an item number and the engagement owner's raw ask, given fresh in conversation.
-Output: `docs/workflow/<item>.md` created (the one-file shape — section order, header,
-decision register, and landing rule are `docs/workflow/README.md` §Layout's) with its
-`## Requirements` section agreed with the owner. This stage produces **requirements, not
-solutions** — no design, no file lists, no EARS phrasing (that is the spec stage).
+Output: **both item files created** (the split shape — section order, header, decision
+register, and landing rule are `docs/workflow/README.md` §Layout's): the contract file
+`docs/workflow/<item>.md` with its `## Requirements` section agreed with the owner, and
+the plan file `docs/workflow/plans/<item>.md` holding the `## Decisions` register (and
+any req-review rounds). This stage produces **requirements, not solutions** — no design,
+no file lists, no EARS phrasing (that is the spec stage).
 
-The file is working-tree only at this stage (README landing rule); nothing is committed.
+Both files are working-tree only at this stage (README landing rule); nothing is
+committed.
 
 ## Process
 
@@ -29,13 +32,14 @@ The file is working-tree only at this stage (README landing rule); nothing is co
 3. **Draft the section** per the template below. Requirement IDs are `<item>-REQ-n`,
    allocated once, never renumbered — withdrawn rows are struck through, not deleted, and
    a revised row takes a prime (`REQ-4′`), so the revision trail stays visible in place.
-   Owner decisions taken at this stage go in the item's `## Decisions` register,
-   `req`-tagged; a requirement whose rationale outgrows its table cell cites its decision
-   ID instead of carrying the argument.
+   Owner decisions taken at this stage go in the item's `## Decisions` register
+   (`docs/workflow/plans/<item>.md`), `req`-tagged; a requirement whose rationale
+   outgrows its table cell cites its decision ID instead of carrying the argument.
 4. **Ask the owner the open questions** (structured multi-choice where possible), fold
    answers in as `req`-tagged decisions, and delete resolved questions.
 5. **Owner review runs as Findings rounds.** When the owner reviews a draft and returns
-   defects, append a `### Req-review — round N, <date>` round to `## Findings` (same
+   defects, append a `### Req-review — round N, <date>` round to the plan file's
+   `## Findings` (same
    table-and-disposition machinery as every other stage's rounds; the README owns the
    round format). No bespoke "what changed from the first draft" section — the round log
    plus the never-renumber idiom *is* the revision trail.
@@ -60,7 +64,9 @@ The file is working-tree only at this stage (README landing rule); nothing is co
   click-ops config) are recorded once as a dated `E-n` block per the README's evidence
   rule and cited by ID from the table.
 
-## Template (the file, as stage 1 leaves it)
+## Template (the two files, as stage 1 leaves them)
+
+Contract file — `docs/workflow/<item>.md`:
 
 ```markdown
 # <item> — <short name>
@@ -68,12 +74,6 @@ The file is working-tree only at this stage (README landing rule); nothing is co
 Status: requirements DRAFT
 Item: <one line — what this item is>
 Baseline at branch: not yet cut
-
-## Decisions
-
-| ID | Stage | Decision | Why (one sentence) |
-|---|---|---|---|
-| <item>-D-1 | req | <decision> (owner <date>) | <why> |
 
 ## Requirements
 
@@ -92,5 +92,17 @@ nowhere else>.
 Open: <questions for the owner; delete when resolved — answers become req decisions>
 ```
 
-`## Spec`, `## Plan`, `## Findings`, `## Delivery` are appended by their stages, not
-scaffolded empty here.
+Plan file — `docs/workflow/plans/<item>.md`:
+
+```markdown
+# <item> — plan file (deleted at delivery; contract: docs/workflow/<item>.md)
+
+## Decisions
+
+| ID | Stage | Decision | Why (one sentence) |
+|---|---|---|---|
+| <item>-D-1 | req | <decision> (owner <date>) | <why> |
+```
+
+`## Spec` and `## Delivery` are appended to the contract file, `## Plan` and
+`## Findings` to the plan file, by their stages — not scaffolded empty here.

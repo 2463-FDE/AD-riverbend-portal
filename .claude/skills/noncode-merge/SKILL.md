@@ -74,9 +74,9 @@ review pressure.
    | Finding target | Route |
    |---|---|
    | Wording, cites, registry upkeep, factual slip in a mutable doc (`docs/**`, ADR body, `.claude/` skill text) | Patch on this branch. |
-   | Requirements content (`AGREED`) — the `## Requirements` section of `docs/workflow/<item>.md`, or `requirements.md` in a five-file item | Stage 1: `requirement-synthesis` revises; the owner re-stamps. |
-   | Spec content (frozen) — `## Spec` section, or `spec.md` | Owner decision first — a frozen spec never changes silently mid-loop. An accepted amendment runs `spec-authoring` re-freeze, and a downstream `GATED` plan takes a `drift-gate` re-run. |
-   | Plan design content (`GATED`) — `## Plan` section, or `plan.md` | Stage 3: `plan-authoring` revises; `drift-gate` re-stamps. |
+   | Requirements content (`AGREED`) — the `## Requirements` section of the contract file `docs/workflow/<item>.md`, or `requirements.md` in a five-file item | Stage 1: `requirement-synthesis` revises; the owner re-stamps. |
+   | Spec content (frozen) — `## Spec` section (contract file), or `spec.md` | Owner decision first — a frozen spec never changes silently mid-loop. An accepted amendment runs `spec-authoring` re-freeze, and a downstream `GATED` plan takes a `drift-gate` re-run. |
+   | Plan design content (`GATED`) — `## Plan` section (`docs/workflow/plans/<item>.md`), or `plan.md` | Stage 3: `plan-authoring` revises; `drift-gate` re-stamps. |
    | The **code the docs describe**, not the docs | Out of this PR. The record stays faithful to what shipped; file the code finding where the registry contract puts it (`debt-log` risk / `todo` loose end / next item's requirements) and cite the filing in the disposition. |
    | `docs/landmines.md` §1 zone content, `docs/specs-deprecated/**` | Owner only — this skill never touches them (see Never). |
 
@@ -160,13 +160,16 @@ Non-code branches (docs, `.claude/`) need steps 1–3 only.
 
 ## Workflow artifacts on this path
 
-For a one-file item (`docs/workflow/<item>.md`, every item from e6 onward): the artifact
-rides its own code branch from branch cut and lands with the code PR, so **the only edit
-this skill ever lands for it is the post-merge status stamp** — the header's delivery axis
-advanced to `delivery MERGED <sha>`, `plan GATED` left standing —
-the README's landing rule. Pre-branch, the file is working-tree only and there is nothing
-to land. Do not land the artifact itself through this path; that produces the conflicting
-second copy the landing rule exists to prevent.
+For a split-shape item (contract `docs/workflow/<item>.md` + plan
+`docs/workflow/plans/<item>.md`, every item from w4 onward; e5b/e6 landed one-file):
+both files ride the item's own code branch from branch cut and land with the code PR, so
+**the only edits this skill ever lands for the item are the two post-merge commits on
+`main`** — first delete `docs/workflow/plans/<item>.md`, then advance the contract
+header's delivery axis to `delivery MERGED <merge-sha>` (`plan GATED` left standing) and
+record the deletion sha in `## Delivery` — the README's landing rule (two commits
+because a commit cannot cite its own sha). Pre-branch, both files are working-tree only
+and there is nothing to land. Do not land the artifact itself through this path; that
+produces the conflicting second copy the landing rule exists to prevent.
 
 Five-file items are all delivered (their artifacts are on `main`); if one's record ever
 needs a dated correction it comes through here as an ordinary docs patch.

@@ -1,17 +1,17 @@
 ---
 name: drift-gate
-description: Gate stage of the delivery workflow (docs/workflow/README.md) — fresh-context adversarial check of a DRAFT plan against its frozen EARS spec, both sections of docs/workflow/<item>.md. Stamps the Plan section GATED or returns findings to stage 3. Use when a plan draft is complete and the user says "run the gate", "gate the plan", or invokes /drift-gate.
+description: Gate stage of the delivery workflow (docs/workflow/README.md) — fresh-context adversarial check of a DRAFT plan (docs/workflow/plans/<item>.md) against its frozen EARS spec (docs/workflow/<item>.md). Stamps the Plan section GATED or returns findings to stage 3. Use when a plan draft is complete and the user says "run the gate", "gate the plan", or invokes /drift-gate.
 ---
 
 # Plan/spec drift gate
 
-Input: `docs/workflow/<item>.md` with `## Spec` at `Status: FROZEN` and `## Plan` at
-`Status: DRAFT`.
-Output: either the Plan section stamped `Status: GATED <date>` (header `Status:` line
-advanced to match), or a `### Gate — round N, <date>` round appended to `## Findings`
-and the plan back to stage 3 (spec unchanged, per the pipeline). The round log — not
-chat history or session memory — carries findings between sessions; item state must
-always be derivable from the file alone.
+Input: the contract file `docs/workflow/<item>.md` with `## Spec` at `Status: FROZEN`
+and the plan file `docs/workflow/plans/<item>.md` with `## Plan` at `Status: DRAFT`.
+Output: either the Plan section stamped `Status: GATED <date>` (contract-file header
+`Status:` line advanced to match), or a `### Gate — round N, <date>` round appended to
+the plan file's `## Findings` and the plan back to stage 3 (spec unchanged, per the
+pipeline). The round log — not chat history or session memory — carries findings between
+sessions; item state must always be derivable from the two files alone.
 
 The mechanism is codified from the e1 prototype run (2026-08-06): a fresh-context read of
 the plan against the spec caught real gaps the authoring session could not see. The fresh
@@ -23,8 +23,9 @@ context is the mechanism, not a nicety.
    session wrote any part of the Plan section, stop and tell the owner to invoke the gate
    in a new session.
 2. **The gate session never edits the Requirements, Spec, or Plan content.** It writes
-   exactly two things: Gate rounds in `## Findings`, and — on a clean run — the Plan
-   `Status:` stamp (plus the matching header line). Revisions happen in stage 3
+   exactly two things: Gate rounds in the plan file's `## Findings`, and — on a clean
+   run — the Plan `Status:` stamp in the plan file plus the matching header line in the
+   contract file. Revisions happen in stage 3
    (`.claude/skills/plan-authoring/`), and the revised plan gets a full fresh gate run
    against its final text. No stamping a plan amended mid-gate — analyze-and-amend in one
    motion leaves the final text never checked as a whole (the e1 lesson). The spawned
@@ -43,7 +44,7 @@ stamp.
 1. **Verify input state:** `## Spec` at `FROZEN`, `## Plan` at `DRAFT`, and hard rule 1
    holds for this session.
 2. **Spawn `drift-gate-agent`** (Agent tool). The spawning prompt is the item name only —
-   no characterization of the work. The agent reads the artifact and the tree itself;
+   no characterization of the work. The agent reads both item files and the tree itself;
    that self-read is the structural replacement for prompt-authorship bias, and the agent
    reports any characterization it does receive as a finding.
 3. **Receive the report:** findings as round-ready rows, per-SPEC verdicts, and the
@@ -53,9 +54,9 @@ stamp.
 
 ## Outcome
 
-- **Any finding → no stamp.** Append `### Gate — round N, <date>` to `## Findings`
-  (README owns the round format), findings SPEC-cited, one line each, disposition column
-  empty for stage 3. Plan returns to stage 3; spec unchanged. Re-gate is a full re-run,
+- **Any finding → no stamp.** Append `### Gate — round N, <date>` to the plan file's
+  `## Findings` (README owns the round format), findings SPEC-cited, one line each,
+  disposition column empty for stage 3. Plan returns to stage 3; spec unchanged. Re-gate is a full re-run,
   fresh session.
 - **Repeat of a dispositioned class → the class goes back, not the instance.** When a
   finding is the same failure class as one dispositioned in an earlier round, the round
@@ -64,8 +65,8 @@ stamp.
   site's fix (sweep mechanics live in `.claude/skills/plan-authoring/`). A disposition
   that fixes only the instance leaves the class open for the next round to hunt one site
   at a time — the e6 rounds-2–4 lesson.
-- **Clean → stamp.** Set the Plan section to `Status: GATED <date>`, advance the header
-  `Status:` line, and close with a dry round: one `checked:` line naming the scope
+- **Clean → stamp.** Set the Plan section to `Status: GATED <date>`, advance the
+  contract-file header `Status:` line, and close with a dry round: one `checked:` line naming the scope
   covered (ids checked, map state, ⚠ coverage) — a dry round's value is knowing what it
   checked.
 
