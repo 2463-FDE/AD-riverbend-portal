@@ -105,4 +105,6 @@ Plan file — `docs/workflow/plans/<item>.md`:
 ```
 
 `## Spec` and `## Delivery` are appended to the contract file, `## Plan` and
-`## Findings` to the plan file, by their stages — not scaffolded empty here.
+`## Findings` to the plan file, by their stages — not scaffolded empty here. Each is
+created by its first writing stage (README shape rule) — a req-review round in step 5
+writes the `## Findings` heading with its first round.

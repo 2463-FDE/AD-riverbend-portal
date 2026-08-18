@@ -113,6 +113,10 @@ first session.
 | `## Delivery` | PR #, merge sha, baseline movement, deviations from the gated plan, live-run evidence, residual IDs, plan-file deletion sha | `implementation` |
 
 **Plan file — `docs/workflow/plans/<item>.md`.** Working state; deleted at delivery.
+Stage 1 creates the file with `## Decisions` only; `## Plan` and `## Findings` are each
+**created by their first writing stage** — the stage that appends the first round writes
+the `## Findings` heading with it, positioned after `## Plan` (or last in the file while
+`## Plan` does not exist yet, as with a req-review round).
 
 | Section | Content | Rules owned by |
 |---|---|---|
