@@ -64,22 +64,59 @@ span; adjacent hits like the captured 1042 → 1043 are common. Neither enabler 
 alone: opaque ids without a bind would be security by obscurity, and a bind would make id
 shape irrelevant. The fix is the bind; the id shape sets how cheap exploitation is.
 
-### Exposure set (sized per `docs/landmines.md` §1, not re-fixed here)
+### Exposure set — the swept 23-route table (sized per `docs/landmines.md` §1, not re-fixed here)
 
-§1 requires the D11 fix to be sized against every route with the same property, so the list
-is here even though w4 closes none of it. Most of it is already registered — `docs/landmines.md`
-§1 names `GET /patients`, `GET /records/search` and `GET /roi/requests`; `docs/debt-log.md` D11
-names the two per-patient chart routes. Two rows below were on neither list and are filed by w4:
+§1 requires the D11 fix to be sized against **every** route with the same property. Three
+impl-gate rounds proved that an example list cannot stay complete — a route nobody listed is
+simply absent and the "every route" claim silently lies (missed at r1, r3, r4). So the sized
+set is not a list: it is a **classification-complete sweep of every one of the gateway's 23
+declared `@app.` routes**, each classified in-set or excluded, and pinned by
+`tests/test_w4_exposure_sweep.py` (w4-D-20) — a route added or missed reddens the suite
+rather than waiting for a fourth manual catch.
 
-| Surface | Property | Status |
-|---|---|---|
-| `GET /patients/{id}/records` (`records-service/app.py:104`, gateway `:325`) | the captured route; per-patient chart read, session not patient-bound | OPEN |
-| `GET /patients/{id}/relevant-records` (`records-service/app.py:194`, gateway `:332`) | same property, same `records.read` capability — inherited in kind when W2 landed it, already listed in D11 | OPEN |
-| `GET /patients/{id}` (gateway `:320`) | returns `PatientDetail` — plaintext `ssn`, `dob`, `address` (`records-service/schemas.py:18-32`); same id walk, `patients.read` only | OPEN — **was on neither list**; filed by w4 into `docs/debt-log.md` D11 |
-| `GET /appointments?patient_id=` (`scheduling-service/app.py:71-93`, gateway `:365-371`) | same id walk against a different service: `schedule.read` only, no patient bind, returns `AppointmentOut` — free-text `reason`, `provider`, `location`, `scheduled_for` (`scheduling-service/schemas.py:27-38`). Write twin `POST /appointments/{appointment_id}/cancel` (gateway `:379`, `scheduling-service/app.py:138-139`) takes an appointment id and no patient bind either, so any `appointments.write` holder cancels any patient's appointment | OPEN — **was on neither list**; filed by w4 into `docs/debt-log.md` D11 |
-| `GET /patients?q=` (gateway `:305`) | name search across all patients — not per-patient at all, so it hands out the ids the walk needs | OPEN, already in `docs/landmines.md` §1 |
-| `GET /roi/requests` (gateway `:391`) | `patient_id` optional; returns disclosure records across patients under `disclosures.read` | OPEN, already in `docs/landmines.md` §1 (and D12) |
-| `GET /records/search?q=` (`records-service/app.py:335`, gateway `:343`) | was the worst vector: an un-escaped `q` let `%` match every row with no `LIMIT` — one request, whole corpus, no ids needed | **Corpus-read vector CLOSED by e6** (`e53cd81`, 2026-08-17): metacharacters escaped and the result set capped (e6-SPEC-1/2/5). Search is still not patient-scoped, so a bounded page of other patients' record bodies is still reachable — that residue is D11's, not e6's |
+Membership follows a two-clause property predicate read off the route's own signature, never
+a registry (w4-D-30): a route is **in set** iff **(a)** its subject is chosen by
+caller-supplied input — a path param, a query param, or a request-body field — naming a
+patient or a patient-scoped resource on a walkable id, with no session→patient bind,
+regardless of method and regardless of whether the response carries PHI; **or (b)** it
+reaches data spanning patients by construction, with no per-patient narrowing at all.
+
+This is **classification-complete, not verdict-correct** (w4-D-24): the sweep forces every
+route to be classified and the test guards the partition against drift, but whether a given
+route's verdict is *right* stays the human review — a route parked as excluded with a wrong
+reason still passes green. `tests/test_w4_exposure_sweep.py` also pins this table, so when
+the TODO-20 session→patient bind lands it must update that test.
+
+| Method | Path | In set | Reason |
+|---|---|---|---|
+| GET | /patients/{patient_id} | (a) | path `patient_id`, `patients.read`, no bind — returns `PatientDetail` with plaintext `ssn`, `dob`, `address` (`records-service/schemas.py:18-32`), gateway `:320` |
+| GET | /patients/{patient_id}/records | (a) | path `patient_id`, `records.read`, no bind — the captured route (`records-service/app.py:104`, gateway `:325`) |
+| GET | /patients/{patient_id}/relevant-records | (a) | path `patient_id`, `records.read`, no bind — same property, inherited when W2 landed it (`records-service/app.py:194`, gateway `:332`) |
+| GET | /appointments | (a) | query `patient_id`, `schedule.read`, no bind — returns `AppointmentOut` (free-text `reason`, `provider`, `location`, `scheduled_for`, `scheduling-service/schemas.py:27-38`), gateway `:365` |
+| POST | /appointments | (a) | body `patient_id`, `appointments.write`, no bind — books against any patient's id, gateway `:374` |
+| POST | /appointments/{appointment_id}/cancel | (a) | path `appointment_id`, `appointments.write`, no bind — any holder cancels any patient's appointment, gateway `:379` |
+| POST | /review-queue/{pair_id}/disposition | (a) | path `pair_id`, `patients.write`, no bind — files a two-charts-are-one-person judgment on a sequential id, gateway `:284` |
+| POST | /roi/requests | (a) | body `patient_id`, `disclosures.write`, no bind — opens a disclosure request against any patient, gateway `:401` |
+| POST | /roi/requests/{request_id}/fulfill | (a) | path `request_id`, `disclosures.write`, no bind — fulfils on a sequential id (substantively D12's), gateway `:406` |
+| GET | /patients | (b) | name search across all patients — hands out the very ids the walk needs, gateway `:305`; already in `docs/landmines.md` §1 |
+| GET | /records/search | (b) | record search across all patients — e6 escaped the metacharacters and capped the result set (`e53cd81`, e6-SPEC-1/2/5), but the bounded page is still not patient-scoped, so a page of other patients' record bodies stays reachable — that residue is D11's, gateway `:343`; already in §1 |
+| GET | /roi/requests | (b) | `patient_id` optional — returns disclosure records across patients under `disclosures.read`, gateway `:391`; already in §1 (and D12) |
+| GET | /review-queue | (b) | candidate duplicate pairs across all patients with name + dob, `patients.write`, no per-patient narrowing (`intake-service/schemas.py:119-142`), gateway `:279` — the fourth (b) member, w4-D-35 |
+| GET | /healthz | excluded | liveness/readiness probe, unauthenticated, no patient data, gateway `:179` |
+| POST | /login | excluded | auth entry — the subject is credentials, not a patient, gateway `:208` |
+| POST | /logout | excluded | tears down the caller's own session, gateway `:237` |
+| GET | /me | excluded | returns the caller's own identity from the session, self-scoped, gateway `:243` |
+| POST | /intake | excluded | creates a new registration — no caller-supplied selector onto an existing chart, gateway `:251` |
+| GET | /eligibility | excluded | payer 270/271 coverage check on a caller-supplied `insurance_id` — reaches no stored chart, eligibility-service has no DB, gateway `:260` |
+| GET | /slots | excluded | open scheduling slots, optional `provider_id` — not patient-scoped, no cross-patient PHI, gateway `:351` |
+| POST | /ai/intake-instructions | excluded | closed-vocabulary intake facts → checklist — no existing-patient subject, gateway `:632` |
+| POST | /ai/visit-chat | excluded | binds via `visit_memory_get(visit_id, owner)` — reaches only the caller's own visit memory (the counter-example), gateway `:1058` |
+| POST | /hl7/ingest | excluded | inbound HL7 from an external sender — no caller-supplied patient selector onto an existing chart, gateway `:1260` |
+
+The set the fix must be sized against is the 13 in-set routes above; `docs/landmines.md` §1
+keeps `GET /patients`, `GET /records/search` and `GET /roi/requests` as its named
+by-construction examples and now points at this swept table as the sized set (w4-D-23).
+`docs/debt-log.md` D11 carries the same set as a registry row.
 
 Amplifier, tracked separately: the portal stores the bearer token in `localStorage`
 (`frontend/app/lib/session.ts:29-30`, `docs/debt-log.md` cross-cutting table). Combined with
@@ -105,10 +142,12 @@ then loops:
 for enc in encounters:                      # app.py:128-129
 ```
 
-So one chart assembly costs `1 + E` queries for `E` encounters: the captured 37 means 36
-encounters plus the encounter query. The reported page-load metric — assembled patient view
-p95 **3.8s, almost all DB time** — is consistent with per-query latency multiplied by
-encounter count rather than with any single slow query.
+So one chart assembly costs `1 + E` queries for `E` encounters. The count is read straight
+from the source: the per-encounter query "runs 37 times (one per encounter)", so the
+captured chart has **37 encounters** and costs 38 queries — one for the encounter list plus
+37 per-encounter reads. The reported page-load metric — assembled patient view p95 **3.8s,
+almost all DB time** — is consistent with per-query latency multiplied by encounter count
+rather than with any single slow query.
 
 **Why it does not hold for a real chart.** The cost is linear in encounter count, and
 encounter count is unbounded: it grows for exactly the patients whose charts matter most —
