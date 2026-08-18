@@ -167,7 +167,13 @@ both files ride the item's own code branch from branch cut and land with the cod
 `main`** — first delete `docs/workflow/plans/<item>.md`, then advance the contract
 header's delivery axis to `delivery MERGED <merge-sha>` (`plan GATED` left standing) and
 record the deletion sha in `## Delivery` — the README's landing rule (two commits
-because a commit cannot cite its own sha). Pre-branch, both files are working-tree only
+because a commit cannot cite its own sha). **Pre-delete citation sweep, mandatory:**
+before the delete commit, `grep -o '<item>-D-[0-9]*'` over the contract file; every ID it
+cites must already be carried as a one-line decisions-of-record entry in `## Delivery`
+(added by stage 4 per the README's register rule). An uncarried citation **blocks the
+delete** — carry the decision line into `## Delivery` first (a record correction, not a
+content change), then delete. The delivered contract file must stand alone: no stable-ID
+reference in it may have its only definition in the deleted plan file. Pre-branch, both files are working-tree only
 and there is nothing to land. Do not land the artifact itself through this path; that
 produces the conflicting second copy the landing rule exists to prevent.
 

@@ -162,9 +162,12 @@ Shape-level rules, owned here:
   revised entries stay visible (strike-through, primes), same id discipline as
   `docs/todo.md`. Rationale that outgrows a table cell lives in the register; every other
   section — and every round disposition — cites the ID instead of restating the argument.
-  The register is deleted with the plan file at delivery: rationale that must outlive the
-  item lands in `## Delivery` or the registries before the stamp; anything else resolves
-  through the recorded deletion sha.
+  The register is deleted with the plan file at delivery: **every decision ID the
+  contract file cites is carried as a one-line decisions-of-record entry in `## Delivery`
+  before the delete** — `noncode-merge` runs the blocking pre-delete sweep — and
+  rationale that must outlive the item lands in `## Delivery` or the registries before
+  the stamp. Only decisions the contract never cites resolve through the recorded
+  deletion sha alone.
 - **Stable-ID citation.** Workflow artifacts are cited by stable ID — `e6-D-2`,
   `e5-SPEC-32`, `E-3` — **never by an artifact's line numbers**, within an item, across
   items, and from the registries. Artifact lines move; IDs do not. Code is still cited
