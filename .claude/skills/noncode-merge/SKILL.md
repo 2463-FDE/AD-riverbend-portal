@@ -168,7 +168,8 @@ both files ride the item's own code branch from branch cut and land with the cod
 header's delivery axis to `delivery MERGED <merge-sha>` (`plan GATED` left standing) and
 record the deletion sha in `## Delivery` — the README's landing rule (two commits
 because a commit cannot cite its own sha). **Pre-delete citation sweep, mandatory:**
-before the delete commit, `grep -o '<item>-D-[0-9]*'` over the contract file; every ID it
+before the delete commit, grep the contract file for its decision IDs — substituting the
+item name, e.g. `grep -o 'w4-D-[0-9]*' docs/workflow/w4.md | sort -u`; every ID it
 cites must already be carried as a one-line decisions-of-record entry in `## Delivery`
 (added by stage 4 per the README's register rule). An uncarried citation **blocks the
 delete** — carry the decision line into `## Delivery` first (a record correction, not a
