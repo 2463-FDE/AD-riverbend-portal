@@ -67,6 +67,16 @@ spawns, `gate:` observations, rounds, stamp.
   `### Adv review — round N, <date>` round (README owns the round format), each
   SPEC-cited where applicable, one line each, disposition column empty for stage 4.
   Branch returns to stage 4; re-gate is a full re-run, fresh session, both agents.
+- **Repeat of a dispositioned class → close the class, not the instance.** When a finding
+  is the same failure class as one dispositioned in an earlier round of this loop — or as
+  a fix already recorded on the branch before the gate — the round entry names the match,
+  and closing it is not an instance fix: the disposition records that a sweep for further
+  instances ran and what scope it covered, or a guard/test that reddens on the next
+  instance. An instance-only fix is not an available disposition, owner included; if class
+  closure needs a plan change, that is structural → stage 3 now, not at the third instance.
+  This mirrors the drift-gate class-recurrence rule (`.claude/skills/drift-gate/`); it
+  exists because w4's exposure-set miss was instance-patched at impl-gate r1/r3 and forced
+  a stage-3 return at r4 — the same one-site-at-a-time cost the e6 rounds-2–4 lesson names.
 - **Clean → stamp** — both agents clean and every `gate:` observation recorded.
   Advance the header's **delivery axis** to `delivery IMPLEMENTED <date>` — one axis,
   never the whole line; `plan GATED` stays as the drift gate set it (README) — and
@@ -75,6 +85,10 @@ spawns, `gate:` observations, rounds, stamp.
   exactly as the drift gate set it. Close with a dry `checked:` round line. The stamp
   means push-ready; **push itself stays human-gated** per
   `.claude/skills/implementation/`.
+
+A round write that supersedes an earlier round's coverage carries the README's
+superseded-round compression duty (size-budget bullet) in the same edit — the cap is a
+backstop the compression rule keeps clear, never a finding of its own.
 
 Round numbers count this stage's rounds only. **Round-3 rule:** a third round with any
 open finding stops the loop; the owner accepts as a named residual, overrules, or sends

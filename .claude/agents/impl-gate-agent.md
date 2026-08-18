@@ -35,11 +35,14 @@ moves one into CI or the Makefile):
    the final test id is the expected motion of implementation, not a spec
    change**; renaming, removing, or rewriting a test the spec already pinned
    is, and takes an owner decision.
-2. **Size budget** (the threshold and its rationale are the README's dated
-   2026-08-12 shape decision — the check is owned here).
-   `wc -l docs/workflow/<item>.md` — over the **400-line default budget** is
-   a red finding unless a stage-tagged decision in the item's own register
-   raises the budget and says why.
+2. **Size budget** (the thresholds and their rationale are the README's dated
+   2026-08-12 shape decision, split into two budgets 2026-08-18 — the check is
+   owned here). Measure the item file **per budget, never as one `wc -l`**:
+   the header + `## Requirements` + `## Spec` + `## Plan` + `## Delivery`
+   against the **400-line authored budget**, and `## Decisions` + `## Findings`
+   against the **200-line loop-record budget**. Either one over is a red
+   finding unless a stage-tagged decision in the item's own register raises
+   that budget and says why; spare room in one budget never funds the other.
 3. **`cmd:` checks.** Run every `cmd:` cell in the spec table; expected
    output must match.
 4. **`gate:` cells — human observation required.** Hand-run assertions and

@@ -120,14 +120,34 @@ Shape-level rules, owned here:
   delivery transition never rolls back the plan stamp, and a section's own `Status:` and
   the header always agree. Each writing stage advances the header in the same edit that
   stamps its own section — the two never diverge across sessions.
-- **Size budget (decided 2026-08-12 with the shape).** Default cap **400 lines** per
-  `docs/workflow/<item>.md`, checked at the impl gate (`.claude/skills/impl-gate/`),
-  raised only by a stage-tagged decision in the item's own register that says why. Basis:
-  e5 carried ~2,600 artifact lines across five files and the shape targets roughly an
-  order of magnitude less, so 400 is that target plus headroom — a backstop, not a target
-  to fill. The authoring rules (deltas only, evidence by reference, ≤5-line notes) do the
-  real work. Skill-run, so **advisory by construction** (`CLAUDE.md` §11): it fails no
+- **Size budget (decided 2026-08-12 with the shape; split into two budgets 2026-08-18).**
+  Two caps per `docs/workflow/<item>.md`, checked at the impl gate
+  (`.claude/skills/impl-gate/`), and **never traded against each other** — spare room in
+  one does not fund an overrun in the other. Either is raised only by a stage-tagged
+  decision in the item's own register that says why.
+  - **Authored sections — 400 lines:** the file header plus `## Requirements` + `## Spec` +
+    `## Plan` + `## Delivery` — everything the authoring rules govern; no line is outside
+    one of the two budgets. Basis: e5 carried ~2,600
+    artifact lines across five files and the shape targets roughly an order of magnitude
+    less, so 400 is that target plus headroom — a backstop, not a target to fill. The
+    authoring rules (deltas only, evidence by reference, ≤5-line notes) do the real work.
+  - **Loop record — 200 lines:** `## Decisions` + `## Findings` together. These grow one
+    row and one record per gate round, not by authoring choice; they are bounded instead
+    by the round-3 rule and by the compression duty below.
+  The split was decided on w4 (2026-08-18), the first item ever returned to stage 3: its
+  authored sections stood at 341 lines — comfortably inside the original single cap —
+  while nine gate and impl-gate rounds put the file at 494/500 and made cap housekeeping
+  a finding in three separate rounds. A single budget charges review pressure to the
+  authoring rules, so a hard-reviewed item reads as an oversized artifact and every extra
+  round becomes a raise decision.
+  Skill-run, so **advisory by construction** (`CLAUDE.md` §11): neither cap fails a
   build unless the owner moves it into CI or the `Makefile`.
+  **Compressing superseded rounds is part of the write that supersedes them, never a gate
+  finding** (added 2026-08-17; w4 impl-gate r3/r4 each burned a finding slot on cap
+  housekeeping): the session whose round, halt note, or return-to-stage-3 record makes an
+  earlier round's coverage prose redundant compresses that record — intro and `checked:`
+  prose down to findings + dispositions — in the same edit. The commit shas in the
+  disposition cells remain the evidence; git history keeps the dropped prose.
 - **Decision register.** One per item, stage-tagged (`req` / `spec` / `plan`), IDs
   `<item>-D-n` allocated once and **never renumbered** — withdrawn or revised entries stay
   visible (strike-through, primes), same id discipline as `docs/todo.md`. Rationale that
