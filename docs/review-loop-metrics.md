@@ -1179,3 +1179,13 @@ durability of contract citations across the plan file's deletion; it closed when
 carry became a blocking pre-delete sweep and the last sentence offering sha-only
 resolution was scoped away — same shape as the PR #82 lesson: the class closes when the
 contradicting sentence is removed, not merely outvoted by a true one elsewhere.
+
+**PR #87 r1 — 2026-08-18.** 2 findings, **2 A / 0 B / 0 C**, both fixed on the branch:
+MAJOR — the kg assembly merge attached records by encounter id alone, so a defective-corpus
+record claiming a sibling patient rode into an authorized view; closed with a typed
+`MisattributedRecord` at the merge plus a red-first adversarial test (landmines §3). Minor —
+the excluded-route doc-parity test pinned (method, path) but not the Reason cell w4-D-27
+records as pinned; closed by pinning the reason's opening clause, which immediately caught
+two pre-existing text drifts. Lesson: an ownership demonstration is only as strong as its
+weakest node type — the encounter leg had four boundary tests while the record leg had none,
+and the reviewer found the untested leg.
