@@ -1172,3 +1172,10 @@ carried `## Delivery` entry. Minor — the sweep's grep showed the `<item>` plac
 as a literal pattern. Lesson: when a fix adds an obligation, sweep the same file for
 older sentences that still describe the pre-obligation world — the r1 fix edited the
 register bullet but not the landing bullet two rules down.
+
+**PR #86 r3 — 2026-08-18, approve.** 0 findings; loop closed in 3 rounds
+(3 A r1, 2 A r2, both r2 findings new-in-fix). The PR's one real finding class was the
+durability of contract citations across the plan file's deletion; it closed when the
+carry became a blocking pre-delete sweep and the last sentence offering sha-only
+resolution was scoped away — same shape as the PR #82 lesson: the class closes when the
+contradicting sentence is removed, not merely outvoted by a true one elsewhere.
