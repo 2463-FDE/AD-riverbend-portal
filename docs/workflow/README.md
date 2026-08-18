@@ -186,8 +186,11 @@ Shape-level rules, owned here:
   PR — the codex loop reviews them with the diff they describe. Post-merge, `noncode-merge`
   makes two commits on `main`: first delete `plans/<item>.md`, then stamp the contract
   header `delivery MERGED <merge-sha>` and record the deletion sha in `## Delivery` (a
-  commit cannot cite its own sha). A decision or round cited from the merged record
-  resolves through that sha — the same delete-history-keeps-it rule as doc archiving.
+  commit cannot cite its own sha). Rounds, and plan-file decisions the contract never
+  cites, resolve through that sha — the same delete-history-keeps-it rule as doc
+  archiving. A **contract-cited** decision never resolves through the sha alone: it
+  resolves through the decisions-of-record entry the pre-delete sweep guarantees in
+  `## Delivery` (register rule above).
 
 ### State decode (one table)
 
