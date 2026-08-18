@@ -46,7 +46,11 @@ Sourced from `ARCHITECTURE.md` §7 and the handoff docs.
   `LIMIT`. e6 escapes the LIKE metacharacters at both sites and bounds the result set
   (e6-SPEC-1/2/5), closing that vector; the IDOR itself is not closed — these reads are still
   cross-patient by construction and sessions are still not patient-bound, so the D11 fix is still
-  sized against this whole set. Detail and candidate fixes in `docs/debt-log.md` D11.
+  sized against this whole set. **The sized set is now the `swept 23-route` table in
+  `docs/research/w4-findings.md`** — a classification-complete sweep of every gateway `@app.`
+  route (13 in-set), pinned by `tests/test_w4_exposure_sweep.py` so a route added or missed
+  reddens the suite; `GET /patients`, `GET /records/search?q=` and `GET /roi/requests` above stay
+  the named by-construction examples (w4-D-23). Detail and candidate fixes in `docs/debt-log.md` D11.
 - ⚠️ **Domain services are network-internal** (D15, ADR 0016) — no domain service has auth of its
   own; the gateway is the only session check, so 8071–8076 are `expose`-only and host publishing
   is a closed allowlist in `tests/test_compose_topology.py`. Do not add `ports:` to a service (or
