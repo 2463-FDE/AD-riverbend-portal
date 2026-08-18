@@ -140,8 +140,17 @@ Shape-level rules, owned here:
   a finding in three separate rounds. A single budget charges review pressure to the
   authoring rules, so a hard-reviewed item reads as an oversized artifact and every extra
   round becomes a raise decision.
-  Skill-run, so **advisory by construction** (`CLAUDE.md` §11): neither cap fails a
-  build unless the owner moves it into CI or the `Makefile`.
+  **Enforced in CI, not advisory** (corrected 2026-08-18 — this bullet claimed
+  skill-run advisory status from 2026-08-12, which `e9c6009` falsified on 2026-08-15 and
+  nobody came back to fix): `.github/workflows/ci.yml`'s `workflow-doc-cap` job is a
+  `needs:` dependency of the terminal gate, so an over-cap artifact blocks merge. Note
+  what that means for a raise: **a stage-tagged raise decision does not move CI.** The job
+  measures **whole-file `wc -l` against 400** — the pre-split rule — with a shrink-only
+  ratchet exemption list, so an item inside both budgets here can still redden it, and a
+  per-item raise is inert until the job carries it. Teaching the job the split is its own
+  PR (`.github/**` is code, `.claude/skills/noncode-merge/`); until it lands, CI is the
+  binding number and the impl gate's per-budget read says which budget an over-cap file
+  actually breached.
   **Compressing superseded rounds is part of the write that supersedes them, never a gate
   finding** (added 2026-08-17; w4 impl-gate r3/r4 each burned a finding slot on cap
   housekeeping): the session whose round, halt note, or return-to-stage-3 record makes an

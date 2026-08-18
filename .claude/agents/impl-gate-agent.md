@@ -43,6 +43,10 @@ moves one into CI or the Makefile):
    against the **200-line loop-record budget**. Either one over is a red
    finding unless a stage-tagged decision in the item's own register raises
    that budget and says why; spare room in one budget never funds the other.
+   Report the **whole-file `wc -l`** alongside the two, because CI's
+   `workflow-doc-cap` job still caps the whole file at 400 and blocks merge: a
+   file inside both budgets but over 400 total is a red CI finding no register
+   decision can raise, so say so rather than reporting the item as clear.
 3. **`cmd:` checks.** Run every `cmd:` cell in the spec table; expected
    output must match.
 4. **`gate:` cells — human observation required.** Hand-run assertions and
