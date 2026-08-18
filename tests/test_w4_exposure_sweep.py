@@ -20,6 +20,9 @@ Two things this file buys, and one it does not (w4-D-24):
   in the sweep table of docs/research/w4-findings.md, matched on the exact
   Method and Path *cells*, never substring containment — so ``GET /patients``
   is pinned by its own row and not by a longer sibling's (w4-D-27, w4-D-31).
+  Excluded rows additionally pin the Reason cell's opening clause against the
+  ``EXCLUDED`` reason string (codex r1 f2); the trailing gateway line ref is
+  the one part left free to move.
 - **Not verdict-correctness.** The closure forces every route to be *classified*
   and guards the set against drift; whether a given route's in-set/excluded
   verdict is *right* stays the ``gate:`` human read (w4-D-24). A route parked in
@@ -72,7 +75,8 @@ FINDINGS_DOC = os.path.join(REPO_ROOT, "docs", "research", "w4-findings.md")
 # --- the sized set, partitioned by the two-clause predicate (w4-D-30) ------- #
 # Membership is keyed on (method, path-template). Each entry's value records
 # which clause admits it (in set) or the one-line reason it is out (excluded) —
-# the same reason string the findings table carries.
+# for excluded routes, the exact opening clause of the findings table's Reason
+# cell, asserted by test_excluded_doc_parity.
 
 # Clause (a): caller-supplied subject on a walkable id, no session→patient bind.
 # Clause (b): cross-patient by construction, no per-patient narrowing.
@@ -97,11 +101,11 @@ EXPOSURE_SET = {
 
 EXCLUDED = {
     ("GET", "/healthz"): "liveness/readiness probe, unauthenticated, no patient data",
-    ("POST", "/login"): "auth entry — subject is credentials, not a patient",
+    ("POST", "/login"): "auth entry — the subject is credentials, not a patient",
     ("POST", "/logout"): "tears down the caller's own session",
     ("GET", "/me"): "returns the caller's own identity from the session, self-scoped",
     ("POST", "/intake"): "creates a new registration — no caller-supplied selector onto an existing chart",
-    ("GET", "/eligibility"): "payer 270/271 coverage check on a caller-supplied insurance_id — no stored chart, eligibility-service has no DB",
+    ("GET", "/eligibility"): "payer 270/271 coverage check on a caller-supplied insurance_id — reaches no stored chart, eligibility-service has no DB",
     ("GET", "/slots"): "open scheduling slots, optional provider_id — not patient-scoped, no cross-patient PHI",
     ("POST", "/ai/intake-instructions"): "closed-vocabulary intake facts → checklist — no existing-patient subject",
     ("POST", "/ai/visit-chat"): "binds via visit_memory_get(visit_id, owner) — reaches only the caller's own visit memory (the counter-example)",
@@ -145,7 +149,8 @@ _ROW = re.compile(r"^\|(.+)\|\s*$")
 
 
 def _sweep_table_rows():
-    """(method, path, verdict) for each body row of the findings sweep table.
+    """(method, path, verdict, reason) for each body row of the findings sweep
+    table.
 
     The table is located by a header row carrying the Method, Path and 'In set'
     columns; parsing is on exact cell content, so a path that prefixes another
@@ -163,7 +168,10 @@ def _sweep_table_rows():
         lowered = [c.lower() for c in cells]
         if "method" in lowered and "path" in lowered and "in set" in lowered:
             header_idx = i
-            col = {name: lowered.index(name) for name in ("method", "path", "in set")}
+            col = {
+                name: lowered.index(name)
+                for name in ("method", "path", "in set", "reason")
+            }
             break
     assert header_idx is not None, "no sweep table (Method | Path | In set) in findings doc"
 
@@ -178,7 +186,8 @@ def _sweep_table_rows():
         method = cells[col["method"]].upper()
         path = cells[col["path"]].strip("`")
         verdict = cells[col["in set"]].lower()
-        rows.append((method, path, verdict))
+        reason = cells[col["reason"]]
+        rows.append((method, path, verdict, reason))
     return rows
 
 
@@ -187,7 +196,7 @@ def test_exposure_set_doc_parity():
     the table's in-set rows are exactly EXPOSURE_SET — neither drifts from the
     other (w4-D-27 forward direction, w4-D-31 exact-cell)."""
     rows = _sweep_table_rows()
-    doc_in_set = {(m, p) for m, p, v in rows if v in ("a", "b", "(a)", "(b)")}
+    doc_in_set = {(m, p) for m, p, v, _ in rows if v in ("a", "b", "(a)", "(b)")}
     assert doc_in_set == set(EXPOSURE_SET), (
         f"in-set table drift: missing_from_table={sorted(set(EXPOSURE_SET) - doc_in_set)} "
         f"extra_in_table={sorted(doc_in_set - set(EXPOSURE_SET))}"
@@ -197,10 +206,22 @@ def test_exposure_set_doc_parity():
 def test_excluded_doc_parity():
     """Every EXCLUDED route has its own excluded row in the sweep table, and the
     table's excluded rows are exactly EXCLUDED — the excluded half of the
-    partition is pinned too, not just EXPOSURE_SET (w4-D-27 reverse direction)."""
+    partition is pinned too, not just EXPOSURE_SET (w4-D-27 reverse direction).
+
+    The Reason cell is pinned too (codex r1 f2): each excluded row's reason must
+    open with the reason string EXCLUDED carries, backticks ignored, so the
+    stated grounds for exclusion cannot drift out of the table silently. The
+    trailing gateway line ref stays unpinned (it moves with unrelated gateway
+    edits), and whether the reason is *right* stays the human read (w4-D-24)."""
     rows = _sweep_table_rows()
-    doc_excluded = {(m, p) for m, p, v in rows if v in ("excluded", "no", "out")}
-    assert doc_excluded == set(EXCLUDED), (
-        f"excluded table drift: missing_from_table={sorted(set(EXCLUDED) - doc_excluded)} "
-        f"extra_in_table={sorted(doc_excluded - set(EXCLUDED))}"
+    doc_excluded = {(m, p): r for m, p, v, r in rows if v in ("excluded", "no", "out")}
+    assert set(doc_excluded) == set(EXCLUDED), (
+        f"excluded table drift: missing_from_table={sorted(set(EXCLUDED) - set(doc_excluded))} "
+        f"extra_in_table={sorted(set(doc_excluded) - set(EXCLUDED))}"
     )
+    drifted = {
+        key: {"pinned": EXCLUDED[key], "table": reason}
+        for key, reason in doc_excluded.items()
+        if not reason.replace("`", "").startswith(EXCLUDED[key])
+    }
+    assert not drifted, f"excluded reason drift: {drifted}"
