@@ -195,7 +195,8 @@ The header `Status:` line carries the furthest stage reached, one line, updated 
 
 ```
 Status: requirements DRAFT → requirements AGREED → spec FROZEN → plan DRAFT → plan GATED
-        → plan GATED · delivery DRAFT → IMPLEMENTED → PUSHED PR #n → MERGED <sha>
+        → plan GATED · delivery DRAFT → delivery IMPLEMENTED → delivery PUSHED PR #n
+        → delivery MERGED <sha>
 ```
 
 Round-dependent rows decode an **in-flight** item from its plan file; once
