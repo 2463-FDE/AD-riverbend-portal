@@ -1163,3 +1163,12 @@ only uncited decisions resolve through the deletion sha). M1 — no stage owned 
 stage 1. Minor — state-grammar example dropped the `delivery` prefix agents mutate
 exactly. Lesson: a lifecycle that ends in deletion needs its citation obligations
 checked at the delete, not described near it.
+
+**PR #86 r2 — 2026-08-18.** 2 findings (both new-in-fix), **2 A / 0 B / 0 C**, fixed on
+the branch: M2 — the landing bullet's broad "resolves through that sha" sentence
+contradicted the r1 carry rule, a documented escape hatch around the sweep; scoped to
+rounds and uncited decisions, contract-cited decisions resolve only through their
+carried `## Delivery` entry. Minor — the sweep's grep showed the `<item>` placeholder
+as a literal pattern. Lesson: when a fix adds an obligation, sweep the same file for
+older sentences that still describe the pre-obligation world — the r1 fix edited the
+register bullet but not the landing bullet two rules down.
