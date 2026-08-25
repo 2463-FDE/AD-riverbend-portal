@@ -1189,3 +1189,20 @@ records as pinned; closed by pinning the reason's opening clause, which immediat
 two pre-existing text drifts. Lesson: an ownership demonstration is only as strong as its
 weakest node type — the encounter leg had four boundary tests while the record leg had none,
 and the reviewer found the untested leg.
+
+**PR #88 r1 — 2026-08-25.** 4 findings (2 blockers, 2 majors), **4 A / 0 B / 0 C**, all fixed on
+the branch as one class: the ticketed path (README rule B) was carried into some stage
+sites and not others — drift-gate-agent's judgment half still closed the change list
+against the whole Spec (B1); implementation and impl-gate still wrote the delivery axis
+to the contract header (B2, 2 sites); the ticket row had no canonical columns or status
+grammar (M1); the plan-file layout table had no ticket carve-out (M2). Class fix: a
+*checked set* (whole Spec for a single-ticket item, `Scope:` ids for a ticket) governs
+every coverage assertion in both gate agents; every header write in five skills branches
+single-ticket → contract header / ticketed → ticket `Status:` + ticket row; README defines
+the ticket row once (six columns, legal values, one example) and the layout table gains a
+ticketed column. Sweep found five more same-class sites beyond the four raised (drift-gate
+hard rule 2, plan-authoring output line, noncode-merge rebase step, impl-gate-agent
+mechanical checks via the checked set, adv-reviewer wording — kept whole-Spec on purpose:
+it flags contradiction only). Lesson: a rule that changes *where a state lives* has to be
+applied by grepping for every reader and writer of the old site, not by editing the
+sections that name the rule.

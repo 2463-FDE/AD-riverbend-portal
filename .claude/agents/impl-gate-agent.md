@@ -26,6 +26,11 @@ edit or a state-changing command is a finding, not a fix.
 
 ## Checks
 
+*Checked set:* every frozen SPEC id for a single-ticket item; for a ticket,
+exactly the ids its `Scope:` line names. "The spec table", "every `test:` /
+`cmd:` / `gate:` cell", and "every SPEC id" below mean that set — rows owned
+by other tickets are outside this gate.
+
 **Mechanical half** (each check is a command or lookup, scriptable later.
 Agent-run checks are advisory by construction — `CLAUDE.md` §11 — until the
 owner moves one into CI or the Makefile; check 2's cap is the one already
@@ -75,7 +80,8 @@ there, so treat this pass as its pre-push early warning):
    confirm the change does not silently repair or disturb a teaching
    artifact. A "helpful" fix of a planted defect is a finding, always.
 8. **Baseline.** Full-suite result against the header's
-   `Baseline at branch:`: passed grows by exactly the tests the branch adds;
+   `Baseline at branch:` (ticket: the `baseline at branch` cell of its ticket
+   row, README): passed grows by exactly the tests the branch adds;
    xfailed and deselected must not move. Prefer re-running
    (`make test-docker` or the 3.12 venv); accept recorded counts only if
    re-running is impossible, and say so in the report.

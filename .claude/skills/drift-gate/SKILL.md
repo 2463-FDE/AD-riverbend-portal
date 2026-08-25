@@ -27,8 +27,9 @@ context is the mechanism, not a nicety.
    in a new session.
 2. **The gate session never edits the Requirements, Spec, or Plan content.** It writes
    exactly two things: Gate rounds in the plan file's `## Findings`, and — on a clean
-   run — the Plan `Status:` stamp in the plan file plus the matching header line in the
-   contract file. Revisions happen in stage 3
+   run — the Plan `Status:` stamp in the plan file plus the matching contract header
+   line (single ticket) or the ticket file's `Status:` line and its ticket row
+   (ticketed; README). Revisions happen in stage 3
    (`.claude/skills/plan-authoring/`), and the revised plan gets a full fresh gate run
    against its final text. No stamping a plan amended mid-gate — analyze-and-amend in one
    motion leaves the final text never checked as a whole (the e1 lesson). The spawned

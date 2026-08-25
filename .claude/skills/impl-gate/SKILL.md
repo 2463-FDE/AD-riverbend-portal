@@ -28,9 +28,10 @@ own drift (same lesson as `.claude/skills/drift-gate/`).
    gate in a new session.
 2. **The gate session never edits code, the Requirements/Spec/Plan sections, or anything
    stage 4 wrote in `## Delivery`.** It writes exactly two things: Impl-gate rounds in
-   the plan file's `## Findings`, and — on a clean run — the delivery-axis header stamp
-   plus its short gate record appended to `## Delivery` (both in the contract file),
-   which is this gate's only Delivery write. Fixes
+   the plan file's `## Findings`, and — on a clean run — the delivery-axis stamp
+   (single ticket: the contract header; ticketed: the ticket file's `Status:` line and
+   the `delivery` cell of its ticket row — README) plus its short gate record appended
+   to the contract's `## Delivery`, which is this gate's only Delivery write. Fixes
    happen in stage 4; the fixed branch gets a full fresh gate run. The spawned agents
    (below) add partial enforcement: Edit/Write are absent, so they cannot edit or stamp
    through those tools — but their `Bash` can still write the tree, so shell read-only
@@ -83,9 +84,9 @@ spawns, `gate:` observations, rounds, stamp.
   exists because w4's exposure-set miss was instance-patched at impl-gate r1/r3 and forced
   a stage-3 return at r4 — the same one-site-at-a-time cost the e6 rounds-2–4 lesson names.
 - **Clean → stamp** — both agents clean and every `gate:` observation recorded.
-  Advance the header's **delivery axis** to `delivery IMPLEMENTED <date>` — one axis,
-  never the whole line; `plan GATED` stays as the drift gate set it (README); ticket:
-  the ticket's `Status:` line and table row carry the axis — and
+  Advance the **delivery axis** to `delivery IMPLEMENTED <date>` — single ticket: the
+  contract header; ticketed: the ticket file's `Status:` line and its ticket row — one
+  axis, never the whole line; `plan GATED` stays as the drift gate set it (README) — and
   append a short gate record in `## Delivery`: date, "impl-gated fresh-context", branch and HEAD commit,
   baseline observed, `gate:` observations, residuals accepted here. The plan stamp stays
   exactly as the drift gate set it. Close with a dry `checked:` round line. The stamp

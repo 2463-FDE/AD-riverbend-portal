@@ -9,12 +9,14 @@ Input: the contract file `docs/workflow/<item>.md` with `## Spec` at `Status: FR
 Refuse to start from a DRAFT — the spec changes only through stage 2 by explicit owner
 decision.
 Output: the `## Plan` section of the plan file `docs/workflow/plans/<item>.md` at
-`Status: DRAFT` (contract header `Status:` advanced in the same edit), ready for the
-drift gate. **Ticketed item** (README Tickets rule): this stage decides the split as a
+`Status: DRAFT` (contract header `Status:` advanced in the same edit — ticketed: the
+ticket file's `Status:` line and the `plan` cell of its ticket row instead, README),
+ready for the drift gate. **Ticketed item** (README Tickets rule): this stage decides the split as a
 `plan`-tagged decision, creates one ticket file `docs/workflow/plans/<item>/<ticket>.md`
 per ticket (template below) and the ticket table in the contract's `## Delivery`; each
-ticket's `## Plan` goes to its own gate, and the ticket's `Status:` line + table row
-take the place of the contract header for the plan and delivery axes. Every frozen SPEC
+ticket's `## Plan` goes to its own gate, and the ticket's `Status:` line + ticket row
+(columns and legal values: README, Tickets rule) take the place of the contract header
+for the plan and delivery axes. Every frozen SPEC
 row lands in exactly one ticket's `Scope:` line (a ticket whose rows are not yet frozen
 is a table row, not a file).
 

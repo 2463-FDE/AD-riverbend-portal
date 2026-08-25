@@ -151,7 +151,8 @@ after landing, not an exception. For each open PR branch from step 0:
 4. **Re-verify code branches.** Rebasing a code branch onto a new `main` invalidates the
    verification behind it. Re-run the suite (`make test-docker`) and confirm the baseline
    count still holds. If the item carries a `delivery IMPLEMENTED` stamp from
-   `/impl-gate` (on the `docs/workflow/<item>.md` header), it covered the pre-rebase
+   `/impl-gate` (on the `docs/workflow/<item>.md` header, or on the ticket's `Status:`
+   line and ticket row), it covered the pre-rebase
    tree — say so, and re-run `/impl-gate` if `main` gained anything that touches the
    branch's surface.
 5. **Report** per branch: rebased / conflicted / deferred, new head SHA, suite result.

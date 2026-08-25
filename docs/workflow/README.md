@@ -116,7 +116,7 @@ first session.
 | header | `Status:` line (decode table below) · one-line item description · `Baseline at branch:` — the **single site** for the item's suite count, filled when the impl branch is cut (ticketed items: `per ticket — see ## Delivery`; the ticket row is the single site) | this README |
 | `## Requirements` | `Status: DRAFT \| AGREED <date>` · owner-decision table, `<item>-REQ-n` | `requirement-synthesis` |
 | `## Spec` | `Status: DRAFT \| FROZEN <date>` · EARS table with the check column | `spec-authoring` |
-| `## Delivery` | PR #, merge sha, baseline movement, deviations from the gated plan, live-run evidence, residual IDs, plan-file deletion sha · ticketed items: the ticket table first (ticket · SPEC rows · plan stamp · baseline at branch · status), then the same record per ticket | `implementation` (ticket table created by `plan-authoring`) |
+| `## Delivery` | PR #, merge sha, baseline movement, deviations from the gated plan, live-run evidence, residual IDs, plan-file deletion sha · ticketed items: the ticket table first (one **ticket row** per ticket — columns and legal values in the Tickets rule below), then the same record per ticket | `implementation` (ticket table created by `plan-authoring`) |
 
 **Plan file — `docs/workflow/plans/<item>.md`.** Working state; deleted at delivery.
 (Ticketed items: the Tickets rule below moves `## Plan` and the per-ticket rounds into
@@ -126,11 +126,12 @@ Stage 1 creates the file with `## Decisions` only; `## Plan` and `## Findings` a
 the `## Findings` heading with it, positioned after `## Plan` (or last in the file while
 `## Plan` does not exist yet, as with a req-review round).
 
-| Section | Content | Rules owned by |
-|---|---|---|
-| `## Decisions` | the item's single decision register | this README |
-| `## Plan` | `Status: DRAFT \| GATED <date>` · deltas only | `plan-authoring` |
-| `## Findings` | round log; one `### <Stage> — round N, <date>` per round, stages in pipeline order: **Req-review** (`requirement-synthesis`) · **Gate** (`drift-gate`) · **Impl gate** (`impl-gate`) · **Adv review** (`impl-gate`, findings of its spawned `adv-reviewer-agent`) · **Review** (`implementation`) | this README (round shape) · the stage skill (what it checks) |
+| Section | Content | Ticketed item: lives in | Rules owned by |
+|---|---|---|---|
+| `Scope:` / `Status:` lines | ticket file only: `Scope:` = its SPEC ids · `Status:` = plan + delivery axes, mirrored by its ticket row | `plans/<item>/<ticket>.md` | this README |
+| `## Decisions` | the item's single decision register | `plans/<item>.md` | this README |
+| `## Plan` | `Status: DRAFT \| GATED <date>` · deltas only | `plans/<item>/<ticket>.md` | `plan-authoring` |
+| `## Findings` | round log; one `### <Stage> — round N, <date>` per round, stages in pipeline order: **Req-review** (`requirement-synthesis`) · **Gate** (`drift-gate`) · **Impl gate** (`impl-gate`) · **Adv review** (`impl-gate`, findings of its spawned `adv-reviewer-agent`) · **Review** (`implementation`) | Req-review + Spec-review rounds in `plans/<item>.md`; Gate / Impl gate / Adv review / Review rounds in `plans/<item>/<ticket>.md` | this README (round shape) · the stage skill (what it checks) |
 
 Shape-level rules, owned here:
 
@@ -200,6 +201,20 @@ Shape-level rules, owned here:
   the ticket's scope rows and flags any orphan. A ticket file is deleted at its own merge,
   `plans/<item>.md` at the last ticket's; the pre-delete sweep runs per file.
   Single-ticket items keep the shape above unchanged.
+
+  **The ticket row** — the contract's `## Delivery` ticket table, one row per ticket,
+  exactly these columns; every stage that would write the contract header for a
+  single-ticket item writes this row (and the ticket file's `Status:` line) instead:
+
+  | ticket | SPEC rows | plan | baseline at branch | delivery | plan-file deletion sha |
+  |---|---|---|---|---|---|
+  | `corpus` | `<item>-SPEC-7–11, 38, 43` | `GATED 2026-08-27` | `1334 passed, 19 deselected, 1 xfailed` | `PUSHED PR #91` | — |
+
+  Legal values: `plan` = `DRAFT` \| `GATED <date>`; `baseline at branch` = the measured
+  counts, `—` until branch cut; `delivery` = `—` \| `DRAFT` \| `IMPLEMENTED <date>` \|
+  `PUSHED PR #n` \| `MERGED <sha>`; `plan-file deletion sha` = `—` until the post-merge
+  delete commit. A ticket whose rows are not yet frozen has `SPEC rows` = `pending
+  <amendment>`, `plan` = `—`.
 - **Stable-ID citation.** Workflow artifacts are cited by stable ID — `e6-D-2`,
   `e5-SPEC-32`, `E-3` — **never by an artifact's line numbers**, within an item, across
   items, and from the registries. Artifact lines move; IDs do not. Code is still cited
