@@ -1206,3 +1206,8 @@ mechanical checks via the checked set, adv-reviewer wording — kept whole-Spec 
 it flags contradiction only). Lesson: a rule that changes *where a state lives* has to be
 applied by grepping for every reader and writer of the old site, not by editing the
 sections that name the rule.
+
+**PR #88 r2 — 2026-08-25, approve.** 0 findings; loop closed in 2 rounds (4 A / 0 B / 0 C
+total). Codex confirmed the r1 class fix landed as a class (one checked-set concept, one
+ticket-row grammar) and named the two stated follow-ups — the `### The split shape`
+heading and the adv-reviewer scope check at the first ticket gate — as carried, not open.
