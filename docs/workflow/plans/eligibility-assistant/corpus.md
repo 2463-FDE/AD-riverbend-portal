@@ -1,0 +1,44 @@
+# eligibility-assistant / corpus
+
+Status: plan DRAFT 2026-08-25 (re-sliced from item plan; gate rounds 1–2 on the monolithic plan are in plans/eligibility-assistant.md)
+Scope: SPEC rows eligibility-assistant-SPEC-7, -8, -9, -10, -11, -38, -43 (eligibility-assistant-D-34, PR-1a — corpus, index, retriever, tier, fixtures; lands dark, not wired to the request path)
+Depends on: none
+
+## Plan
+
+Changes (file level):
+
+- `services/ai-assistant/policy_corpus/document-manifest.json` + 87 vendored files under `documents/` and `procedures/` at their package paths — NEW, byte-identical to the package (eligibility-assistant-SPEC-7 / eligibility-assistant-D-6, eligibility-assistant-D-35)
+- `services/ai-assistant/policy_corpus/index.json` — NEW curated enum index, one entry per approved row (eligibility-assistant-SPEC-11 / eligibility-assistant-D-36)
+- `services/ai-assistant/policy_index.py` — NEW: lazy corpus loader with sha256 verification against the manifest on first load (a mismatch or an unlisted file raises before any lookup — SPEC-7's failure mode is fail-closed in code as well as in the suite), `lookup(topic, payer, product, state)` (in-process, read-only, no network, `A1_RETRIEVAL_MAX_ROWS` cap, `unconfirmed` non-filtering), `fetch_by_id(ids)` (the application-side entry the reason table uses), `tier(document)` (eligibility-assistant-SPEC-9/10/43 / eligibility-assistant-D-13, eligibility-assistant-D-32, eligibility-assistant-D-36, eligibility-assistant-D-38)
+- `services/ai-assistant/policy_tool.py` — NEW: `make_policy_lookup(payer, product, state)` returns the one-argument `policy_lookup(topic: Literal[…25 categories])` LangChain tool bound to the turn's selections; any other argument, free text, or document id is rejected by the schema (eligibility-assistant-SPEC-9 / eligibility-assistant-D-25)
+- `services/ai-assistant/config.py` — `a1_retrieval_max_rows` (`A1_RETRIEVAL_MAX_ROWS`, default 12, clamped ≥ 1) (eligibility-assistant-SPEC-10)
+- `services/ai-assistant/requirements.txt`, `requirements-dev.txt` — `langchain==1.3.16`, `langchain-core==1.6.0`, `langgraph==1.2.11` (the E-4 pins; `langsmith==0.10.5` stays — the composition is measured offline in E-5, the live leg under it is a named residual); the tool module imports `langchain_core.tools` so the pin lands here (eligibility-assistant-SPEC-21 / eligibility-assistant-D-2, eligibility-assistant-D-37, E-5)
+- `tests/fixtures/a1/eligibility-assistant-evaluations.jsonl` — NEW, verbatim (eligibility-assistant-D-10, eligibility-assistant-D-35)
+- `tests/fixtures/a1/fix_neg/FIX-NEG-*.md` — NEW ×7, verbatim, tests-only home (eligibility-assistant-SPEC-8/38 / eligibility-assistant-D-6)
+- `tests/test_a1_corpus.py` — NEW: `test_manifest_sha_pinned` (every vendored file's sha256 == manifest `content_sha256`; an unlisted file under the corpus path fails), `test_eval_031_fixture_isolation[EVAL-031]` (no `FIX-NEG-*` id, path, or content hash in the corpus, the index, or the manifest's approved set), `test_fix_neg_negative[7 ids]` (each fixture fed to `policy_index.lookup` / `fetch_by_id` as an unlisted document is rejected, and its text never appears in any returned row) (eligibility-assistant-SPEC-7/8/38)
+- `tests/test_a1_retriever.py` — NEW: `test_tool_arg_topic_only_app_binds_rest`, `test_in_process_read_only_capped` (socket guard + cap), `test_unconfirmed_axis_non_filtering[EVAL-023]`, `test_index_covers_every_row` (eligibility-assistant-SPEC-9/10/11)
+- `tests/test_a1_conflict.py` (1a half) — NEW: `test_tier_rank_in_code` (tier function pinned on named ids; order by rank; EVAL-006 stale tier-5-only set, EVAL-024 regulation ranks above the cheat sheet) (eligibility-assistant-SPEC-43); the EVAL-007/013/020/023 turn tests join in 1c
+- `adr/0019-model-directed-policy-retrieval-on-the-invoke-model-seam.md` — NEW, `Accepted`, `Debt: D13`; `adr/0006-*.md` and `adr/0011-*.md` Status lines gain `Extended by ADR 0019 (eligibility-assistant)` (eligibility-assistant-D-42)
+- `tests/README.md` — "AI paths" bullet names the eligibility-assistant test files (registry upkeep)
+
+Verification (runnable, expected output stated; numbering carried from the item plan):
+1. `.venv/bin/python -m pytest tests/test_a1_corpus.py tests/test_a1_retriever.py tests/test_a1_conflict.py -q` → all passed, 0 failed; `EVAL-031` and `EVAL-023` visible in `-v` ids (eligibility-assistant-SPEC-7/8/9/10/11/38/43; 1a)
+2. sha pin, out of band: `cd services/ai-assistant/policy_corpus && python3 -c "import json,hashlib,sys; m=json.load(open('document-manifest.json'))['documents']; bad=[d['document_id'] for d in m if hashlib.sha256(open(d['path'],'rb').read()).hexdigest()!=d['content_sha256']]; print(len(m), 'rows', len(bad), 'mismatched')"` → `87 rows 0 mismatched` (eligibility-assistant-SPEC-7; 1a)
+3. break-then-revert: append one byte to `policy_corpus/documents/synthetic/DOC-SYN-EMERGENCY.md` → `tests/test_a1_corpus.py::test_manifest_sha_pinned` red; `git checkout -- services/ai-assistant/policy_corpus` → green (eligibility-assistant-SPEC-7; 1a)
+4. break-then-revert: `cp tests/fixtures/a1/fix_neg/FIX-NEG-INVENTED-COVERAGE.md services/ai-assistant/policy_corpus/documents/synthetic/` → `test_eval_031_fixture_isolation[EVAL-031]` red **and** `test_manifest_sha_pinned` red (unlisted file); remove → green (eligibility-assistant-SPEC-8; 1a)
+
+- Cross-reference: verification 5 (keyless offline import smoke) begins on this ticket and repeats on `llm-seam` and `turn`; full text in `turn.md`.
+- Cross-reference: verification 10 (CI `secret-scan` shape over the vendored corpus and fixtures) spans this ticket and `turn`; full text in `turn.md`.
+- Cross-reference: verifications 8, 9, 19, 20, 21 are per-PR or every-PR checks that run on this ticket too; full text in `trace.md`.
+- Cross-reference: the CI `services` import smoke and CI `secret-scan` gate interactions bite on this ticket first; full text in `turn.md`.
+
+## Landmines
+
+- **PHI handling (§1) — entered.** Three new PHI-adjacent code paths: (1) the model payloads (eligibility-assistant-SPEC-12, ⚠ REQ-3‴) — two Bedrock calls per agent-path turn carrying closed vocabulary plus vendored synthetic corpus text, never the clerk's message, the member id, or any identifier, proven by `tests/test_a1_prompt_boundary.py::test_egress_excludes_clerk_text_and_ids` on both calls and every path; (2) the visit-memory shape (eligibility-assistant-SPEC-20, ⚠ REQ-5′) — `VisitFacts.last_citations` carries document ids and version only, `extra="forbid"` kept, TTL unchanged, under the phi-logging-policy rule-6 controls the register's ACCEPTED 2026-07-26 row already grants, with that row amended in 1c; (3) the trace payloads (eligibility-assistant-SPEC-28/29/30/31, ⚠ REQ-8‴) — one LangSmith tree per turn from two processes (gateway root + assistant subtree, eligibility-assistant-D-41) carrying only the REQ-8‴ allowlist, the ADR 0006 two-layer hide on both clients, never streamed, negative-scanned on all eight paths, and a new register row in PR-2. Approval of record for entering the zone: **the owner's §1 approval of code entry on SPEC-7–10, 12, 20, 28–31 as designed in this block, given 2026-08-25 in session at plan review r1 (gate r1 f1), unconditional**, standing on the owner's freeze of the ⚠ rows REQ-3‴ / 5′ / 8‴ and SPEC-7–10, 12, 18–20, 28–31, 47–49 on 2026-08-24 (contract `## Spec` Status), the D13 gate decision eligibility-assistant-D-14 (nothing free-text reaches the model), and eligibility-assistant-D-41 (trace shape, confirmed by the owner 2026-08-25). This is the record the `.claude/skills/implementation/` entry checklist requires before code on these rows; a change to the mechanisms named here re-opens it. Deliberate defects in reach are preserved: D13 stays OPEN (synthetic corpus, closed prompt, no BAA — ADR 0011 constraint 4 unchanged, the payer answer is still the only coverage source); the `README.md` HIPAA overstatement (TODO-12) is untouched; the D1/D3 log-and-column defects are not touched by any eligibility-assistant file. Accepted residuals: the gateway becomes a second metadata-only vendor-egress process (LangSmith, no PHI by the same two-layer hide), corrected in CLAUDE.md §2 / D13 in PR-2; the LangSmith key is not provisioned (eligibility-assistant-D-8, needed by 2026-08-27) — SPEC-27–29 are proven keyless against a capturing fake, the live tree is SPEC-32's gate only.
+- **Domain services network-internal (§1, ADR 0016) — not touched.** No `ports:`, no new service; the corpus lives inside the existing ai-assistant image.
+- Cross-reference: the Secrets (§1) and Migrations/schema (§1) landmine entries, the structural-exclusion statement, and the partial-coverage residual-honesty bullet are item-wide and are recorded in `trace.md`.
+
+## Findings
+
+Gate rounds start at 1 for this ticket; carried findings: f2 (gate round 2 on the monolithic plan — SPEC-7 corpus-scan scope, `index.json` / `document-manifest.json` as unlisted files).
