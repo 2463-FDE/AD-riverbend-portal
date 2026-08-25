@@ -320,11 +320,11 @@ Open before FROZEN: none — eligibility-assistant-D-20..24 resolved 2026-08-24 
 
 ## Delivery
 
-| ticket | SPEC rows | plan stamp | baseline at branch | status |
-|---|---|---|---|---|
-| corpus | eligibility-assistant-SPEC-7–11, 38, 43 | DRAFT | not yet cut | — |
-| llm-seam | eligibility-assistant-SPEC-24 | DRAFT | not yet cut | — |
-| turn | eligibility-assistant-SPEC-1–6, 12–23, 25–26, 33, 36–37, 39, 41–42, 44–56 | DRAFT | not yet cut | — |
-| trace | eligibility-assistant-SPEC-27–32, 34–35, 40 | DRAFT | not yet cut | — |
-| lifecycle | pending — REQ-18 rows not yet frozen | — | not yet cut | — |
-| retrieval-eval | pending — REQ-19 rows not yet frozen | — | not yet cut | — |
+| ticket | SPEC rows | plan | baseline at branch | delivery | plan-file deletion sha |
+|---|---|---|---|---|---|
+| corpus | eligibility-assistant-SPEC-7–11, 38, 43 | DRAFT | — | — | — |
+| llm-seam | eligibility-assistant-SPEC-24 | DRAFT | — | — | — |
+| turn | eligibility-assistant-SPEC-1–6, 12–23, 25–26, 33, 36–37, 39, 41–42, 44–56 | DRAFT | — | — | — |
+| trace | eligibility-assistant-SPEC-27–32, 34–35, 40 | DRAFT | — | — | — |
+| lifecycle | pending REQ-18 (rows not yet frozen) | — | — | — | — |
+| retrieval-eval | pending REQ-19 (rows not yet frozen) | — | — | — | — |
