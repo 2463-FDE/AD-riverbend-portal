@@ -30,7 +30,8 @@ test a slice, that is a stage-3 gap, not an invitation.
 One cycle = one vertical slice = one EARS clause from the plan's scope map.
 
 1. Take the next SPEC id from the item's `## Plan` section
-   (`docs/workflow/plans/<item>.md`), in plan order.
+   (`docs/workflow/plans/<item>.md`, or the ticket file
+   `docs/workflow/plans/<item>/<ticket>.md`), in plan order.
 2. Write **one** failing test at the seam the plan names for it. The test takes the name
    the spec's `test:` cell planned (it carries the clause id:
    `test_w4_spec_3_booking_rejects_taken_slot`). Run it; watch it fail for the expected

@@ -16,8 +16,14 @@ characterization.
 (`git diff main...HEAD`) — never the plan.** Plan-bias is the failure mode
 this agent exists to escape: reading the plan tests the diff against the
 author's intent instead of the contract. The plan is a separate file —
-**never open `docs/workflow/plans/<item>.md`** — and skip the contract's
-`## Delivery` section entirely. When a hunk needs more context than the diff
+**never open `docs/workflow/plans/<item>.md` or anything under
+`docs/workflow/plans/<item>/`** — and skip the contract's `## Delivery`
+section entirely. For a ticketed item the ticket name in the spawning
+prompt is only for the report header; you never see its `Scope:` rows, so
+you read the diff against the **whole** frozen Spec — which is sound because
+you flag contradiction only: a row the diff does not implement is never a
+finding here (it belongs to another ticket or to stage 4), a row the diff
+contradicts always is. When a hunk needs more context than the diff
 gives, read the surrounding code in the tree, not the plan.
 
 Flag only:

@@ -5,7 +5,8 @@ description: Stage 1 of the delivery workflow (docs/workflow/README.md). Turn th
 
 # Requirement synthesis
 
-Input: an item number and the engagement owner's raw ask, given fresh in conversation.
+Input: an item name (README naming rule: feature slug, no letter prefix) and the
+engagement owner's raw ask, given fresh in conversation.
 Output: **both item files created** (the split shape — section order, header, decision
 register, and landing rule are `docs/workflow/README.md` §Layout's): the contract file
 `docs/workflow/<item>.md` with its `## Requirements` section agreed with the owner, and
@@ -13,8 +14,8 @@ the plan file `docs/workflow/plans/<item>.md` holding the `## Decisions` registe
 any req-review rounds). This stage produces **requirements, not solutions** — no design,
 no file lists, no EARS phrasing (that is the spec stage).
 
-Both files are working-tree only at this stage (README landing rule); nothing is
-committed.
+Between stamps both files are working tree or a `wip/` branch; at `AGREED` they land on
+`main` through `noncode-merge` (README landing rule).
 
 ## Process
 
@@ -44,7 +45,8 @@ committed.
    round format). No bespoke "what changed from the first draft" section — the round log
    plus the never-renumber idiom *is* the revision trail.
 6. **Stop at agreement.** The owner marks the section `Status: AGREED <date>` (and the
-   header `Status:` line advances); only then does the spec stage start.
+   header `Status:` line advances); land both files via `noncode-merge`; only then does
+   the spec stage start.
 
 ## Requirement rules
 

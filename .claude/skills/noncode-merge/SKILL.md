@@ -76,7 +76,7 @@ review pressure.
    | Wording, cites, registry upkeep, factual slip in a mutable doc (`docs/**`, ADR body, `.claude/` skill text) | Patch on this branch. |
    | Requirements content (`AGREED`) — the `## Requirements` section of the contract file `docs/workflow/<item>.md`, or `requirements.md` in a five-file item | Stage 1: `requirement-synthesis` revises; the owner re-stamps. |
    | Spec content (frozen) — `## Spec` section (contract file), or `spec.md` | Owner decision first — a frozen spec never changes silently mid-loop. An accepted amendment runs `spec-authoring` re-freeze, and a downstream `GATED` plan takes a `drift-gate` re-run. |
-   | Plan design content (`GATED`) — `## Plan` section (`docs/workflow/plans/<item>.md`), or `plan.md` | Stage 3: `plan-authoring` revises; `drift-gate` re-stamps. |
+   | Plan design content (`GATED`) — `## Plan` section (`docs/workflow/plans/<item>.md` or a ticket's `plans/<item>/<ticket>.md`), or `plan.md` | Stage 3: `plan-authoring` revises; `drift-gate` re-stamps. |
    | The **code the docs describe**, not the docs | Out of this PR. The record stays faithful to what shipped; file the code finding where the registry contract puts it (`debt-log` risk / `todo` loose end / next item's requirements) and cite the filing in the disposition. |
    | `docs/landmines.md` §1 zone content, `docs/specs-deprecated/**` | Owner only — this skill never touches them (see Never). |
 
@@ -151,7 +151,8 @@ after landing, not an exception. For each open PR branch from step 0:
 4. **Re-verify code branches.** Rebasing a code branch onto a new `main` invalidates the
    verification behind it. Re-run the suite (`make test-docker`) and confirm the baseline
    count still holds. If the item carries a `delivery IMPLEMENTED` stamp from
-   `/impl-gate` (on the `docs/workflow/<item>.md` header), it covered the pre-rebase
+   `/impl-gate` (on the `docs/workflow/<item>.md` header, or on the ticket's `Status:`
+   line and ticket row), it covered the pre-rebase
    tree — say so, and re-run `/impl-gate` if `main` gained anything that touches the
    branch's surface.
 5. **Report** per branch: rebased / conflicted / deferred, new head SHA, suite result.
@@ -161,22 +162,29 @@ Non-code branches (docs, `.claude/`) need steps 1–3 only.
 ## Workflow artifacts on this path
 
 For a split-shape item (contract `docs/workflow/<item>.md` + plan
-`docs/workflow/plans/<item>.md`, every item from w4 onward; e5b/e6 landed one-file):
-both files ride the item's own code branch from branch cut and land with the code PR, so
-**the only edits this skill ever lands for the item are the two post-merge commits on
-`main`** — first delete `docs/workflow/plans/<item>.md`, then advance the contract
-header's delivery axis to `delivery MERGED <merge-sha>` (`plan GATED` left standing) and
-record the deletion sha in `## Delivery` — the README's landing rule (two commits
-because a commit cannot cite its own sha). **Pre-delete citation sweep, mandatory:**
-before the delete commit, grep the contract file for its decision IDs — substituting the
-item name, e.g. `grep -o 'w4-D-[0-9]*' docs/workflow/w4.md | sort -u`; every ID it
-cites must already be carried as a one-line decisions-of-record entry in `## Delivery`
-(added by stage 4 per the README's register rule). An uncarried citation **blocks the
-delete** — carry the decision line into `## Delivery` first (a record correction, not a
-content change), then delete. The delivered contract file must stand alone: no stable-ID
-reference in it may have its only definition in the deleted plan file. Pre-branch, both files are working-tree only
-and there is nothing to land. Do not land the artifact itself through this path; that
-produces the conflicting second copy the landing rule exists to prevent.
+`docs/workflow/plans/<item>.md`, plus `plans/<item>/<ticket>.md` per ticket for a
+ticketed item; every item from w4 onward; e5b/e6 landed one-file) this skill lands the
+artifact **at each stamp** — `requirements AGREED`, `spec FROZEN`, `plan GATED` (per
+ticket) — as an ordinary docs PR on the sequence above (README landing rule, 2026-08-25):
+branch `docs/noref-<item>-<stamp>`, the stamped files only, codex loop, squash. Between
+stamps nothing lands. From branch cut the files ride the item's code branch and land with
+the code PR, so the item's other edits through this skill are **the two post-merge
+commits on `main`** — first delete the plan file that merged (`plans/<item>.md`; for a
+ticket, `plans/<item>/<ticket>.md`, and `plans/<item>.md` too with the last ticket),
+then advance the delivery axis (contract header, or the ticket's `Status:` line and
+`## Delivery` table row) to `delivery MERGED <merge-sha>` (`plan GATED` left standing)
+and record the deletion sha in `## Delivery` — two commits because a commit cannot cite
+its own sha. **Pre-delete citation sweep, mandatory, per file deleted:** before the
+delete commit, grep the contract file for its decision IDs — substituting the item name,
+e.g. `grep -o 'eligibility-assistant-D-[0-9]*' docs/workflow/eligibility-assistant.md |
+sort -u`; every ID it cites must already be carried as a one-line decisions-of-record
+entry in `## Delivery` (added by stage 4 per the README's register rule). An uncarried
+citation **blocks the delete** — carry the decision line into `## Delivery` first (a
+record correction, not a content change), then delete. The delivered contract file must
+stand alone: no stable-ID reference in it may have its only definition in a deleted plan
+file. A stamp-landing PR whose codex round finds a defect routes it by the table in
+"Addressing a round" — the stamp is not rolled back on the branch; the owning stage
+re-stamps.
 
 Five-file items are all delivered (their artifacts are on `main`); if one's record ever
 needs a dated correction it comes through here as an ordinary docs patch.

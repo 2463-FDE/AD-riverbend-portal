@@ -1,6 +1,6 @@
 ---
 name: plan-authoring
-description: Stage 3 of the delivery workflow (docs/workflow/README.md). Turn a frozen EARS spec into the Plan section of the item's plan file docs/workflow/plans/<item>.md — the design the drift gate checks against the spec and the implementation follows. Use when an item's spec is frozen and the user says "start plan", "plan stage", enters plan mode for a workflow item, or invokes /plan-authoring.
+description: Stage 3 of the delivery workflow (docs/workflow/README.md). Turn a frozen EARS spec into the Plan section of the item's plan file docs/workflow/plans/<item>.md — or, for a ticketed item, one ticket plan file docs/workflow/plans/<item>/<ticket>.md per ticket — the design the drift gate checks against the spec and the implementation follows. Use when an item's spec is frozen and the user says "start plan", "plan stage", enters plan mode for a workflow item, or invokes /plan-authoring.
 ---
 
 # Code plan authoring
@@ -9,8 +9,16 @@ Input: the contract file `docs/workflow/<item>.md` with `## Spec` at `Status: FR
 Refuse to start from a DRAFT — the spec changes only through stage 2 by explicit owner
 decision.
 Output: the `## Plan` section of the plan file `docs/workflow/plans/<item>.md` at
-`Status: DRAFT` (contract header `Status:` advanced in the same edit), ready for the
-drift gate.
+`Status: DRAFT` (contract header `Status:` advanced in the same edit — ticketed: the
+ticket file's `Status:` line and the `plan` cell of its ticket row instead, README),
+ready for the drift gate. **Ticketed item** (README Tickets rule): this stage decides the split as a
+`plan`-tagged decision, creates one ticket file `docs/workflow/plans/<item>/<ticket>.md`
+per ticket (template below) and the ticket table in the contract's `## Delivery`; each
+ticket's `## Plan` goes to its own gate, and the ticket's `Status:` line + ticket row
+(columns and legal values: README, Tickets rule) take the place of the contract header
+for the plan and delivery axes. Every frozen SPEC
+row lands in exactly one ticket's `Scope:` line (a ticket whose rows are not yet frozen
+is a table row, not a file).
 
 **The plan is deltas only — nothing the diff will show.** Its contents, in full:
 
@@ -46,6 +54,8 @@ the PR body's "Risk & landmines" section is drafted from it.
 3. **Fill the spec's planned test names** where planning sharpens them; the check column
    is the test list — the plan does not restate it.
 4. **Run the four checks** (below), then show the owner; the plan goes to the gate.
+   After the gate stamps `GATED`, the files land via `noncode-merge` (README landing
+   rule).
 
 ## Optional input: spec-anchored mockup
 
@@ -55,8 +65,8 @@ it stays scratch (untracked); what it teaches lands as `plan`-tagged decisions.
 
 ## Revision after a gate round
 
-Findings arrive as the latest `### Gate — round N` in the plan file's `## Findings` —
-the round log is
+Findings arrive as the latest `### Gate — round N` in the plan file's `## Findings`
+(the ticket file's, for a ticketed item) — the round log is
 the handoff, not chat history. Address every finding, fill its disposition cell citing
 the decision register where a decision resolves it (never re-argue in the cell), re-run
 the four checks, and leave the plan at `Status: DRAFT` for a full fresh-session re-gate.
@@ -86,9 +96,14 @@ The round-3 escalation rule lives in `.claude/skills/drift-gate/`.
   other. This check exists because e6 gate rounds 2–4 each found one missed registry of
   this class.
 
-## Template (the section)
+## Template (the section; a ticket file carries the three header lines first)
 
 ```markdown
+# <item>/<ticket> — ticket plan file (deleted at its merge; contract: docs/workflow/<item>.md)
+
+Scope: <item>-SPEC-n, <item>-SPEC-m, … (every row exactly one ticket)
+Status: plan DRAFT
+
 ## Plan
 
 Status: DRAFT | GATED <date>

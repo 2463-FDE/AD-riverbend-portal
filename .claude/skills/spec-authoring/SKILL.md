@@ -41,7 +41,8 @@ stage).
    negative-test rule — say so in Notes, don't restate the rule.
 6. **Ask the owner the open questions** (answers become `spec`-tagged entries in the
    item's `## Decisions` register, in the plan file `docs/workflow/plans/<item>.md`),
-   and stop at agreement. Owner marks FROZEN; the frozen
+   and stop at agreement. Owner marks FROZEN; land both files via `noncode-merge`
+   (README landing rule). The frozen
    contract is the EARS rows **and their pinned checks** — a pinned row or pinned test
    changes only by owner decision, and the impl gate diffs for it
    (`.claude/skills/impl-gate/`).

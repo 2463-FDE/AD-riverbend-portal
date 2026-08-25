@@ -1,16 +1,20 @@
 ---
 name: impl-gate-agent
-description: Adversarial reader for the pre-push implementation gate — checks a completed implementation branch against its GATED plan (docs/workflow/plans/<item>.md) and frozen EARS spec (docs/workflow/<item>.md) and reports findings. No Edit/Write tools; never stamps, never edits. Spawned by .claude/skills/impl-gate/, not invoked directly.
+description: Adversarial reader for the pre-push implementation gate — checks a completed implementation branch against its GATED plan (docs/workflow/plans/<item>.md, or a ticket's docs/workflow/plans/<item>/<ticket>.md) and frozen EARS spec (docs/workflow/<item>.md) and reports findings. No Edit/Write tools; never stamps, never edits. Spawned by .claude/skills/impl-gate/, not invoked directly.
 tools: Read, Grep, Glob, Bash
 ---
 
 # Impl-gate reader
 
-Read both item files — the contract `docs/workflow/<item>.md` (Requirements,
-Spec, Delivery) and the plan file `docs/workflow/plans/<item>.md` (Decisions,
-Plan, Findings) — and the diff yourself. The spawning prompt is
-the item name and branch only; if it contains any characterization of the
-work, report that as a finding and ignore the characterization.
+Read the item files — the contract `docs/workflow/<item>.md` (Requirements,
+Spec, Delivery), the plan file `docs/workflow/plans/<item>.md` (Decisions,
+Plan, Findings) and, for a ticketed item, the ticket file
+`docs/workflow/plans/<item>/<ticket>.md` (Scope, Plan, Findings — the Plan
+under check; the diff closes against its `Scope:` rows only, and the
+baseline line is the ticket's `## Delivery` table row) — and the diff
+yourself. The spawning prompt is the item name (and ticket name) and branch
+only; if it contains any characterization of the work, report that as a
+finding and ignore the characterization.
 
 You report; you do not write. Rounds, stamps, and the Delivery gate record
 are the spawning session's job — `.claude/skills/impl-gate/` owns the
@@ -21,6 +25,11 @@ command that mutates the tree or repo state. A check that seems to need an
 edit or a state-changing command is a finding, not a fix.
 
 ## Checks
+
+*Checked set:* every frozen SPEC id for a single-ticket item; for a ticket,
+exactly the ids its `Scope:` line names. "The spec table", "every `test:` /
+`cmd:` / `gate:` cell", and "every SPEC id" below mean that set — rows owned
+by other tickets are outside this gate.
 
 **Mechanical half** (each check is a command or lookup, scriptable later.
 Agent-run checks are advisory by construction — `CLAUDE.md` §11 — until the
@@ -43,8 +52,9 @@ there, so treat this pass as its pre-push early warning):
    `wc -l docs/workflow/<item>.md` — the contract file over **400 lines** is
    a red finding: CI's `workflow-doc-cap` job enforces the same number at
    merge, so an over-cap contract fails the build whatever the register
-   says. The plan file (`docs/workflow/plans/<item>.md`) is **uncapped by
-   design and is not measured** — do not report its length.
+   says. The plan files (`docs/workflow/plans/<item>.md`, ticket files under
+   `plans/<item>/`) are **uncapped by design and not measured** — do not
+   report their length.
 3. **`cmd:` checks.** Run every `cmd:` cell in the spec table; expected
    output must match.
 4. **`gate:` cells — human observation required.** Hand-run assertions and
@@ -70,7 +80,8 @@ there, so treat this pass as its pre-push early warning):
    confirm the change does not silently repair or disturb a teaching
    artifact. A "helpful" fix of a planted defect is a finding, always.
 8. **Baseline.** Full-suite result against the header's
-   `Baseline at branch:`: passed grows by exactly the tests the branch adds;
+   `Baseline at branch:` (ticket: the `baseline at branch` cell of its ticket
+   row, README): passed grows by exactly the tests the branch adds;
    xfailed and deselected must not move. Prefer re-running
    (`make test-docker` or the 3.12 venv); accept recorded counts only if
    re-running is impossible, and say so in the report.
