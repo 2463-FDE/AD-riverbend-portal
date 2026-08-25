@@ -1,16 +1,19 @@
 ---
 name: impl-gate
-description: Pre-push gate of the delivery workflow (docs/workflow/README.md) — fresh-context adversarial check of an implementation branch against its GATED plan (docs/workflow/plans/<item>.md) and frozen EARS spec (docs/workflow/<item>.md), before push and codex review. Stamps delivery IMPLEMENTED (the plan stamp is untouched) or returns findings to stage 4. Use when implementation is complete and the user says "run the impl gate", "pre-push review", or invokes /impl-gate.
+description: Pre-push gate of the delivery workflow (docs/workflow/README.md) — fresh-context adversarial check of an implementation branch against its GATED plan (docs/workflow/plans/<item>.md, or a ticket's docs/workflow/plans/<item>/<ticket>.md) and frozen EARS spec (docs/workflow/<item>.md), before push and codex review. Stamps delivery IMPLEMENTED (the plan stamp is untouched) or returns findings to stage 4. Use when implementation is complete and the user says "run the impl gate", "pre-push review", or invokes /impl-gate.
 ---
 
 # Implementation gate (pre-push)
 
 Input: the contract file `docs/workflow/<item>.md` with `## Spec` `FROZEN`, the plan
-file `docs/workflow/plans/<item>.md` with `## Plan` `GATED`, and a completed
-implementation branch (unpushed, or pushed but pre-review) carrying both files.
+file `docs/workflow/plans/<item>.md` — for a ticketed item, the ticket file
+`docs/workflow/plans/<item>/<ticket>.md` — with `## Plan` `GATED`, and a completed
+implementation branch (unpushed, or pushed but pre-review) carrying the item files.
 Output: either the contract header stamped `delivery IMPLEMENTED <date>` (the plan stamp
-is not touched), or an `### Impl gate — round N, <date>` round appended to the plan
-file's `## Findings` and the branch back to stage 4 (spec and plan unchanged). The round
+is not touched; ticketed item: the ticket's `Status:` line and `## Delivery` table row —
+README Tickets rule), or an `### Impl gate — round N, <date>` round appended to that
+plan file's `## Findings` and the branch back to stage 4 (spec and plan unchanged). A
+ticket gate checks the SPEC rows its `Scope:` line names; rounds count per ticket file. The round
 log — not chat history or session memory — carries findings between sessions.
 
 This gate covers what codex review cannot: codex sees the diff but never the spec, the
@@ -42,8 +45,8 @@ spawns, `gate:` observations, rounds, stamp.
 
 1. **Verify input state:** `## Spec` `FROZEN` (contract file), `## Plan` `GATED` (plan
    file), the branch complete, and hard rule 1 holds for this session.
-2. **Spawn two agents in parallel** (Agent tool), each with the item name and branch
-   only — no characterization of the work. The agents read the item files and the diff
+2. **Spawn two agents in parallel** (Agent tool), each with the item name (and ticket
+   name, for a ticketed item) and branch only — no characterization of the work. The agents read the item files and the diff
    themselves; that self-read is the structural replacement for prompt-authorship bias,
    and each agent reports any characterization it does receive as a finding.
    - `impl-gate-agent` (`.claude/agents/impl-gate-agent.md`) — the full check procedure:
@@ -81,7 +84,8 @@ spawns, `gate:` observations, rounds, stamp.
   a stage-3 return at r4 — the same one-site-at-a-time cost the e6 rounds-2–4 lesson names.
 - **Clean → stamp** — both agents clean and every `gate:` observation recorded.
   Advance the header's **delivery axis** to `delivery IMPLEMENTED <date>` — one axis,
-  never the whole line; `plan GATED` stays as the drift gate set it (README) — and
+  never the whole line; `plan GATED` stays as the drift gate set it (README); ticket:
+  the ticket's `Status:` line and table row carry the axis — and
   append a short gate record in `## Delivery`: date, "impl-gated fresh-context", branch and HEAD commit,
   baseline observed, `gate:` observations, residuals accepted here. The plan stamp stays
   exactly as the drift gate set it. Close with a dry `checked:` round line. The stamp

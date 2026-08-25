@@ -1,16 +1,19 @@
 ---
 name: drift-gate
-description: Gate stage of the delivery workflow (docs/workflow/README.md) — fresh-context adversarial check of a DRAFT plan (docs/workflow/plans/<item>.md) against its frozen EARS spec (docs/workflow/<item>.md). Stamps the Plan section GATED or returns findings to stage 3. Use when a plan draft is complete and the user says "run the gate", "gate the plan", or invokes /drift-gate.
+description: Gate stage of the delivery workflow (docs/workflow/README.md) — fresh-context adversarial check of a DRAFT plan (docs/workflow/plans/<item>.md, or a ticket's docs/workflow/plans/<item>/<ticket>.md) against its frozen EARS spec (docs/workflow/<item>.md). Stamps the Plan section GATED or returns findings to stage 3. Use when a plan draft is complete and the user says "run the gate", "gate the plan", or invokes /drift-gate.
 ---
 
 # Plan/spec drift gate
 
 Input: the contract file `docs/workflow/<item>.md` with `## Spec` at `Status: FROZEN`
-and the plan file `docs/workflow/plans/<item>.md` with `## Plan` at `Status: DRAFT`.
+and the plan file `docs/workflow/plans/<item>.md` — for a ticketed item, the ticket file
+`docs/workflow/plans/<item>/<ticket>.md` — with `## Plan` at `Status: DRAFT`.
 Output: either the Plan section stamped `Status: GATED <date>` (contract-file header
-`Status:` line advanced to match), or a `### Gate — round N, <date>` round appended to
-the plan file's `## Findings` and the plan back to stage 3 (spec unchanged, per the
-pipeline). The round log — not chat history or session memory — carries findings between
+`Status:` line advanced to match; ticketed item: the ticket's `Status:` line and its
+`## Delivery` table row instead — README Tickets rule), or a `### Gate — round N, <date>`
+round appended to that plan file's `## Findings` and the plan back to stage 3 (spec
+unchanged, per the pipeline). A ticket gate checks the SPEC rows its `Scope:` line
+names, plus that every frozen row is owned by some ticket. Rounds count per ticket file. The round log — not chat history or session memory — carries findings between
 sessions; item state must always be derivable from the two files alone.
 
 The mechanism is codified from the e1 prototype run (2026-08-06): a fresh-context read of
@@ -43,8 +46,8 @@ stamp.
 
 1. **Verify input state:** `## Spec` at `FROZEN`, `## Plan` at `DRAFT`, and hard rule 1
    holds for this session.
-2. **Spawn `drift-gate-agent`** (Agent tool). The spawning prompt is the item name only —
-   no characterization of the work. The agent reads both item files and the tree itself;
+2. **Spawn `drift-gate-agent`** (Agent tool). The spawning prompt is the item name (and
+   ticket name, for a ticketed item) only — no characterization of the work. The agent reads both item files and the tree itself;
    that self-read is the structural replacement for prompt-authorship bias, and the agent
    reports any characterization it does receive as a finding.
 3. **Receive the report:** findings as round-ready rows, per-SPEC verdicts, and the
@@ -66,9 +69,10 @@ stamp.
   that fixes only the instance leaves the class open for the next round to hunt one site
   at a time — the e6 rounds-2–4 lesson.
 - **Clean → stamp.** Set the Plan section to `Status: GATED <date>`, advance the
-  contract-file header `Status:` line, and close with a dry round: one `checked:` line naming the scope
+  contract-file header `Status:` line (ticket: its `Status:` line + table row), and close
+  with a dry round: one `checked:` line naming the scope
   covered (ids checked, map state, ⚠ coverage) — a dry round's value is knowing what it
-  checked.
+  checked. The stamped files then land via `noncode-merge` (README landing rule).
 
 Round numbers count this stage's rounds only. **Round-3 rule:** a third round with any
 open finding stops the loop. Report to the owner, who decides per finding: accept as a

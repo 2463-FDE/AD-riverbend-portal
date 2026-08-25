@@ -69,8 +69,10 @@ requirement synthesis → spec (EARS) → code plan
   impl-gate rounds drove its one file to 494, and cap housekeeping consumed gate findings
   in three separate rounds. The dual-budget alternative was rejected (PR #85, closed
   unmerged 2026-08-18; branch `chore/noref-size-budget-split` is the record). Items landed
-  before a shape decision stay as delivered. The pipeline itself is unchanged: same six
-  stages, same gates, same codex loop on every PR.
+  before a shape decision stay as delivered. **Decided 2026-08-25 (engagement owner):
+  three shape rules dated in place below — landing at each stamp (Landing), one contract
+  with N delivery tickets (Tickets), and feature-slug item names (Ground rules).** The
+  pipeline itself is unchanged: same six stages, same gates, same codex loop on every PR.
 
 ## Layout
 
@@ -84,6 +86,10 @@ docs/workflow/
   plans/<item>.md  ← plan file: Decisions + Plan + Findings — same items, in flight
                      only; deleted at delivery, deletion sha recorded in the contract's
                      ## Delivery
+  plans/<item>/<ticket>.md
+                   ← ticket plan file (ticketed items, rule of 2026-08-25): Scope + Plan
+                     + Findings; deleted at its own merge. plans/<item>.md then holds
+                     Decisions + item-level Findings only
   e5b.md, e6.md    ← one-file shape (all six stages in one file) — closed records as
                      delivered, stay untouched
   wN/, eN/         ← five-file dirs (requirements / spec / plan / pr-body / findings) —
@@ -107,12 +113,14 @@ first session.
 
 | Section | Content | Rules owned by |
 |---|---|---|
-| header | `Status:` line (decode table below) · one-line item description · `Baseline at branch:` — the **single site** for the item's suite count, filled when the impl branch is cut | this README |
+| header | `Status:` line (decode table below) · one-line item description · `Baseline at branch:` — the **single site** for the item's suite count, filled when the impl branch is cut (ticketed items: `per ticket — see ## Delivery`; the ticket row is the single site) | this README |
 | `## Requirements` | `Status: DRAFT \| AGREED <date>` · owner-decision table, `<item>-REQ-n` | `requirement-synthesis` |
 | `## Spec` | `Status: DRAFT \| FROZEN <date>` · EARS table with the check column | `spec-authoring` |
-| `## Delivery` | PR #, merge sha, baseline movement, deviations from the gated plan, live-run evidence, residual IDs, plan-file deletion sha | `implementation` |
+| `## Delivery` | PR #, merge sha, baseline movement, deviations from the gated plan, live-run evidence, residual IDs, plan-file deletion sha · ticketed items: the ticket table first (ticket · SPEC rows · plan stamp · baseline at branch · status), then the same record per ticket | `implementation` (ticket table created by `plan-authoring`) |
 
 **Plan file — `docs/workflow/plans/<item>.md`.** Working state; deleted at delivery.
+(Ticketed items: the Tickets rule below moves `## Plan` and the per-ticket rounds into
+`plans/<item>/<ticket>.md`; this file keeps `## Decisions` and the item-level rounds.)
 Stage 1 creates the file with `## Decisions` only; `## Plan` and `## Findings` are each
 **created by their first writing stage** — the stage that appends the first round writes
 the `## Findings` heading with it, positioned after `## Plan` (or last in the file while
@@ -146,7 +154,11 @@ Shape-level rules, owned here:
   the header always agree. Each writing stage advances the header in the same edit that
   stamps its own section — the two never diverge across sessions. The header lives in the
   contract file; a stage that stamps a plan-file section (`plan DRAFT`, `plan GATED`)
-  advances the contract header in that same edit — one write, two files.
+  advances the contract header in that same edit — one write, two files. **Ticketed
+  items:** the contract header stops at `spec FROZEN`; every plan and delivery transition
+  is written, by the same stage, to the ticket file's `Status:` line and the ticket's row
+  in the contract's `## Delivery` table — same one-write-two-files rule, ticket row in
+  place of header.
 - **Size cap (decided 2026-08-12 with the one-file shape; rescoped 2026-08-18 with the
   split).** **400 lines, contract file only, CI-enforced**: `.github/workflows/ci.yml`'s
   `workflow-doc-cap` job caps every top-level `docs/workflow/*.md` at 400 (`e5b.md`
@@ -172,6 +184,22 @@ Shape-level rules, owned here:
   rationale that must outlive the item lands in `## Delivery` or the registries before
   the stamp. Only decisions the contract never cites resolve through the recorded
   deletion sha alone.
+- **Tickets (decided 2026-08-25, engagement owner).** One contract, N delivery tickets.
+  An item splits into tickets when a subset of its SPEC rows can be planned, gated,
+  reviewed, and landed — dark landing allowed — without the rest (the test
+  `eligibility-assistant-D-34` first applied); size alone never splits. Each ticket has
+  its own plan file `plans/<item>/<ticket>.md` — a `Scope:` line naming its SPEC rows, a
+  `Status:` line (plan + delivery axes), `## Plan` with its own Landmines block,
+  `## Findings` (Gate · Impl gate · Adv review · Review rounds, numbered per ticket) —
+  and its own gate, impl gate, branch, PR, and baseline. `plans/<item>.md` keeps the one
+  `## Decisions` register (item-wide; any ticket's stage appends to it, IDs never
+  renumbered) and the item-level Findings (Req-review, Spec-review). Stage 3 creates the
+  ticket files and the contract's ticket table — the split is a `plan`-tagged decision
+  in the register; a ticket whose SPEC rows do not exist yet is a named row in the table,
+  not a file. Every frozen SPEC row is owned by exactly one ticket; the drift gate checks
+  the ticket's scope rows and flags any orphan. A ticket file is deleted at its own merge,
+  `plans/<item>.md` at the last ticket's; the pre-delete sweep runs per file.
+  Single-ticket items keep the shape above unchanged.
 - **Stable-ID citation.** Workflow artifacts are cited by stable ID — `e6-D-2`,
   `e5-SPEC-32`, `E-3` — **never by an artifact's line numbers**, within an item, across
   items, and from the registries. Artifact lines move; IDs do not. Code is still cited
@@ -181,16 +209,24 @@ Shape-level rules, owned here:
   in whichever section it grounds; everything else cites the ID. Where a durable ref
   exists — a sha, a tracked file — cite that instead. Recording is for what git cannot
   replay.
-- **Landing.** Before the impl branch is cut, both files are **working-tree only** (as
-  `pr-body.md` was). From branch cut, both **ride the code branch** and land with the code
-  PR — the codex loop reviews them with the diff they describe. Post-merge, `noncode-merge`
-  makes two commits on `main`: first delete `plans/<item>.md`, then stamp the contract
-  header `delivery MERGED <merge-sha>` and record the deletion sha in `## Delivery` (a
-  commit cannot cite its own sha). Rounds, and plan-file decisions the contract never
-  cites, resolve through that sha — the same delete-history-keeps-it rule as doc
-  archiving. A **contract-cited** decision never resolves through the sha alone: it
-  resolves through the decisions-of-record entry the pre-delete sweep guarantees in
-  `## Delivery` (register rule above).
+- **Landing (rewritten 2026-08-25; the 2026-08-18 form is in history).** Both files land
+  on `main` through `noncode-merge` **at each stamp** — `requirements AGREED`,
+  `spec FROZEN`, `plan GATED` (per ticket) — each a small non-code PR on the codex loop;
+  between stamps the edits are working tree or a `wip/` branch, never a landing. Basis:
+  a stamped artifact on one machine is an unrecovered loss waiting to happen; codex
+  reviews docs (decision of 2026-08-11); a spec finding is cheapest before a plan exists.
+  The earlier "working-tree only until branch cut" rule rested on an analogy to
+  `pr-body.md`, a file the split shape no longer has. From branch cut, both files **ride
+  the code branch** and land with the code PR — the codex loop reviews them with the diff
+  they describe. Post-merge, `noncode-merge` makes two commits on `main`: first delete the
+  plan file that merged (`plans/<item>/<ticket>.md`, plus `plans/<item>.md` with the last
+  ticket; single-ticket items: `plans/<item>.md`), then stamp `delivery MERGED
+  <merge-sha>` and record the deletion sha in `## Delivery` (a commit cannot cite its own
+  sha). Rounds, and plan-file decisions the contract never cites, resolve through that
+  sha — the same delete-history-keeps-it rule as doc archiving. A **contract-cited**
+  decision never resolves through the sha alone: it resolves through the
+  decisions-of-record entry the pre-delete sweep guarantees in `## Delivery` (register
+  rule above).
 
 ### State decode (one table)
 
@@ -204,7 +240,10 @@ Status: requirements DRAFT → requirements AGREED → spec FROZEN → plan DRAF
 
 Round-dependent rows decode an **in-flight** item from its plan file; once
 `delivery MERGED` the plan file is deleted, so a merged item decodes from the contract
-header alone — its rounds live in history behind the recorded deletion sha.
+header alone — its rounds live in history behind the recorded deletion sha. A ticketed
+item decodes **per ticket** from the same table: the ticket's `Status:` line and the
+rounds in `plans/<item>/<ticket>.md`; the contract's `## Delivery` ticket table is the
+at-a-glance view, and the header stops at `spec FROZEN`.
 
 | `Status:` line + rounds observed in `plans/<item>.md` | State |
 |---|---|
@@ -237,7 +276,8 @@ addresses it, in the form `.claude/skills/implementation/` "Addressing a round" 
 `declined: <clause> → <ID>`). The decode table's "empty dispositions" rows key on exactly
 that cell.
 
-A round is numbered within its stage only. A dry round is one `checked:` line naming what
+A round is numbered within its stage only (and within its ticket file, for ticketed
+items). A dry round is one `checked:` line naming what
 it covered — a dry round's value is knowing what it checked. **Every gate run leaves a
 round**: its findings when it has them, a dry `checked:` round when it is clean. The
 decode table reads "no Gate round" as *the gate has not run*, which is only sound if a
@@ -249,6 +289,13 @@ clean run still records one. A stage that has not run has no rounds.
   archive, not input.
 - `eN` items are internal enablers (source: engagement team, not the client) — same
   pipeline, same artifact, numbered separately so `wN` stays client asks only.
-  (Decided 2026-08-06 with `e1`.)
+  (Decided 2026-08-06 with `e1`; superseded for new items by the naming rule below.)
+- **Item names (decided 2026-08-25, engagement owner).** A new item is named by its
+  feature — a kebab-case slug of two or three words (`eligibility-assistant`), never a
+  letter prefix that needs decoding; its IDs follow the name (`<item>-REQ-n`,
+  `<item>-SPEC-n`, `<item>-D-n`) and its tickets are one-word slugs under it
+  (`plans/eligibility-assistant/corpus.md`). Client-ask vs enabler provenance is the
+  contract's `Source:` line, not the name. Items already carrying `wN`/`eN` names stay as
+  delivered (archive rule).
 - Repo-wide rules still bind every stage: `docs/landmines.md` (approval-gated zones,
   change safety, negative tests), `CONTRIBUTING.md` (branching, commits, PR process).

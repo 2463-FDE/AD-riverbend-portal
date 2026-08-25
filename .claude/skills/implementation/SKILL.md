@@ -5,8 +5,10 @@ description: Stage 4 of the delivery workflow (docs/workflow/README.md). Turn a 
 
 # Implementation
 
-Input: the plan file `docs/workflow/plans/<item>.md` with `## Plan` at `Status: GATED`
-(contract file `docs/workflow/<item>.md` header agrees). Refuse to start from a DRAFT
+Input: the plan file `docs/workflow/plans/<item>.md` — for a ticketed item, the ticket
+file `docs/workflow/plans/<item>/<ticket>.md`, one branch and PR per ticket — with
+`## Plan` at `Status: GATED` (contract file `docs/workflow/<item>.md` header, or the
+ticket's `Status:` line and `## Delivery` table row, agrees). Refuse to start from a DRAFT
 plan — the gate runs first, and starting early is how drift ships.
 Output: a merged PR whose changes trace to the plan's change list, with the spec
 untouched.
@@ -18,12 +20,12 @@ untouched.
   ROI/disclosure, migrations, secrets)? Confirm the human approval is recorded in the
   plan's Landmines block before writing code. No record → stop and ask.
 - Branch off `main` per `CONTRIBUTING.md`. Never implement on `main`.
-- **Commit both item files — `docs/workflow/<item>.md` and
-  `docs/workflow/plans/<item>.md` — on the branch as the first commit** — from branch
-  cut, both ride the code branch (README landing rule) and every subsequent
-  artifact edit (round logs, dispositions, Delivery) is committed here, reviewed with the
-  diff it describes. Fill the header's `Baseline at branch:` line now, from a fresh
-  measurement — the header is the single site for the number.
+- **The item files are already on `main` at their stamps** (README landing rule); from
+  branch cut, every artifact edit — the contract, `plans/<item>.md`, the ticket file —
+  rides the code branch, and every subsequent edit (round logs, dispositions, Delivery)
+  is committed here, reviewed with the diff it describes. **First commit on the branch:**
+  fill the header's `Baseline at branch:` line (ticket: the ticket's `## Delivery` table
+  row) from a fresh measurement — that line is the single site for the number.
 
 ## Slice loop
 
@@ -103,11 +105,13 @@ across the artifact, the PR body, and the registry — one home, cited.
   (`docs/review-loop-metrics.md` §4 carries the measurements and outranks this line if
   they diverge). The only thing that reduces the visible-residual cost is accepting fewer
   of them.
-- **After push:** advance the header's delivery axis to `delivery PUSHED PR #<n>` (the
-  `plan GATED` half is untouched), commit, then comment
+- **After push:** advance the header's delivery axis (ticket: the ticket's `Status:`
+  line and table row) to `delivery PUSHED PR #<n>` (the `plan GATED` half is untouched),
+  commit, then comment
   `@codex-review`. Work each round per "Addressing a round"; iterate until dry. On merge,
-  `noncode-merge` makes the two post-merge commits on `main`: delete
-  `docs/workflow/plans/<item>.md`, then stamp `delivery MERGED <sha>` and record the
+  `noncode-merge` makes the two post-merge commits on `main`: delete the plan file that
+  merged (`docs/workflow/plans/<item>.md`, or the ticket file — plus `plans/<item>.md`
+  with the last ticket), then stamp `delivery MERGED <sha>` and record the
   deletion sha in `## Delivery` (README landing rule). This skill owns the push→review→merge segment; the artifact, not
   memory, carries its state.
 
