@@ -53,4 +53,4 @@ Verification (runnable, expected output stated; numbering carried from the item 
 
 ## Findings
 
-Gate rounds start at 1 for this ticket; carried findings: f3 (SPEC-31 — the 1c `docs/phi-logging-policy.md` amendment makes `grep -c a1 …` pass one PR before the trace row exists).
+Gate rounds start at 1 for this ticket; carried findings: f3 (SPEC-31 — the 1c `docs/phi-logging-policy.md` amendment makes `grep -c a1 …` pass one PR before the trace row exists; **class closed 2026-08-26 by eligibility-assistant-D-51** — verification 21 follows the re-keyed cell once the re-freeze lands).

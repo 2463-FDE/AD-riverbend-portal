@@ -70,4 +70,4 @@ Verification (runnable, expected output stated; numbering carried from the item 
 
 ## Findings
 
-Gate rounds start at 1 for this ticket; carried findings: f1 (SPEC-49 / eligibility-assistant-D-44 — the single-contradicting-id cross-patient form), f6 (eligibility-assistant-D-40 — falsified in-code markers in `tests/test_ai_visit_chat.py`, close by sweep over `tests/` + `frontend/`).
+Gate rounds start at 1 for this ticket; carried findings: f1 (SPEC-49 / eligibility-assistant-D-44 — the single-contradicting-id cross-patient form; **decided 2026-08-26, eligibility-assistant-D-50: refuse** — stage 3 folds rule (a) as amended into the change list before the ticket gate), f6 (eligibility-assistant-D-40 — falsified in-code markers in `tests/test_ai_visit_chat.py`, close by sweep over `tests/` + `frontend/`).
