@@ -1001,6 +1001,12 @@ independent of transport, and the sink choice is the plan stage's per the Exclus
 a count written as a range ("57 rows" → "SPEC-1–57") becomes a phantom id at the next
 allocation — write ranges as ids, counts as counts.
 
+**PR #90 r2 — 2026-08-26, approve.** 0 findings; M1 / M2 confirmed fixed at `66ceab4`, M3 / M4
+accepted as answered from the record and not carried open. Codex's one hand-off: raise SPEC-61's
+"the EVAL-006 / EVAL-013 contract" phrase to the owner as an amend-or-leave decision (frozen
+row, D-52 precedent) rather than let it stand by default — logged here as an owner item, not
+a finding. Loop closed in 2 rounds (2 A / 0 B / 0 C / 2 E total). No re-tag.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
