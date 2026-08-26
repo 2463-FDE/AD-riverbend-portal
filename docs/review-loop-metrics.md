@@ -1231,3 +1231,18 @@ pending ticket rows now name the forward path (spec-authoring, next stamp landin
 and a gate-r1 disposition quoted a literal loopback records-port probe; reworded to the `make ps` probe the test
 itself directs (three cells, one commit). Lesson: a spot check that *proves* a port is
 unpublished must not be written as the probe the doc scan forbids.
+
+**PR #89 r2 — 2026-08-26.** 3 findings re-raised (B1, B2, M1), **3 A / 0 B / 0 C**, all
+amended in place @c3e35f7 under owner decision eligibility-assistant-D-52 (D-47 precedent).
+r1 answered each from the record; r2's reply was that a plan choosing an answer does not remove
+a contradiction from the *frozen* artifact — two frozen lines, two answers, and a `trace`
+reviewer could accept or reject the same implementation by which one they read. Conceded:
+SPEC-27's Notes now names the emitter and the Exclusions carve-out is gone (B1); SPEC-49 is
+narrowed to the forms D-44 / D-50 close, the prose-only name form is an explicit Exclusion
+cited from REQ-15″ Notes (B2); SPEC-31's check is re-keyed to the item token inside the
+register table, D-51 executed here rather than at the re-freeze (M1a). Held from the record:
+SPEC-37's count-only cmd is D-31 as pinned; the per-row `test:` pins carry kind / suite /
+subcase (M1b). Labelled A, not C: r1 did not attempt a fix, it declined one. Lesson: an
+answer-from-record disposition is complete only when the record and the frozen text agree —
+when the *record* is right and the *frozen text* is stale, the disposition is an owner
+amendment, not a citation.
