@@ -982,6 +982,31 @@ re-raise (answer from record, no new work) from a new surface of a half-closed c
 (answer from record **and** file the missing registry entry, escalate if it touches a §1
 zone) — the two look alike in a zero-diff round but are not the same signal.
 
+**PR #90 r1 — 2026-08-26.** 4 findings (0 blockers, 4 majors), **2 A / 0 B / 0 C / 2 E**. M1
+(A, fixed): the Spec status block kept the 2026-08-25 "rows not yet authored" clause next to the
+2026-08-26 re-freeze — rewritten chronologically; the ticket-file rule is now a standing
+clause of its own. M2 (A, fixed): SPEC-57 never existed — D-47's 39a/39b split took the count
+56 → 57 and the 2026-08-25 header wrote that count as the range "SPEC-1–57"; the draft then
+allocated from 58. Header and Spec status now account for it (ids 1–56 with 39a/39b, 58–66;
+57 unallocated, not reused — the allocated-once rule forbids renumbering 58→57). M3 (SPEC-61
+"the EVAL-006 / EVAL-013 contract" reads as a new acceptance case, E): answered from the record —
+the row's Notes cite SPEC-60's fixture rule (synthetic `DOC-SYN-*`, SPEC-37's count unchanged,
+eligibility-assistant-D-54), and "contract" names the outcome/action pair those two cases
+already pin (Appendix vocabulary), not harness membership; a frozen-row wording change is the
+owner's call, not a review-round patch. M4 (SPEC-63 names no recording sink, E): answered from
+the record — the spec stage writes behavior, not design (`spec-authoring`: "no implementation
+choices"); both candidate sinks are already spec-governed surfaces (SPEC-27 trace tree,
+SPEC-28 log allowlist), the row's `test:` pins the record's fields and metadata-only property
+independent of transport, and the sink choice is the plan stage's per the Exclusions. Lesson:
+a count written as a range ("57 rows" → "SPEC-1–57") becomes a phantom id at the next
+allocation — write ranges as ids, counts as counts.
+
+**PR #90 r2 — 2026-08-26, approve.** 0 findings; M1 / M2 confirmed fixed at `66ceab4`, M3 / M4
+accepted as answered from the record and not carried open. Codex's one hand-off: raise SPEC-61's
+"the EVAL-006 / EVAL-013 contract" phrase to the owner as an amend-or-leave decision (frozen
+row, D-52 precedent) rather than let it stand by default — logged here as an owner item, not
+a finding. Loop closed in 2 rounds (2 A / 0 B / 0 C / 2 E total). No re-tag.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
