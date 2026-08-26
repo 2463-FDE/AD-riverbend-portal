@@ -1246,3 +1246,13 @@ subcase (M1b). Labelled A, not C: r1 did not attempt a fix, it declined one. Les
 answer-from-record disposition is complete only when the record and the frozen text agree —
 when the *record* is right and the *frozen text* is stale, the disposition is an owner
 amendment, not a citation.
+
+**PR #89 r3 — 2026-08-26, residuals-open at the round limit (3 of 3).** B1 / B2 / M1a / M2
+confirmed closed in the frozen artifact; one finding open, **1 A / 0 B / 0 C**, closed by owner
+decision under the round-3 rule: SPEC-37's pinned cmd strips the bracket suffix before
+`sort -u`, so it could not tell `[EVAL-014-subverted]` from `[EVAL-014-resists]` even in
+principle — new evidence the same-day decline of a manifest script had not weighed. Owner:
+amend the cmd in place, suffix-aware, expected count 32 → 33 (eligibility-assistant-D-53);
+kind and suite stay per-row `test:` pins; the script stays declined. Loop closed in 3 rounds
+(6 A / 0 B / 0 C / 2 E total; the two Es were r1 answers-from-record that r2 turned into
+in-place amendments — see r2's lesson). No re-tag: the bounded review ends at round 3.
