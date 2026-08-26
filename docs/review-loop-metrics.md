@@ -1211,3 +1211,48 @@ sections that name the rule.
 total). Codex confirmed the r1 class fix landed as a class (one checked-set concept, one
 ticket-row grammar) and named the two stated follow-ups — the `### The split shape`
 heading and the adv-reviewer scope check at the first ticket gate — as carried, not open.
+
+**PR #89 r1 — 2026-08-26.** 4 findings (2 blockers, 2 majors), **2 A / 0 B / 0 C / 2 E**, plus one
+CI red outside codex's list. B1 (SPEC-27 vs the Exclusions carve-out, E): answered from the
+record — eligibility-assistant-D-23 reads the row as "a span *for* each stage, the tree is the
+contract, the emitter is design", and the trace ticket already chose the emitter (D-41,
+`trace.md:12`: gateway emits `portal_entry` / `gateway_entry`; the portal mints the id). B2
+(SPEC-49 has no input to compare against, E): the comparison set is closed by D-44 — held
+`insurance_id`, recognised member-id patterns, a phrase list; the patient-name form is D-44's
+recorded residual — but codex's push to decide the single-contradicting-id form *now* rather
+than at stage 3 was taken: the owner chose refuse (eligibility-assistant-D-50), which also
+dispositions gate r2 f1. M1 (A, two sites): SPEC-31's `grep -c a1` was broken by this PR's own
+rename — routed to spec-authoring as a frozen-cell amendment at the REQ-18/19 re-freeze
+(eligibility-assistant-D-51, owner; closes gate r2 f3's class; #89 lands without waiting);
+SPEC-37's count-only cmd is D-31 as pinned — the kind / suite / subcase obligations are each
+EVAL row's own `test:` pin, answered from the record. M2 (A, fixed): REQ-18/19 and the two
+pending ticket rows now name the forward path (spec-authoring, next stamp landing). CI:
+`test_no_operator_doc_or_tool_hits_a_domain_service_host_port` — a plan-file demo spot check
+and a gate-r1 disposition quoted a literal loopback records-port probe; reworded to the `make ps` probe the test
+itself directs (three cells, one commit). Lesson: a spot check that *proves* a port is
+unpublished must not be written as the probe the doc scan forbids.
+
+**PR #89 r2 — 2026-08-26.** 3 findings re-raised (B1, B2, M1), **3 A / 0 B / 0 C**, all
+amended in place @c3e35f7 under owner decision eligibility-assistant-D-52 (D-47 precedent).
+r1 answered each from the record; r2's reply was that a plan choosing an answer does not remove
+a contradiction from the *frozen* artifact — two frozen lines, two answers, and a `trace`
+reviewer could accept or reject the same implementation by which one they read. Conceded:
+SPEC-27's Notes now names the emitter and the Exclusions carve-out is gone (B1); SPEC-49 is
+narrowed to the forms D-44 / D-50 close, the prose-only name form is an explicit Exclusion
+cited from REQ-15″ Notes (B2); SPEC-31's check is re-keyed to the item token inside the
+register table, D-51 executed here rather than at the re-freeze (M1a). Held from the record:
+SPEC-37's count-only cmd is D-31 as pinned; the per-row `test:` pins carry kind / suite /
+subcase (M1b). Labelled A, not C: r1 did not attempt a fix, it declined one. Lesson: an
+answer-from-record disposition is complete only when the record and the frozen text agree —
+when the *record* is right and the *frozen text* is stale, the disposition is an owner
+amendment, not a citation.
+
+**PR #89 r3 — 2026-08-26, residuals-open at the round limit (3 of 3).** B1 / B2 / M1a / M2
+confirmed closed in the frozen artifact; one finding open, **1 A / 0 B / 0 C**, closed by owner
+decision under the round-3 rule: SPEC-37's pinned cmd strips the bracket suffix before
+`sort -u`, so it could not tell `[EVAL-014-subverted]` from `[EVAL-014-resists]` even in
+principle — new evidence the same-day decline of a manifest script had not weighed. Owner:
+amend the cmd in place, suffix-aware, expected count 32 → 33 (eligibility-assistant-D-53);
+kind and suite stay per-row `test:` pins; the script stays declined. Loop closed in 3 rounds
+(6 A / 0 B / 0 C / 2 E total; the two Es were r1 answers-from-record that r2 turned into
+in-place amendments — see r2's lesson). No re-tag: the bounded review ends at round 3.
