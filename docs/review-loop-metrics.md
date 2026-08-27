@@ -1007,6 +1007,21 @@ accepted as answered from the record and not carried open. Codex's one hand-off:
 row, D-52 precedent) rather than let it stand by default — logged here as an owner item, not
 a finding. Loop closed in 2 rounds (2 A / 0 B / 0 C / 2 E total). No re-tag.
 
+**PR #91 r1 — 2026-08-27.** 5 findings (3 blockers, 2 majors), **5 A / 0 B / 0 C / 0 E**. B1
+(A, fixed): origin tags had no durable basis — plan files are uncommitted between rounds, so
+"the text the previous round read" existed only in recall. Basis is now two records: the
+gate's `checked:` line carries the plan-text hash it read (`git hash-object`), and every
+disposition cell ends in a `Sites changed:` list; the agent derives the tag from those. B2
+(A, fixed): an untaggable finding is `new` by rule — the round-3 stop condition fails toward
+escalation, never toward silence. B3 (A, fixed): drift-gate's "what scope it covered" wording
+contradicted plan-authoring's enumeration rule and would have passed the exact "class closed by
+sweep: scope …" cell the PR diagnosed — replaced with the one rule, stated once. M1 (A, fixed):
+the agent's locator audit now reaches filled disposition cells and cited decisions, not only
+the Plan section. M2 (A, fixed): the origin tally lives in the `checked:` line — the README's
+one defined field — and the README says a finding round closes with that line too; no new
+round shape. Lesson: a tag that decides an escalation rule must be a derivation from a record
+that survives the session, not a judgment; when the record cannot decide, the rule fires.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`

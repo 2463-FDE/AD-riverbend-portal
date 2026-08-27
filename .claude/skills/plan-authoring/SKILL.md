@@ -83,6 +83,12 @@ a constant, a change row — is written under the fact-trail rule (step 2) and w
 four checks over the fix before the plan goes back, the self-consistency check first: the
 plan's own new artifact must do what the disposition says it does (2026-08-27 lesson — the
 round-2 fixes on both eligibility-assistant tickets were the round-3 substantive findings).
+**Every disposition cell that changes text ends in a `Sites changed:` list** — file and
+row / section / decision ID for each edit the disposition made, including edits to sibling
+ticket files and the decision register. This list, with the plan-text hash the gate
+records in its `checked:` line, is the durable basis the next gate derives its origin
+tags from (`.claude/agents/drift-gate-agent.md`); a disposition without it makes every
+finding of the next round `new` by rule.
 When a finding repeats a class an earlier round already dispositioned, close the class,
 not the instance: run the sweep for further sites of the same class and **enumerate the
 sites checked in the disposition cell** — file and row, each with its outcome — never a

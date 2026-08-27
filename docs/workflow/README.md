@@ -293,7 +293,10 @@ that cell.
 
 A round is numbered within its stage only (and within its ticket file, for ticketed
 items). A dry round is one `checked:` line naming what
-it covered — a dry round's value is knowing what it checked. **Every gate run leaves a
+it covered — a dry round's value is knowing what it checked. A round with findings
+closes with the same `checked:` line; what the line carries beyond scope (the gate's
+plan-text hash and origin tally, for one) is the stage skill's to define, not this
+README's. **Every gate run leaves a
 round**: its findings when it has them, a dry `checked:` round when it is clean. The
 decode table reads "no Gate round" as *the gate has not run*, which is only sound if a
 clean run still records one. A stage that has not run has no rounds.
