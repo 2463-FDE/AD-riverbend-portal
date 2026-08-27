@@ -1022,6 +1022,16 @@ one defined field — and the README says a finding round closes with that line 
 round shape. Lesson: a tag that decides an escalation rule must be a derivation from a record
 that survives the session, not a judgment; when the record cannot decide, the rule fires.
 
+**PR #91 r2 — 2026-08-27.** 1 finding (0 blockers, 1 major), **0 A / 1 B / 0 C / 0 E**; r1's five
+confirmed fixed at `0cf5800`. M3 (B, fixed): the README's disposition-cell rule pointed every
+stage at the implementation skill's form, so a Gate-round disposition written from the README
+alone would omit the `Sites changed:` list r1 made load-bearing — the next gate would then tag
+everything `new` by rule (escalation, not silence, but blanket). README now defers the form to
+the owning stage skill and names both: implementation for Impl-gate / Adv-review / Review rounds,
+plan-authoring for Gate rounds. Lesson (B): a new required field is only as durable as the
+lowest-traffic doc that describes the cell — sweep the canonical doc for the cell's *form*, not
+just its *shape*.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`

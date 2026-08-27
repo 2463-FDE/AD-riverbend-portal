@@ -286,9 +286,12 @@ A round with findings is a table, one row per finding:
 
 — anchor is the SPEC/REQ/decision ID, or `path:line` for code; the finding is one line;
 the disposition cell is **empty when the round is written** and filled by the stage that
-addresses it, in the form `.claude/skills/implementation/` "Addressing a round" defines
-(label per `docs/review-loop-metrics.md` §1, then `fixed @<sha>` or
-`declined: <clause> → <ID>`). The decode table's "empty dispositions" rows key on exactly
+addresses it, **in the form that stage's skill defines** — label per
+`docs/review-loop-metrics.md` §1 first, always; then the stage's own fields:
+`.claude/skills/implementation/` "Addressing a round" (`fixed @<sha>` or
+`declined: <clause> → <ID>`) for Impl-gate / Adv-review / Review rounds,
+`.claude/skills/plan-authoring/` "Revision after a gate round" for Gate rounds (a closing
+`Sites changed:` list, the basis the next gate's origin tags derive from). The decode table's "empty dispositions" rows key on exactly
 that cell.
 
 A round is numbered within its stage only (and within its ticket file, for ticketed
