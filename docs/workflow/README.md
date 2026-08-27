@@ -286,14 +286,20 @@ A round with findings is a table, one row per finding:
 
 — anchor is the SPEC/REQ/decision ID, or `path:line` for code; the finding is one line;
 the disposition cell is **empty when the round is written** and filled by the stage that
-addresses it, in the form `.claude/skills/implementation/` "Addressing a round" defines
-(label per `docs/review-loop-metrics.md` §1, then `fixed @<sha>` or
-`declined: <clause> → <ID>`). The decode table's "empty dispositions" rows key on exactly
+addresses it, **in the form that stage's skill defines** — label per
+`docs/review-loop-metrics.md` §1 first, always; then the stage's own fields:
+`.claude/skills/implementation/` "Addressing a round" (`fixed @<sha>` or
+`declined: <clause> → <ID>`) for Impl-gate / Adv-review / Review rounds,
+`.claude/skills/plan-authoring/` "Revision after a gate round" for Gate rounds (a closing
+`Sites changed:` list, the basis the next gate's origin tags derive from). The decode table's "empty dispositions" rows key on exactly
 that cell.
 
 A round is numbered within its stage only (and within its ticket file, for ticketed
 items). A dry round is one `checked:` line naming what
-it covered — a dry round's value is knowing what it checked. **Every gate run leaves a
+it covered — a dry round's value is knowing what it checked. A round with findings
+closes with the same `checked:` line; what the line carries beyond scope (the gate's
+plan-text hash and origin tally, for one) is the stage skill's to define, not this
+README's. **Every gate run leaves a
 round**: its findings when it has them, a dry `checked:` round when it is clean. The
 decode table reads "no Gate round" as *the gate has not run*, which is only sound if a
 clean run still records one. A stage that has not run has no rounds.

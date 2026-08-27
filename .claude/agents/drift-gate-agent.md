@@ -35,9 +35,14 @@ state-changing command is a finding, not a fix.
    with no recorded approval is a finding, always.
 3. **Freeze scope:** the frozen set contains no SPEC rows for requirements
    marked `DEFERRED → <item>`.
-4. **Cites resolve:** every SPEC and decision ID the plan cites exists in
-   one of the item files; spot-verify the plan's in-repo facts (paths, symbols, config
-   values) against the working tree — a wrong fact is a finding.
+4. **Cites resolve, locators hold:** every SPEC and decision ID the plan cites exists in
+   one of the item files; every in-repo or package fact the plan states — in the Plan
+   section, in every filled disposition cell of `## Findings`, and in the decisions the
+   plan cites — carries its locator (`path:line`, command + output, or package path — the fact-trail rule in
+   `.claude/skills/plan-authoring/` step 2). Read the locator first, the claim second:
+   a locator that does not say what the claim says is a wrong-fact finding; a fact with
+   no locator is a finding on its own. Verify the fact even when the locator reads
+   right — the locator tells you where to look, not that the author looked.
 5. **Ticket scope (ticketed items):** the Plan under check serves exactly the
    SPEC rows its `Scope:` line names — a row planned here but scoped
    elsewhere, or scoped here but unplanned, is a finding; and every frozen
@@ -73,8 +78,27 @@ whole-Spec ownership is mechanical check 5, not repeated here):
 Return, in order:
 
 - **Findings** — one line each, SPEC-cited, ready to paste as round rows
-  (`| # | anchor | finding | |`, disposition empty). None → say "clean".
+  (`| # | anchor | finding | |`, disposition empty). None → say "clean". Each
+  finding cell opens with an **origin tag**, derived from two durable records —
+  never from recall of what an earlier round "would have seen": (a) the previous
+  Gate round's `checked:` line records the plan-text hash it read
+  (`git hash-object <plan file>`); (b) every disposition cell since then ends in
+  a `Sites changed:` list (`.claude/skills/plan-authoring/`, "Revision after a
+  gate round"). Rules, in order: `class-repeat` — the same failure class as a
+  finding an earlier round dispositioned (name the match); `new` — the anchored
+  text is on a `Sites changed:` list of a disposition since the previous round,
+  **or the round is round 1**, **or the tag cannot be settled from (a) and (b)**
+  (no recorded hash, a disposition with no `Sites changed:` list, an anchor the
+  lists do not decide) — an untaggable finding fails toward escalation, never
+  toward silence; `pre-existing` — only when the recorded hash exists, every
+  intervening disposition carries its list, and the anchored text is on none of
+  them. Report the plan-text hash you read in your `checked:` line. The tag
+  decides whether the round-3 rule fires (`.claude/skills/drift-gate/`), so it
+  is a derivation from the record, never a judgment of severity.
 - **Per-SPEC verdicts** — every id in the checked set, one of the three
   verdicts above.
-- **`checked:` scope line** — ids checked, map state, ⚠ coverage; the
-  spawning session uses it verbatim in a dry round on a clean run.
+- **`checked:` scope line** — ids checked, map state, ⚠ coverage, the
+  plan-text hash read (`git hash-object` of the plan or ticket file), and — on
+  a round with findings — the origin tally (`origin: N new · N pre-existing ·
+  N class-repeat`); the spawning session uses it verbatim, in a dry round on a
+  clean run or as the closing line of a finding round.

@@ -1007,6 +1007,36 @@ accepted as answered from the record and not carried open. Codex's one hand-off:
 row, D-52 precedent) rather than let it stand by default — logged here as an owner item, not
 a finding. Loop closed in 2 rounds (2 A / 0 B / 0 C / 2 E total). No re-tag.
 
+**PR #91 r1 — 2026-08-27.** 5 findings (3 blockers, 2 majors), **5 A / 0 B / 0 C / 0 E**. B1
+(A, fixed): origin tags had no durable basis — plan files are uncommitted between rounds, so
+"the text the previous round read" existed only in recall. Basis is now two records: the
+gate's `checked:` line carries the plan-text hash it read (`git hash-object`), and every
+disposition cell ends in a `Sites changed:` list; the agent derives the tag from those. B2
+(A, fixed): an untaggable finding is `new` by rule — the round-3 stop condition fails toward
+escalation, never toward silence. B3 (A, fixed): drift-gate's "what scope it covered" wording
+contradicted plan-authoring's enumeration rule and would have passed the exact "class closed by
+sweep: scope …" cell the PR diagnosed — replaced with the one rule, stated once. M1 (A, fixed):
+the agent's locator audit now reaches filled disposition cells and cited decisions, not only
+the Plan section. M2 (A, fixed): the origin tally lives in the `checked:` line — the README's
+one defined field — and the README says a finding round closes with that line too; no new
+round shape. Lesson: a tag that decides an escalation rule must be a derivation from a record
+that survives the session, not a judgment; when the record cannot decide, the rule fires.
+
+**PR #91 r2 — 2026-08-27.** 1 finding (0 blockers, 1 major), **0 A / 1 B / 0 C / 0 E**; r1's five
+confirmed fixed at `0cf5800`. M3 (B, fixed): the README's disposition-cell rule pointed every
+stage at the implementation skill's form, so a Gate-round disposition written from the README
+alone would omit the `Sites changed:` list r1 made load-bearing — the next gate would then tag
+everything `new` by rule (escalation, not silence, but blanket). README now defers the form to
+the owning stage skill and names both: implementation for Impl-gate / Adv-review / Review rounds,
+plan-authoring for Gate rounds. Lesson (B): a new required field is only as durable as the
+lowest-traffic doc that describes the cell — sweep the canonical doc for the cell's *form*, not
+just its *shape*.
+
+**PR #91 r3 — 2026-08-27, approve.** 0 findings; M3 confirmed fixed at `eb0ec3a`, r1's five carried
+as fixed. Loop closed in 3 rounds (5 A / 1 B / 0 C / 0 E total). Codex's one hand-off: the
+`corpus` / `llm-seam` gate r4 is the stated falsification point for the origin tags and the
+`Sites changed:` basis. No re-tag: the bounded review ends at round 3.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
