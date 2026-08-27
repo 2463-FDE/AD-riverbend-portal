@@ -35,9 +35,13 @@ state-changing command is a finding, not a fix.
    with no recorded approval is a finding, always.
 3. **Freeze scope:** the frozen set contains no SPEC rows for requirements
    marked `DEFERRED → <item>`.
-4. **Cites resolve:** every SPEC and decision ID the plan cites exists in
-   one of the item files; spot-verify the plan's in-repo facts (paths, symbols, config
-   values) against the working tree — a wrong fact is a finding.
+4. **Cites resolve, locators hold:** every SPEC and decision ID the plan cites exists in
+   one of the item files; every in-repo or package fact the plan states carries its
+   locator (`path:line`, command + output, or package path — the fact-trail rule in
+   `.claude/skills/plan-authoring/` step 2). Read the locator first, the claim second:
+   a locator that does not say what the claim says is a wrong-fact finding; a fact with
+   no locator is a finding on its own. Verify the fact even when the locator reads
+   right — the locator tells you where to look, not that the author looked.
 5. **Ticket scope (ticketed items):** the Plan under check serves exactly the
    SPEC rows its `Scope:` line names — a row planned here but scoped
    elsewhere, or scoped here but unplanned, is a finding; and every frozen
@@ -73,7 +77,16 @@ whole-Spec ownership is mechanical check 5, not repeated here):
 Return, in order:
 
 - **Findings** — one line each, SPEC-cited, ready to paste as round rows
-  (`| # | anchor | finding | |`, disposition empty). None → say "clean".
+  (`| # | anchor | finding | |`, disposition empty). None → say "clean". Each
+  finding cell opens with an **origin tag**, judged from the prior rounds in
+  `## Findings` and their disposition cells: `new` — the anchored text was
+  written or changed by the previous round's disposition (a regression of the
+  fix); `pre-existing` — the anchored text was in place when an earlier round
+  read it and was not raised; `class-repeat` — the same failure class as a
+  finding an earlier round dispositioned (name the match). First round: every
+  finding is `new`. The tag decides whether the round-3 rule fires
+  (`.claude/skills/drift-gate/`), so judge it from the record, never from the
+  finding's severity.
 - **Per-SPEC verdicts** — every id in the checked set, one of the three
   verdicts above.
 - **`checked:` scope line** — ids checked, map state, ⚠ coverage; the

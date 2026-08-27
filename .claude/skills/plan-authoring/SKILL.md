@@ -47,10 +47,18 @@ the PR body's "Risk & landmines" section is drafted from it.
 
 1. **Read the spec and requirements sections** — in the contract file, including
    out-of-scope, which the plan respects and cites but does not copy.
-2. **Verify every factual claim in-repo before writing it.** Every file path, line
-   reference, exported symbol, port, version, and config value is read from the working
-   tree this session — never from memory or convention. A plan whose facts are wrong
-   fails at the gate or, worse, at implementation.
+2. **Verify every factual claim before writing it, and write the locator with it (the
+   fact trail).** Every file path, line reference, exported symbol, port, version, config
+   value, count, size, split and enum membership is read from the working tree or the
+   client package this session — never from memory or convention — and the sentence that
+   states it carries where it was read: `path:line` for a tree fact, the command and its
+   output for a computed fact, the package path for a client-package fact. **A claim
+   without a locator is not writable.** The gate reads the locator first and the claim
+   second: a locator that does not say what the claim says is a wrong-fact finding, and a
+   missing locator is a finding on its own. This is the plan-side twin of the gate agent's
+   `checked:` trail — the 2026-08-27 lesson (eligibility-assistant `corpus` / `llm-seam`,
+   three rounds each): every substantive finding across six rounds was a tree or package
+   fact the plan asserted and the gate re-derived.
 3. **Fill the spec's planned test names** where planning sharpens them; the check column
    is the test list — the plan does not restate it.
 4. **Run the four checks** (below), then show the owner; the plan goes to the gate.
@@ -70,9 +78,16 @@ Findings arrive as the latest `### Gate — round N` in the plan file's `## Find
 the handoff, not chat history. Address every finding, fill its disposition cell citing
 the decision register where a decision resolves it (never re-argue in the cell), re-run
 the four checks, and leave the plan at `Status: DRAFT` for a full fresh-session re-gate.
+**A disposition is a plan.** One that adds or changes a mechanism — a test, a cap, a pin,
+a constant, a change row — is written under the fact-trail rule (step 2) and walks the
+four checks over the fix before the plan goes back, the self-consistency check first: the
+plan's own new artifact must do what the disposition says it does (2026-08-27 lesson — the
+round-2 fixes on both eligibility-assistant tickets were the round-3 substantive findings).
 When a finding repeats a class an earlier round already dispositioned, close the class,
-not the instance: run the sweep for further sites of the same class and record its scope
-in the disposition cell (the drift-gate skill holds the matching round rule).
+not the instance: run the sweep for further sites of the same class and **enumerate the
+sites checked in the disposition cell** — file and row, each with its outcome — never a
+scope phrase ("every clause of every row"); a scope phrase is a declared sweep, not a run
+one (the drift-gate skill holds the matching round rule).
 The round-3 escalation rule lives in `.claude/skills/drift-gate/`.
 
 ## Four checks (lessons of e1 and e6)

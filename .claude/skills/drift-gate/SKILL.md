@@ -61,7 +61,12 @@ stamp.
 - **Any finding → no stamp.** Append `### Gate — round N, <date>` to the plan file's
   `## Findings` (README owns the round format), findings SPEC-cited, one line each,
   disposition column empty for stage 3. Plan returns to stage 3; spec unchanged. Re-gate is a full re-run,
-  fresh session.
+  fresh session. Every finding cell opens with the agent's **origin tag** — `new`
+  (the anchored text was written or changed by the previous round's disposition: a
+  regression), `pre-existing` (present in the text an earlier round read, not raised
+  then: the gate widened), or `class-repeat` (below) — and the round preamble states the
+  tally (`N new · N pre-existing · N class-repeat`), so the owner reads convergence, not
+  a raw count. The tag rides inside the cell; the README round shape is unchanged.
 - **Repeat of a dispositioned class → the class goes back, not the instance.** When a
   finding is the same failure class as one dispositioned in an earlier round, the round
   entry names the match, and stage 3 must close the class: the disposition cell records
@@ -76,10 +81,14 @@ stamp.
   checked. The stamped files then land via `noncode-merge` (README landing rule).
 
 Round numbers count this stage's rounds only. **Round-3 rule:** a third round with any
-open finding stops the loop. Report to the owner, who decides per finding: accept as a
-named residual, overrule, or change the spec (stage 2, explicit decision). Each call is
-recorded in that finding's disposition cell; the next gate run honors recorded owner
-decisions rather than re-flagging them.
+open `new` or `class-repeat` finding stops the loop. Report to the owner, who decides per
+finding: accept as a named residual, overrule, or change the spec (stage 2, explicit
+decision). Each call is recorded in that finding's disposition cell; the next gate run
+honors recorded owner decisions rather than re-flagging them. A third (or later) round
+whose open findings are all `pre-existing` is an ordinary round — back to stage 3, no
+owner adjudication — because the plan did not regress, the read widened (2026-08-27: the
+rule as first written fired on rounds where most open findings had been in the text since
+round 1). The origin tag is the agent's call from the round log, not stage 3's.
 
 ## Never
 
