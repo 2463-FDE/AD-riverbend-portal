@@ -1032,6 +1032,11 @@ plan-authoring for Gate rounds. Lesson (B): a new required field is only as dura
 lowest-traffic doc that describes the cell — sweep the canonical doc for the cell's *form*, not
 just its *shape*.
 
+**PR #91 r3 — 2026-08-27, approve.** 0 findings; M3 confirmed fixed at `eb0ec3a`, r1's five carried
+as fixed. Loop closed in 3 rounds (5 A / 1 B / 0 C / 0 E total). Codex's one hand-off: the
+`corpus` / `llm-seam` gate r4 is the stated falsification point for the origin tags and the
+`Sites changed:` basis. No re-tag: the bounded review ends at round 3.
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
