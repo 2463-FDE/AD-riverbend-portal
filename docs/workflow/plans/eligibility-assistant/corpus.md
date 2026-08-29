@@ -117,6 +117,14 @@ row's `plan-file deletion sha` is what resolves it.
 5. Verification 10 as written (`--no-git` over `$PWD`) scans the local `.venv/` and
    `frontend/node_modules/` too — 183 hits, all outside the tracked tree. Re-run in the CI shape
    over an export of `git ls-files -co --exclude-standard` (473 files): `no leaks found`, exit 0.
+6. **The rig pins ten bare names, not the four the plan text states (impl-gate r1 f3).**
+   `tests/a1_corpus_rig.py:24-35` pins all eight names `tests/test_ai_visit_chat.py:41-50` pins
+   (`config`, `logging_config`, `schemas`, `llm_client`, `templates`, `visit_templates`, `breaker`,
+   `eligibility_client`) plus `policy_index` and `policy_tool`, where the change row (`:25`) and
+   eligibility-assistant-D-66 both describe pinning four and popping eight. This is the form
+   Landmines residual (e) said the implementation would take, so the residual is **closed, not
+   carried** — but four→eight is a deviation from the plan text and D-66 is the register entry that
+   outlives this ticket, so it carries a dated note of the shipped form rather than the four-pin one.
 No planned change row is absent from the diff (18 rows, all present).
 
 **Stamp-commit scope** (impl-gate r1 f2, record shape — no revert): the branch-cut commit @0504b7e
