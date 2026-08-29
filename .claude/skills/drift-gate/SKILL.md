@@ -89,7 +89,8 @@ stamp.
   with a dry round: one `checked:` line naming the scope
   covered (ids checked, map state, ⚠ coverage) — a dry round's value is knowing what it
   checked. The stamped files ride the ticket's branch — `implementation` cuts it at the
-  stamp and pushes the first commit (README landing rule, 2026-08-28); no plan-only PR.
+  stamp and, after owner push approval, pushes the first commit (README landing rule,
+  2026-08-28); no plan-only PR.
 
 Round numbers count this stage's rounds only. **Round-3 rule:** a third round with any
 open `new` or `class-repeat` finding stops the loop. Report to the owner, who decides per

@@ -40,13 +40,16 @@ untouched.
   **Parallel tickets:** once a ticket's branch is cut, its ticket file lives on that
   branch — a sibling ticket's stage-3 session that edits it cross-ticket commits onto that
   branch (or leaves the edit in that branch's worktree), never onto `main` or a `wip/`
-  branch. The item-wide register `plans/<item>.md` lives on the **first** cut branch with
-  every pending register edit until that PR merges. A later ticket cuts **off `main`** if
-  its `Depends on:` names no unmerged ticket, and **off the unmerged dependency's branch**
-  (stacked; its PR targets `main` after the dependency merges) if it does — the item plan's
-  landing order says which; a stacked branch carries no register copy of its own, and every
-  later branch rebases onto `main` after the first cut branch merges to pick the register
-  up. No integration branch.
+  branch. **The register `plans/<item>.md` has one owner branch at a time:** the **first**
+  cut branch until its PR merges, then `main`. Every register edit from any ticket's session
+  — a new decision, a dated note — is committed onto the owner branch (or left in its
+  worktree), never onto another ticket's branch; no branch but the owner carries a register
+  diff. A later ticket cuts **off `main`** if its `Depends on:` names no unmerged ticket, and
+  **off the unmerged dependency's branch** (stacked; its PR targets `main` after the
+  dependency merges) if it does — the item plan's landing order says which. Either way its
+  branch carries no register edit of its own; it reads the register from the owner branch
+  and rebases onto `main` after the first cut branch merges to pick the landed register up.
+  No integration branch.
 
 ## Slice loop
 

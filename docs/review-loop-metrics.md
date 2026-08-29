@@ -1312,7 +1312,7 @@ kind and suite stay per-row `test:` pins; the script stays declined. Loop closed
 (6 A / 0 B / 0 C / 2 E total; the two Es were r1 answers-from-record that r2 turned into
 in-place amendments — see r2's lesson). No re-tag: the bounded review ends at round 3.
 
-**PR #92 (`chore/noref-plans-ride-the-branch`, 2026-08-28) r1: 3 B / 3 M → 6 A / 0 B / 0 C / 0 E.**
+**PR #92 r1 — 2026-08-28.** 6 findings (3 blockers, 3 majors), **6 A / 0 B / 0 C / 0 E**.
 Every finding was a wording gap in the new rule as pushed, each patched on the branch:
 B1 the first-commit "push at that commit" contradicted "ask before pushing" (now the same
 human gate governs it); B2 the README's "codex reviews them with the diff" survived beside
@@ -1323,3 +1323,13 @@ before the first merge (stacked on an unmerged dependency, off `main` otherwise,
 integration branch); M2 `noncode-merge` "artifact at two stamps" did not exclude ticket
 files (now explicit); M3 a routed plan-prose fix had no commit destination (same code
 branch). Lesson: a rule that moves a push must name its gate in the same sentence.
+
+**PR #92 r2 — 2026-08-28.** 2 findings (1 blocker, 1 major), **0 A / 1 B / 1 C / 0 E**; r1's
+B1 / B2 / B3 / M2 / M3 confirmed fixed at `a887235`. B4 (C — r1's M1 fix named the
+dependency-bearing case and left an independent later ticket with no legal move on the
+register): the register now has one owner branch at a time — the first cut branch until
+its PR merges, then `main` — every register edit from any ticket commits there, no other
+branch carries a register diff, later tickets read it from the owner and rebase after the
+merge. M4 (B — new in r1's fix): the two stage-3 handoff lines said "pushes" without the
+gate; "after owner push approval" mirrored into `drift-gate` and `plan-authoring`. Lesson:
+when a fix names one case, name the complement in the same sentence.
