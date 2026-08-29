@@ -1333,3 +1333,7 @@ branch carries a register diff, later tickets read it from the owner and rebase 
 merge. M4 (B — new in r1's fix): the two stage-3 handoff lines said "pushes" without the
 gate; "after owner push approval" mirrored into `drift-gate` and `plan-authoring`. Lesson:
 when a fix names one case, name the complement in the same sentence.
+
+**PR #92 r3 — 2026-08-28, approve.** 0 findings; B4 / M4 confirmed fixed at `d1751ff`, r1's
+five carried as fixed. Loop closed in 3 rounds (6 A / 1 B / 1 C / 0 E total). No re-tag: the
+bounded review ends at round 3; this line lands with the merge as bookkeeping.
