@@ -237,13 +237,17 @@ Shape-level rules, owned here:
   not a landing (engagement owner, 2026-08-28):** when the drift gate stamps a ticket
   `GATED`, the next act is `implementation`'s branch cut for that ticket, the first commit
   on the branch is the stamped artifacts — the ticket file, `plans/<item>.md` as it
-  stands, the contract's ticket-row edit — and the branch is pushed at that commit; the
-  push is the preservation. Codex does not review plans as plans: it sees them in the code
-  PR diff as the intent the code is judged against (the drift gate is the plan's review by
-  design; `adv-reviewer-agent` reads spec + diff with the plan withheld) — revisit if an
+  stands, the contract's ticket-row edit — and the branch is pushed at that commit after
+  the owner's push approval (`implementation` owns the gate), together with a pushed
+  `wip/<item>-plans` carrying every stamped ticket file whose branch is not yet cut; the
+  two pushes are the preservation. From branch cut, both files **ride the code branch** and
+  land with the code PR — **as context for the diff, never as review targets**: the review
+  target of a code PR is the code against the spec; codex reads the plan as the intent the
+  code is judged against (the drift gate is the plan's review by design; `adv-reviewer-agent`
+  reads spec + diff with the plan withheld), and a codex finding on plan prose routes to
+  stage 3 per `noncode-merge`'s table, fixed on the same code branch. Revisit if an
   impl-gate, adv-review or codex code round raises a finding a plan review would have
-  caught at the design level. From branch cut, both files **ride the code branch** and
-  land with the code PR — the codex loop reviews them with the diff they describe. Post-merge, `noncode-merge` makes two commits on `main`: first delete the
+  caught at the design level. Post-merge, `noncode-merge` makes two commits on `main`: first delete the
   plan file that merged (`plans/<item>/<ticket>.md`, plus `plans/<item>.md` with the last
   ticket; single-ticket items: `plans/<item>.md`), then stamp `delivery MERGED
   <merge-sha>` and record the deletion sha in `## Delivery` (a commit cannot cite its own

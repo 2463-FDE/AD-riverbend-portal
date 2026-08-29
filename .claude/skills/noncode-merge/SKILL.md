@@ -163,12 +163,15 @@ Non-code branches (docs, `.claude/`) need steps 1–3 only.
 
 For a split-shape item (contract `docs/workflow/<item>.md` + plan
 `docs/workflow/plans/<item>.md`, plus `plans/<item>/<ticket>.md` per ticket for a
-ticketed item; every item from w4 onward; e5b/e6 landed one-file) this skill lands the
-artifact **at two stamps** — `requirements AGREED`, `spec FROZEN` — as an ordinary docs
-PR on the sequence above (README landing rule, 2026-08-25; `plan GATED` removed as a
-landing 2026-08-28 — the stamp's landing is `implementation`'s branch cut and push):
-branch `docs/noref-<item>-<stamp>`, the stamped files only, codex loop, squash. Between
-stamps nothing lands. From branch cut the files ride the item's code branch and land with
+ticketed item; every item from w4 onward; e5b/e6 landed one-file) this skill lands **the
+contract and `plans/<item>.md` at two stamps** — `requirements AGREED`, `spec FROZEN` —
+as an ordinary docs PR on the sequence above (README landing rule, 2026-08-25; `plan
+GATED` removed as a landing 2026-08-28 — the stamp's landing is `implementation`'s
+branch cut and push): branch `docs/noref-<item>-<stamp>`, the stamped files only, codex
+loop, squash. **Ticket plan files `plans/<item>/<ticket>.md` never land through this
+skill** — not at `plan GATED`, not between stamps; they ride the ticket's branch from its
+cut, and this skill's only act on them is the post-merge delete below. Between stamps
+nothing lands. From branch cut the files ride the item's code branch and land with
 the code PR, so the item's other edits through this skill are **the two post-merge
 commits on `main`** — first delete the plan file that merged (`plans/<item>.md`; for a
 ticket, `plans/<item>/<ticket>.md`, and `plans/<item>.md` too with the last ticket),

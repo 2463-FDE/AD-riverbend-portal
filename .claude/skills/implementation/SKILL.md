@@ -31,14 +31,22 @@ untouched.
   **First commit on the branch = the stamped artifacts** — the ticket file, `plans/<item>.md`
   as it stands, the contract's ticket-row edit — plus the header's `Baseline at branch:`
   line (ticket: the ticket's `## Delivery` table row) from a fresh measurement — that line
-  is the single site for the number. **Push at that commit** (a draft PR is optional; the
-  push is what preserves the stamp). **Parallel tickets:** once a ticket's branch is cut,
-  its ticket file lives on that branch — a sibling ticket's stage-3 session that edits it
-  cross-ticket commits onto that branch (or leaves the edit in that branch's worktree),
-  never onto `main` or a `wip/` branch; the item-wide register `plans/<item>.md` rides the
-  **first** cut branch with every pending register edit, and later branches rebase onto it
-  after that PR merges. Stamped ticket files whose branch is not yet cut wait on
-  `wip/<item>-plans`, pushed.
+  is the single site for the number. **Branch-cut push, human-gated:** ask the owner
+  (the same "Ask before pushing" gate below governs this push), then push that first
+  commit — a draft PR is optional; the push is what preserves the stamp. **In the same
+  approval, preserve the uncut siblings:** every stamped ticket file whose branch is not
+  yet cut is committed to `wip/<item>-plans` (off `main`) and pushed — a mandatory step
+  at cut time, not a habit; the cut is not complete until both pushes are on `origin`.
+  **Parallel tickets:** once a ticket's branch is cut, its ticket file lives on that
+  branch — a sibling ticket's stage-3 session that edits it cross-ticket commits onto that
+  branch (or leaves the edit in that branch's worktree), never onto `main` or a `wip/`
+  branch. The item-wide register `plans/<item>.md` lives on the **first** cut branch with
+  every pending register edit until that PR merges. A later ticket cuts **off `main`** if
+  its `Depends on:` names no unmerged ticket, and **off the unmerged dependency's branch**
+  (stacked; its PR targets `main` after the dependency merges) if it does — the item plan's
+  landing order says which; a stacked branch carries no register copy of its own, and every
+  later branch rebases onto `main` after the first cut branch merges to pick the register
+  up. No integration branch.
 
 ## Slice loop
 
@@ -119,7 +127,10 @@ across the artifact, the PR body, and the registry — one home, cited.
   The dispositions-of-record section states that **the plan files in the diff are
   context, not review targets** — a codex finding on plan prose is answered from the
   round log and routed per `noncode-merge`'s table (plan design content → stage 3 +
-  re-stamp), never by re-opening the plan inside the code round.
+  re-stamp), never by re-opening the plan inside the code round. **Where the routed fix
+  lands:** on this same code branch — the ticket file lives here (Parallel tickets, above);
+  stage 3 revises it here and `drift-gate` re-stamps it here, as a commit the next codex
+  round sees; no stage-3 branch and no rebase.
   Know what disclosure buys: it informs human readers and anchors the fix session — it
   does **not** prevent rediscovery, because the reviewer reads the diff, not the prose
   (`docs/review-loop-metrics.md` §4 carries the measurements and outranks this line if

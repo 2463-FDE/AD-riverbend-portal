@@ -1311,3 +1311,15 @@ amend the cmd in place, suffix-aware, expected count 32 → 33 (eligibility-assi
 kind and suite stay per-row `test:` pins; the script stays declined. Loop closed in 3 rounds
 (6 A / 0 B / 0 C / 2 E total; the two Es were r1 answers-from-record that r2 turned into
 in-place amendments — see r2's lesson). No re-tag: the bounded review ends at round 3.
+
+**PR #92 (`chore/noref-plans-ride-the-branch`, 2026-08-28) r1: 3 B / 3 M → 6 A / 0 B / 0 C / 0 E.**
+Every finding was a wording gap in the new rule as pushed, each patched on the branch:
+B1 the first-commit "push at that commit" contradicted "ask before pushing" (now the same
+human gate governs it); B2 the README's "codex reviews them with the diff" survived beside
+"codex does not review plans as plans" (review target stated once: code against spec, plan
+as context); B3 the optional `wip/<item>-plans` push left uncut stamped ticket files on one
+machine (now mandatory at cut time, same approval); M1 parallel tickets had no stated move
+before the first merge (stacked on an unmerged dependency, off `main` otherwise, no
+integration branch); M2 `noncode-merge` "artifact at two stamps" did not exclude ticket
+files (now explicit); M3 a routed plan-prose fix had no commit destination (same code
+branch). Lesson: a rule that moves a push must name its gate in the same sentence.
