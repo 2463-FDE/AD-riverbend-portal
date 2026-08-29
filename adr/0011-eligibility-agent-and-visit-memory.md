@@ -1,7 +1,8 @@
 # ADR 0011 — Eligibility agent endpoint and visit-scoped memory
 
 **Status:** Accepted (implementation lands in PR-B; the three approval-gated calls
-below were decided with the engagement lead on 2026-07-26 — see Consequences)
+below were decided with the engagement lead on 2026-07-26 — see Consequences).
+Extended by ADR 0019 (eligibility-assistant)
 **Date:** 2026-07-26
 **Author:** Riverbend engagement team
 **Citation repoint, 2026-08-08 (`docs/todo.md` TODO-52):** this ADR cited `CLAUDE.md`

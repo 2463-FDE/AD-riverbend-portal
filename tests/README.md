@@ -33,7 +33,10 @@ the module under test by file path (see `conftest.py::load_module`).
   both features (`test_ai_intake_instructions.py`, `test_ai_visit_chat.py`), the
   gateway-side proxy, chat controls and Redis rate limit (`test_gateway_ai_proxy.py`,
   `test_gateway_ai_chat_controls.py`, `test_gateway_ai_rate_limit.py`), visit memory
-  (`test_visit_memory.py`), tracing (`test_tracing.py`).
+  (`test_visit_memory.py`), tracing (`test_tracing.py`), and the eligibility-assistant
+  policy corpus — sha pin, fixture isolation, boot-fail hook (`test_a1_corpus.py`), the
+  topic-only retriever tool, index and cap (`test_a1_retriever.py`), the tier rule and rank key
+  (`test_a1_conflict.py`); all three share the pinned module rig `a1_corpus_rig.py`.
 - **Intake and HL7** — payload validation (`test_intake_schemas.py`), the route itself
   end to end (`test_intake_endpoint.py`), the two-sided payload declaration
   (`test_intake_payload_contract.py`, whose portal twin is
