@@ -62,8 +62,9 @@ the PR body's "Risk & landmines" section is drafted from it.
 3. **Fill the spec's planned test names** where planning sharpens them; the check column
    is the test list — the plan does not restate it.
 4. **Run the four checks** (below), then show the owner; the plan goes to the gate.
-   After the gate stamps `GATED`, the files land via `noncode-merge` (README landing
-   rule).
+   After the gate stamps `GATED`, the files ride the ticket's branch — `implementation`
+   cuts it at the stamp and pushes the first commit (README landing rule, 2026-08-28);
+   no plan-only PR.
 
 ## Optional input: spec-anchored mockup
 

@@ -70,8 +70,9 @@ requirement synthesis → spec (EARS) → code plan
   in three separate rounds. The dual-budget alternative was rejected (PR #85, closed
   unmerged 2026-08-18; branch `chore/noref-size-budget-split` is the record). Items landed
   before a shape decision stay as delivered. **Decided 2026-08-25 (engagement owner):
-  three shape rules dated in place below — landing at each stamp (Landing), one contract
-  with N delivery tickets (Tickets), and feature-slug item names (Ground rules).** The
+  three shape rules dated in place below — landing at each stamp (Landing — **`plan GATED`
+  removed as a landing 2026-08-28, see Landing**), one contract with N delivery tickets
+  (Tickets), and feature-slug item names (Ground rules).** The
   pipeline itself is unchanged: same six stages, same gates, same codex loop on every PR.
 
 ## Layout
@@ -224,16 +225,25 @@ Shape-level rules, owned here:
   in whichever section it grounds; everything else cites the ID. Where a durable ref
   exists — a sha, a tracked file — cite that instead. Recording is for what git cannot
   replay.
-- **Landing (rewritten 2026-08-25; the 2026-08-18 form is in history).** Both files land
-  on `main` through `noncode-merge` **at each stamp** — `requirements AGREED`,
-  `spec FROZEN`, `plan GATED` (per ticket) — each a small non-code PR on the codex loop;
-  between stamps the edits are working tree or a `wip/` branch, never a landing. Basis:
-  a stamped artifact on one machine is an unrecovered loss waiting to happen; codex
-  reviews docs (decision of 2026-08-11); a spec finding is cheapest before a plan exists.
-  The earlier "working-tree only until branch cut" rule rested on an analogy to
-  `pr-body.md`, a file the split shape no longer has. From branch cut, both files **ride
-  the code branch** and land with the code PR — the codex loop reviews them with the diff
-  they describe. Post-merge, `noncode-merge` makes two commits on `main`: first delete the
+- **Landing (rewritten 2026-08-25; `plan GATED` removed as a landing 2026-08-28; the
+  2026-08-18 form is in history).** Both files land on `main` through `noncode-merge` at
+  two stamps — `requirements AGREED`, `spec FROZEN` — each a small non-code PR on the
+  codex loop; between stamps the edits are working tree or a `wip/` branch (shape:
+  `wip/<item>-plans`, pushed after every stage-3 wave — nothing gates on it), never a
+  landing. Basis: a stamped artifact on one machine is an unrecovered loss waiting to
+  happen; codex reviews docs (decision of 2026-08-11); a spec finding is cheapest before a
+  plan exists. The earlier "working-tree only until branch cut" rule rested on an analogy
+  to `pr-body.md`, a file the split shape no longer has. **`plan GATED` is a branch cut,
+  not a landing (engagement owner, 2026-08-28):** when the drift gate stamps a ticket
+  `GATED`, the next act is `implementation`'s branch cut for that ticket, the first commit
+  on the branch is the stamped artifacts — the ticket file, `plans/<item>.md` as it
+  stands, the contract's ticket-row edit — and the branch is pushed at that commit; the
+  push is the preservation. Codex does not review plans as plans: it sees them in the code
+  PR diff as the intent the code is judged against (the drift gate is the plan's review by
+  design; `adv-reviewer-agent` reads spec + diff with the plan withheld) — revisit if an
+  impl-gate, adv-review or codex code round raises a finding a plan review would have
+  caught at the design level. From branch cut, both files **ride the code branch** and
+  land with the code PR — the codex loop reviews them with the diff they describe. Post-merge, `noncode-merge` makes two commits on `main`: first delete the
   plan file that merged (`plans/<item>/<ticket>.md`, plus `plans/<item>.md` with the last
   ticket; single-ticket items: `plans/<item>.md`), then stamp `delivery MERGED
   <merge-sha>` and record the deletion sha in `## Delivery` (a commit cannot cite its own
@@ -268,7 +278,7 @@ at-a-glance view, and the header stops at `spec FROZEN`.
 | `plan DRAFT`, no Gate round | gate not yet run |
 | `plan DRAFT`, latest Gate round has empty dispositions | stage-3 revision pending |
 | `plan DRAFT`, Gate dispositions filled | re-gate pending (full fresh re-run) |
-| `plan GATED`, no delivery axis | implementation not started |
+| `plan GATED`, no delivery axis | branch cut pending — the cut is the stamp's landing |
 | `delivery DRAFT`, branch complete, no Impl-gate round | impl gate not yet run |
 | latest Impl-gate round has empty dispositions | stage-4 fix pending |
 | Impl-gate dispositions filled, delivery still `DRAFT` | re-gate pending |

@@ -76,7 +76,7 @@ review pressure.
    | Wording, cites, registry upkeep, factual slip in a mutable doc (`docs/**`, ADR body, `.claude/` skill text) | Patch on this branch. |
    | Requirements content (`AGREED`) — the `## Requirements` section of the contract file `docs/workflow/<item>.md`, or `requirements.md` in a five-file item | Stage 1: `requirement-synthesis` revises; the owner re-stamps. |
    | Spec content (frozen) — `## Spec` section (contract file), or `spec.md` | Owner decision first — a frozen spec never changes silently mid-loop. An accepted amendment runs `spec-authoring` re-freeze, and a downstream `GATED` plan takes a `drift-gate` re-run. |
-   | Plan design content (`GATED`) — `## Plan` section (`docs/workflow/plans/<item>.md` or a ticket's `plans/<item>/<ticket>.md`), or `plan.md` | Stage 3: `plan-authoring` revises; `drift-gate` re-stamps. |
+   | Plan design content (`GATED`) — `## Plan` section (`docs/workflow/plans/<item>.md` or a ticket's `plans/<item>/<ticket>.md`), or `plan.md` — raised from a code PR, where the plan rides as context (README landing rule, 2026-08-28) | Stage 3: `plan-authoring` revises; `drift-gate` re-stamps. |
    | The **code the docs describe**, not the docs | Out of this PR. The record stays faithful to what shipped; file the code finding where the registry contract puts it (`debt-log` risk / `todo` loose end / next item's requirements) and cite the filing in the disposition. |
    | `docs/landmines.md` §1 zone content, `docs/specs-deprecated/**` | Owner only — this skill never touches them (see Never). |
 
@@ -164,8 +164,9 @@ Non-code branches (docs, `.claude/`) need steps 1–3 only.
 For a split-shape item (contract `docs/workflow/<item>.md` + plan
 `docs/workflow/plans/<item>.md`, plus `plans/<item>/<ticket>.md` per ticket for a
 ticketed item; every item from w4 onward; e5b/e6 landed one-file) this skill lands the
-artifact **at each stamp** — `requirements AGREED`, `spec FROZEN`, `plan GATED` (per
-ticket) — as an ordinary docs PR on the sequence above (README landing rule, 2026-08-25):
+artifact **at two stamps** — `requirements AGREED`, `spec FROZEN` — as an ordinary docs
+PR on the sequence above (README landing rule, 2026-08-25; `plan GATED` removed as a
+landing 2026-08-28 — the stamp's landing is `implementation`'s branch cut and push):
 branch `docs/noref-<item>-<stamp>`, the stamped files only, codex loop, squash. Between
 stamps nothing lands. From branch cut the files ride the item's code branch and land with
 the code PR, so the item's other edits through this skill are **the two post-merge
@@ -182,9 +183,9 @@ entry in `## Delivery` (added by stage 4 per the README's register rule). An unc
 citation **blocks the delete** — carry the decision line into `## Delivery` first (a
 record correction, not a content change), then delete. The delivered contract file must
 stand alone: no stable-ID reference in it may have its only definition in a deleted plan
-file. A stamp-landing PR whose codex round finds a defect routes it by the table in
-"Addressing a round" — the stamp is not rolled back on the branch; the owning stage
-re-stamps.
+file. A stamp-landing PR (AGREED / FROZEN) whose codex round finds a defect routes it by
+the table in "Addressing a round" — the stamp is not rolled back on the branch; the
+owning stage re-stamps.
 
 Five-file items are all delivered (their artifacts are on `main`); if one's record ever
 needs a dated correction it comes through here as an ordinary docs patch.

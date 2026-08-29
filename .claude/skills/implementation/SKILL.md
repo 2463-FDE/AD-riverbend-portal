@@ -22,12 +22,23 @@ untouched.
   ROI/disclosure, migrations, secrets)? Confirm the human approval is recorded in the
   plan's Landmines block before writing code. No record → stop and ask.
 - Branch off `main` per `CONTRIBUTING.md`. Never implement on `main`.
-- **The item files are already on `main` at their stamps** (README landing rule); from
-  branch cut, every artifact edit — the contract, `plans/<item>.md`, the ticket file —
-  rides the code branch, and every subsequent edit (round logs, dispositions, Delivery)
-  is committed here, reviewed with the diff it describes. **First commit on the branch:**
-  fill the header's `Baseline at branch:` line (ticket: the ticket's `## Delivery` table
-  row) from a fresh measurement — that line is the single site for the number.
+- **The contract and `plans/<item>.md` are on `main` at `spec FROZEN`; the ticket file,
+  and every register or contract-row edit since FROZEN, first reach `main` in this
+  ticket's code PR** (README landing rule, 2026-08-28 — `plan GATED` is a branch cut, not
+  a landing). From branch cut, every artifact edit — the contract, `plans/<item>.md`, the
+  ticket file — rides the code branch, and every subsequent edit (round logs,
+  dispositions, Delivery) is committed here, reviewed with the diff it describes.
+  **First commit on the branch = the stamped artifacts** — the ticket file, `plans/<item>.md`
+  as it stands, the contract's ticket-row edit — plus the header's `Baseline at branch:`
+  line (ticket: the ticket's `## Delivery` table row) from a fresh measurement — that line
+  is the single site for the number. **Push at that commit** (a draft PR is optional; the
+  push is what preserves the stamp). **Parallel tickets:** once a ticket's branch is cut,
+  its ticket file lives on that branch — a sibling ticket's stage-3 session that edits it
+  cross-ticket commits onto that branch (or leaves the edit in that branch's worktree),
+  never onto `main` or a `wip/` branch; the item-wide register `plans/<item>.md` rides the
+  **first** cut branch with every pending register edit, and later branches rebase onto it
+  after that PR merges. Stamped ticket files whose branch is not yet cut wait on
+  `wip/<item>-plans`, pushed.
 
 ## Slice loop
 
@@ -105,6 +116,10 @@ across the artifact, the PR body, and the registry — one home, cited.
 - **Ask before pushing.** Push is human-gated.
 - PR body: drafted at push time from `## Delivery` and the plan's Landmines block. The
   "Risk & landmines" section is required and comes from the Landmines block verbatim.
+  The dispositions-of-record section states that **the plan files in the diff are
+  context, not review targets** — a codex finding on plan prose is answered from the
+  round log and routed per `noncode-merge`'s table (plan design content → stage 3 +
+  re-stamp), never by re-opening the plan inside the code round.
   Know what disclosure buys: it informs human readers and anchors the fix session — it
   does **not** prevent rediscovery, because the reviewer reads the diff, not the prose
   (`docs/review-loop-metrics.md` §4 carries the measurements and outranks this line if
