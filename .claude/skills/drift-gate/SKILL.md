@@ -88,7 +88,9 @@ stamp.
   contract-file header `Status:` line (ticket: its `Status:` line + table row), and close
   with a dry round: one `checked:` line naming the scope
   covered (ids checked, map state, ⚠ coverage) — a dry round's value is knowing what it
-  checked. The stamped files then land via `noncode-merge` (README landing rule).
+  checked. The stamped files ride the ticket's branch — `implementation` cuts it at the
+  stamp and, after owner push approval, pushes the first commit (README landing rule,
+  2026-08-28); no plan-only PR.
 
 Round numbers count this stage's rounds only. **Round-3 rule:** a third round with any
 open `new` or `class-repeat` finding stops the loop. Report to the owner, who decides per
