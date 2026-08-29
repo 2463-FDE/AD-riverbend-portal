@@ -20,6 +20,7 @@ docstring for the full argument and the obligations it created.
 import json
 import re
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
@@ -31,6 +32,8 @@ from config import settings
 from logging_config import configure
 import eligibility_client
 import llm_client
+import policy_index
+import policy_tool  # noqa: F401  (dark import — see the lifespan note below)
 import templates
 import visit_templates
 from schemas import (
@@ -48,7 +51,22 @@ from schemas import (
 
 log = configure(settings.service_name)
 
-app = FastAPI(title="Riverbend ai-assistant", version="0.2.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # eligibility-assistant (ADR 0019): the policy corpus is a closed set pinned by
+    # sha. Loading it here means a sha mismatch, an unlisted file or a non-approved
+    # manifest row fails the container at BOOT, before any turn is served — never
+    # lazily on the first request. `import policy_tool` above already ran the same
+    # verification at import (its topic enum is built from the loaded manifest), so
+    # CI's keyless `python -c "import app"` smoke reddens ahead of this hook; this
+    # call is the second, independent verification and the one
+    # tests/test_a1_corpus.py::test_startup_hook_fails_boot_on_corpus_error pins.
+    # Nothing on the request path is wired to the retriever yet (it lands dark).
+    policy_index.load()
+    yield
+
+
+app = FastAPI(title="Riverbend ai-assistant", version="0.2.0", lifespan=lifespan)
 
 # Safety boundary is closed vocabulary on BOTH sides: the request is enum/bool
 # only (schemas.py), and the response is template ids only (templates.py) —

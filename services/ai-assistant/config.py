@@ -74,6 +74,17 @@ class Settings:
     # Independent gross-size backstop (defense-in-depth), also local.
     llm_max_input_chars = int(os.getenv("LLM_MAX_INPUT_CHARS", str(llm_max_input_tokens * 4)))
 
+    # --- eligibility-assistant: policy retrieval cap (ADR 0019) ----------------
+    # Most rows one policy_index.lookup returns. Sized against the BINDING byte gate
+    # above (llm_max_input_tokens), not the chars backstop: cap × policy_index
+    # .MAX_ROW_BYTES (2,789 — text AND the row's metadata fields, pinned) +
+    # policy_index.PROMPT_RESERVE_BYTES (5,000) must fit inside it — 5 gives 18,945,
+    # 6 would give 21,734 — and small enough that a legal call exercises it (a 7-row
+    # topic exists). Both halves are pinned by
+    # tests/test_a1_retriever.py::test_cap_binds_on_a_legal_call; raising this alone
+    # reddens it, by design. Clamped >= 1: 0 would return nothing on every turn.
+    a1_retrieval_max_rows = max(1, int(os.getenv("A1_RETRIEVAL_MAX_ROWS", "5")))
+
     # --- visit-chat: the eligibility dependency (ADR 0011) -------------------
     # ai-assistant's own hop to eligibility-service. Bounded and breakered from
     # the start: the D4 lesson (RIV-088/RIV-141) is about the CALLER's worker
