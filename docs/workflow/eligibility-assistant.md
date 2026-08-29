@@ -331,7 +331,7 @@ Open before FROZEN: none — eligibility-assistant-D-20..24 resolved 2026-08-24 
 
 | ticket | SPEC rows | plan | baseline at branch | delivery | plan-file deletion sha |
 |---|---|---|---|---|---|
-| corpus | eligibility-assistant-SPEC-7–11, 38, 43 | GATED 2026-08-28 | 1334 passed, 19 deselected, 1 xfailed (2026-08-28, `.venv` 3.12 `pytest -m "not integration"`; docker daemon down, `make test-docker` re-run before push) | DRAFT | — |
+| corpus | eligibility-assistant-SPEC-7–11, 38, 43 | GATED 2026-08-28 | 1334 passed, 19 deselected, 1 xfailed (2026-08-28, `.venv` 3.12 `pytest -m "not integration"`; docker daemon down, `make test-docker` re-run before push) | IMPLEMENTED 2026-08-29 | — |
 | llm-seam | eligibility-assistant-SPEC-24, 30 | GATED 2026-08-27 | — | — | — |
 | turn | eligibility-assistant-SPEC-1–6, 12–23, 25–26, 33, 36–37, 39a, 41–42, 44–56 | GATED 2026-08-28 | — | — | — |
 | trace | eligibility-assistant-SPEC-27–29, 31–32, 34–35, 39b, 40 | GATED 2026-08-28 | — | — | — |
@@ -353,3 +353,12 @@ behind the `plan-file deletion sha` in the table above. `date` is the `delivery 
 | trace | — | — | — | — |
 | lifecycle | — | — | — | — |
 | retrieval-eval | — | — | — | — |
+
+**Impl gate — `corpus`** — 2026-08-29, impl-gated fresh-context (round 2, both agents clean, no
+findings; round 1 the same day raised 3, all A, fixed @5fd9c9f / @1663f89 / @db058de, no code file
+touched). Branch `feat/noref-eligibility-corpus` @27d2b22, merge-base `8b2a23b`. Baseline observed
+at gate: `1355 passed, 19 deselected, 1 xfailed` (`make test-docker` and `.venv` 3.12 agree) =
+1334 + 21, deselected / xfailed unmoved. `gate:` observations: none required — the seven scope rows
+are all `test:`. Residuals accepted here: (a)–(d) of the record row above, as IDs, plus r1 f2's
+sibling-cite anchor (`origin/wip/eligibility-assistant-plans` @6a773fd, eligibility-assistant-D-59
+landing order); no new residual. Push stays human-gated.
