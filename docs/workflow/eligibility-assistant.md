@@ -338,77 +338,18 @@ Open before FROZEN: none — eligibility-assistant-D-20..24 resolved 2026-08-24 
 | lifecycle | eligibility-assistant-SPEC-58–62 | GATED 2026-08-28 | — | — | — |
 | retrieval-eval | eligibility-assistant-SPEC-63–66 | GATED 2026-08-28 | — | — | — |
 
-### corpus — delivery DRAFT 2026-08-29
+### Per-ticket delivery records
 
-Branch `feat/noref-eligibility-corpus` off `main` @8b2a23b; stamp commit @0504b7e (ticket file,
-register, ticket row, baseline). Implementation series — `git log 0504b7e..HEAD` is the reference:
-- @2bd7bff — the 87 documents + `document-manifest.json` byte-identical to the package, the curated
-  `policy_corpus/index.json`, `tests/fixtures/a1/` (harness jsonl verbatim, `case_selections.json`
-  for the 27 retrievable cases, seven `FIX-NEG-*` under `fix_neg/`).
-- @b6db6f2 — `policy_index.py`, `policy_tool.py`, `config.py` (`A1_RETRIEVAL_MAX_ROWS` default 5,
-  clamped ≥ 1), `app.py` (lifespan hook + dark `import policy_tool`), `.dockerignore`
-  `**/.DS_Store`, the E-4 pins in both requirements files, `tests/a1_corpus_rig.py` and the three
-  test files (21 tests).
-- @3d920ff — `adr/0019` (frame + §1), ADR 0006 / 0011 status notes, `tests/README.md`, `CLAUDE.md`
-  §6 baseline 1317 → 1355.
-- this commit — this record, the ticket row `delivery` cell and the ticket `Status:` line.
+One row per ticket (eligibility-assistant-D-82, `corpus` impl-gate r1 f1). The contract carries the
+references — shas, baseline movement, the test-first split, traceability, residual IDs; deviations
+and live-run detail live in the ticket file's `## Delivery evidence` and die with it at merge,
+behind the `plan-file deletion sha` in the table above. `date` is the `delivery DRAFT` stamp.
 
-**Slices — test-first vs not.** `test_a1_corpus.py` (6 functions / 12 tests) was written red in the
-cut session; `test_a1_retriever.py` (8) and `test_a1_conflict.py` (1) were written red this session
-before `policy_index.py` / `policy_tool.py` existed (collection error on the rig's `load_module`),
-then the modules brought all 21 green in one pass. No behavioural seam, verification-covered only:
-the vendored files and manifest (2), `index.json` curation (4f, 4l(ii)), `.dockerignore` (4k),
-requirements pins (5), ADR / README / CLAUDE.md rows.
-
-**Deviations** (plan fact, trivial; no mechanism moved):
-1. `Row` is a frozen dataclass with attribute access (`row.id`, `row.section_text` — the form the
-   cut-session tests use) **and** mapping access on the plan's six keys (`row["section-text"]`,
-   the form `lifecycle`'s runbook command uses); `as_dict()` is the six-key dict. Both forms carry
-   the same six values, so `MAX_ROW_BYTES` is unchanged (2,789).
-2. The tool's return value, which the plan does not state: a list of six-key row dicts. `turn` owns
-   the serialisation the model sees.
-3. Verification 3 / 4 / 4b redden as a **collection error** on the corpus tests, not a test failure:
-   the rig loads `app` at import, whose `import policy_tool` runs the sha-verifying `load()`, so a
-   broken corpus raises before any test collects. Stricter than the plan's wording, same clause.
-4. Verification 4p second break (drop the `policy_tool` pin) reddens the two `with_app=True` tests
-   in `test_a1_corpus.py` (`test_manifest_sha_pinned`, `test_startup_hook_fails_boot_on_corpus_error`),
-   not the whole file — those are the two that assert `app_mod.policy_tool is policy_tool`.
-5. Verification 10 as written (`--no-git` over `$PWD`) scans the local `.venv/` and
-   `frontend/node_modules/` too — 183 hits, all outside the tracked tree. Re-run in the CI shape
-   over an export of `git ls-files -co --exclude-standard` (473 files): `no leaks found`, exit 0.
-No planned change row is absent from the diff (18 rows, all present). Landmines residual (e) is
-closed, not carried: the rig pins all eight bare names by path (verification 4p, both breaks).
-
-**Live-run evidence** (isolation: every run is read-only against files in this tree — no DB, no
-service, no §1 zone at runtime; the ai-assistant image built for 4k was tagged locally and removed):
-- V1 `pytest tests/test_a1_corpus.py tests/test_a1_retriever.py tests/test_a1_conflict.py` →
-  21 passed; `[EVAL-031]` and `[EVAL-023]` present in the collected ids.
-- V2 sha pin → `87 rows 0 mismatched`. V4f `git ls-files … | wc -l` → `2`. V5 keyless `env -i`
-  import → `ok`. V8 bracketed EVAL id count → `2`. V19 exclusion diff → empty.
-- V4b `policy_index.load()` on the tree → `ok`; V4c `TestClient(app.app).__enter__()` → `booted`,
-  and with one byte appended to the cheat sheet the raise is at `import app`, innermost frame
-  `policy_index.load` reached from `policy_tool.categories` (`CorpusLoadError: sha256 mismatch
-  (DOC-COVERAGE-QUESTION-CHEAT-SHEET)`); reverted → `booted`.
-- V4k image scan → `0`; bare `.DS_Store` pattern → `1`; `**/.DS_Store` restored → `0`; in-image
-  `import app, policy_index, policy_tool` → `ok`.
-- V9 `make test-docker` → `1355 passed, 19 deselected, 1 xfailed` (36.7s) = baseline 1334 + 21;
-  deselected and xfailed unmoved; no `skipped` term. Local `.venv` run identical.
-- V10 gitleaks (CI shape, see deviation 5) → exit 0.
-- Break-then-revert, each red on the named test and green after revert: 3 (sha), 4 (fixture copied
-  in → `test_eval_031_fixture_isolation` + `test_manifest_sha_pinned`), 4b (root file, nested
-  `notes/rogue.md`; `documents/.DS_Store` stays green), 4d (inferred schema), 4e (`lifespan=`
-  dropped), 4g (cache write; `subprocess.run`), 4h (approval check), 4i (`document_id` key), 4j
-  (`|` split → 142 rows), 4l (cap 6 → (i); `_INDEX` narrowed to the four `eligibility-verification`
-  rows → (ii) `assert 4 > 5` with (i) green; text-only `MAX_ROW_BYTES`; query `*` accepted), 4m
-  (hand `Literal`), 4n (id-fragment tier), 4o (publish on every load → both named tests), 4p
-  (both pins). Process note: a same-size edit inside one mtime second served a stale `__pycache__`
-  once; the battery was re-run with `PYTHONDONTWRITEBYTECODE=1` and caches cleared.
-
-**Traceability.** All seven `test:` cells (SPEC-7, 8, 9, 10, 11, 38, 43) are filled with the ids
-the frozen spec planned, unchanged; no pinned test moved.
-
-**Residuals** (registry IDs only): (a) curation not proved → eligibility-assistant-SPEC-64
-(`retrieval-eval`); (b) hook not CI-proven in a container → eligibility-assistant-SPEC-62
-(`lifecycle` runbook); (c) isolation not resistance → eligibility-assistant-SPEC-13 / SPEC-17
-(`turn`); (d) live LangChain leg under `langsmith==0.10.5` → eligibility-assistant-SPEC-17 /
-SPEC-32, E-5; D13 stays OPEN (`docs/debt-log.md`). No new residual surfaced.
+| ticket | date | branch · stamp · series | baseline movement | record |
+|---|---|---|---|---|
+| corpus | 2026-08-29 | `feat/noref-eligibility-corpus` off `main` @8b2a23b · stamp @0504b7e · @2bd7bff (87 documents + `document-manifest.json` byte-identical to the package, curated `policy_corpus/index.json`, `tests/fixtures/a1/`) · @b6db6f2 (`policy_index.py`, `policy_tool.py`, `config.py`, `app.py` lifespan hook + dark import, `.dockerignore`, E-4 pins, `tests/a1_corpus_rig.py`, three test files) · @3d920ff (`adr/0019`, ADR 0006 / 0011 status notes, `tests/README.md`, `CLAUDE.md` §6 baseline) | 1334 → **1355 passed, 19 deselected, 1 xfailed** (`make test-docker` and `.venv` 3.12 agree; +21 = exactly the tests this branch adds; deselected and xfailed unmoved) | Test-first: the 21 tests in `tests/test_a1_corpus.py` / `test_a1_retriever.py` / `test_a1_conflict.py`, each written red before its module existed. Verification-covered only (no behavioural seam): the vendored files and manifest, `index.json` curation, `.dockerignore`, the requirements pins, the ADR / `tests/README.md` / `CLAUDE.md` rows. Traceability: the seven `test:` cells (eligibility-assistant-SPEC-7, 8, 9, 10, 11, 38, 43) are filled with the ids the frozen spec planned, unchanged; no pinned test moved. Deviations (6, all plan-fact, no mechanism moved), the stamp-commit scope note and the live-run evidence (V1–V10, break-then-revert 3–4p, isolation stated) are in `docs/workflow/plans/eligibility-assistant/corpus.md` `## Delivery evidence`. Residuals, registry IDs only: (a) curation not proved → eligibility-assistant-SPEC-64 · (b) boot hook not CI-proven in a container → SPEC-62 · (c) isolation not resistance → SPEC-13 / SPEC-17 · (d) live LangChain leg under `langsmith==0.10.5` → SPEC-17 / SPEC-32, E-5; D13 stays OPEN (`docs/debt-log.md`). No new residual surfaced. |
+| llm-seam | — | — | — | — |
+| turn | — | — | — | — |
+| trace | — | — | — | — |
+| lifecycle | — | — | — | — |
+| retrieval-eval | — | — | — | — |

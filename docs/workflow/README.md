@@ -117,7 +117,7 @@ first session.
 | header | `Status:` line (decode table below) · one-line item description · `Baseline at branch:` — the **single site** for the item's suite count, filled when the impl branch is cut (ticketed items: `per ticket — see ## Delivery`; the ticket row is the single site) | this README |
 | `## Requirements` | `Status: DRAFT \| AGREED <date>` · owner-decision table, `<item>-REQ-n` | `requirement-synthesis` |
 | `## Spec` | `Status: DRAFT \| FROZEN <date>` · EARS table with the check column | `spec-authoring` |
-| `## Delivery` | PR #, merge sha, baseline movement, deviations from the gated plan, live-run evidence, residual IDs, plan-file deletion sha · ticketed items: the ticket table first (one **ticket row** per ticket — columns and legal values in the Tickets rule below), then the same record per ticket | `implementation` (ticket table created by `plan-authoring`) |
+| `## Delivery` | PR #, merge sha, baseline movement, deviations from the gated plan, live-run evidence, residual IDs, plan-file deletion sha · ticketed items: the ticket table first (one **ticket row** per ticket — columns and legal values in the Tickets rule below), then a **`### Per-ticket delivery records`** table, one row per ticket, carrying references only — branch / stamp / series shas, baseline movement, the test-first vs verification-covered split, traceability, residual registry IDs (**decided 2026-08-29, engagement owner**, from `eligibility-assistant` `corpus` impl-gate r1 f1: six prose records at the shape first written measured 784 lines against the 400 cap, and 418 even compressed, because a wrapped paragraph costs physical lines while a table row costs one whatever its length; deviations, the stamp-commit scope note and live-run detail move to the ticket file's `## Delivery evidence`) | `implementation` (ticket table created by `plan-authoring`) |
 
 **Plan file — `docs/workflow/plans/<item>.md`.** Working state; deleted at delivery.
 (Ticketed items: the Tickets rule below moves `## Plan` and the per-ticket rounds into
@@ -133,6 +133,7 @@ the `## Findings` heading with it, positioned after `## Plan` (or last in the fi
 | `## Decisions` | the item's single decision register | `plans/<item>.md` | this README |
 | `## Plan` | `Status: DRAFT \| GATED <date>` · deltas only | `plans/<item>/<ticket>.md` | `plan-authoring` |
 | `## Findings` | round log; one `### <Stage> — round N, <date>` per round, stages in pipeline order: **Req-review** (`requirement-synthesis`) · **Gate** (`drift-gate`) · **Impl gate** (`impl-gate`) · **Adv review** (`impl-gate`, findings of its spawned `adv-reviewer-agent`) · **Review** (`implementation`) | Req-review + Spec-review rounds in `plans/<item>.md`; Gate / Impl gate / Adv review / Review rounds in `plans/<item>/<ticket>.md` | this README (round shape) · the stage skill (what it checks) |
+| `## Delivery evidence` | ticketed items, written by stage 4 at `delivery DRAFT`: the deviations from the gated plan, the stamp-commit scope note and the live-run detail the contract's record cites but does not restate · uncapped, read by the impl gate and the codex round beside the diff, deleted with the file at merge behind the ticket row's `plan-file deletion sha` · nothing that must outlive the item lives only here — the README's pre-delete sweep still carries every contract-cited decision ID into `## Delivery` (**decided 2026-08-29**, with the record-table rule above) | `plans/<item>/<ticket>.md` | `implementation` |
 
 Shape-level rules, owned here:
 
@@ -174,7 +175,7 @@ Shape-level rules, owned here:
   headroom — a backstop, not a target to fill. The plan file (`plans/<item>.md`) is
   **outside the job's glob and uncapped by design**: rounds and register rows are
   append-only, carry no compression duty, and the file is deleted at delivery — history
-  keeps it. Review pressure is never charged against an authoring cap.
+  keeps it. Review pressure is never charged against an authoring cap. **Dated note 2026-08-29:** a ticketed contract carries N delivery records against the same 400, and `eligibility-assistant` measured its non-record content at 340 — so the record shape, not the cap, is what had to give; the `## Delivery` row above states the resolution. The cap was **not** raised and no exemption was added: the ratchet holds.
 - **Decision register.** One per item, in the plan file, stage-tagged (`req` / `spec` /
   `plan`), IDs `<item>-D-n` allocated once and **never renumbered** — withdrawn or
   revised entries stay visible (strike-through, primes), same id discipline as

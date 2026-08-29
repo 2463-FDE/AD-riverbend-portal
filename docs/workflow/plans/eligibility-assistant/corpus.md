@@ -91,6 +91,58 @@ This block is verbatim for **this ticket's own diff** and no other's (eligibilit
   (d) **The LangChain composition is measured offline only.** E-4's live 12/12 ran on `langsmith==0.11.1`; the pins this ticket lands sit beside the repo's `langsmith==0.10.5`. E-5 measured that composition offline — pip resolves the four pins without conflict, `create_agent` compiles with the run-limit middleware nodes, the 2-model-call / 1-tool-call bound holds, and `langchain_core.tracers.langchain` imports against 0.10.5 with `LANGSMITH_TRACING=false` — but the **live** Bedrock leg under 0.10.5 is un-run (gate r1 f12, E-5 "Not measured"). It is first exercised at SPEC-17 / SPEC-32's opt-in runs in `turn` / `trace`, so a live-only incompatibility surfaces there and never in the default suite. Accepted: this ticket lands dark and makes no model call, so the residual cannot bite inside its own scope.
   (e) **The rig as written pins four of the eight popped bare names (gate r10 f1).** `tests/a1_corpus_rig.py` pins `config`, `logging_config`, `policy_index`, `policy_tool` by path (eligibility-assistant-D-66) and pops the other six unpinned, so `app.py:36`'s `schemas` (and `llm_client`, `eligibility_client`, `templates`, `visit_templates`, `breaker` transitively) would resolve by `sys.path` order — masked in the default run (the rig's first `load_module` puts `services/ai-assistant` at `sys.path[0]`, `tests/conftest.py:21-22`), exposed by an explicit mixed invocation that has another service's dir ahead. Accepted by the owner 2026-08-28 as a named residual rather than a plan revision; the implementation pins all eight by path as the row's cited idiom (`tests/test_ai_visit_chat.py:51-67`) does, which the row's "runs the house idiom once" already covers. The impl gate reads the rig against this bullet.
 
+## Delivery evidence
+
+Stage-4 evidence for this ticket, split out of the contract's `## Delivery` record by
+eligibility-assistant-D-82 (impl-gate r1 f1 — six per-ticket records at the shipped 74-line shape
+put `docs/workflow/eligibility-assistant.md` at ~784 against CI's 400-line `workflow-doc-cap`).
+The contract keeps the references — shas, baseline movement, traceability, residual IDs; this
+section keeps the deviations and the live-run detail. It dies with this file at merge; the ticket
+row's `plan-file deletion sha` is what resolves it.
+
+**Deviations** (plan fact, trivial; no mechanism moved):
+1. `Row` is a frozen dataclass with attribute access (`row.id`, `row.section_text` — the form the
+   cut-session tests use) **and** mapping access on the plan's six keys (`row["section-text"]`,
+   the form `lifecycle`'s runbook command uses); `as_dict()` is the six-key dict. Both forms carry
+   the same six values, so `MAX_ROW_BYTES` is unchanged (2,789).
+2. The tool's return value, which the plan does not state: a list of six-key row dicts. `turn` owns
+   the serialisation the model sees.
+3. Verification 3 / 4 / 4b redden as a **collection error** on the corpus tests, not a test failure:
+   the rig loads `app` at import, whose `import policy_tool` runs the sha-verifying `load()`, so a
+   broken corpus raises before any test collects. Stricter than the plan's wording, same clause.
+4. Verification 4p second break (drop the `policy_tool` pin) reddens the two `with_app=True` tests
+   in `test_a1_corpus.py` (`test_manifest_sha_pinned`, `test_startup_hook_fails_boot_on_corpus_error`),
+   not the whole file — those are the two that assert `app_mod.policy_tool is policy_tool`.
+5. Verification 10 as written (`--no-git` over `$PWD`) scans the local `.venv/` and
+   `frontend/node_modules/` too — 183 hits, all outside the tracked tree. Re-run in the CI shape
+   over an export of `git ls-files -co --exclude-standard` (473 files): `no leaks found`, exit 0.
+No planned change row is absent from the diff (18 rows, all present).
+
+**Live-run evidence** (isolation: every run is read-only against files in this tree — no DB, no
+service, no §1 zone at runtime; the ai-assistant image built for 4k was tagged locally and removed):
+- V1 `pytest tests/test_a1_corpus.py tests/test_a1_retriever.py tests/test_a1_conflict.py` →
+  21 passed; `[EVAL-031]` and `[EVAL-023]` present in the collected ids.
+- V2 sha pin → `87 rows 0 mismatched`. V4f `git ls-files … | wc -l` → `2`. V5 keyless `env -i`
+  import → `ok`. V8 bracketed EVAL id count → `2`. V19 exclusion diff → empty.
+- V4b `policy_index.load()` on the tree → `ok`; V4c `TestClient(app.app).__enter__()` → `booted`,
+  and with one byte appended to the cheat sheet the raise is at `import app`, innermost frame
+  `policy_index.load` reached from `policy_tool.categories` (`CorpusLoadError: sha256 mismatch
+  (DOC-COVERAGE-QUESTION-CHEAT-SHEET)`); reverted → `booted`.
+- V4k image scan → `0`; bare `.DS_Store` pattern → `1`; `**/.DS_Store` restored → `0`; in-image
+  `import app, policy_index, policy_tool` → `ok`.
+- V9 `make test-docker` → `1355 passed, 19 deselected, 1 xfailed` (36.7s) = baseline 1334 + 21;
+  deselected and xfailed unmoved; no `skipped` term. Local `.venv` run identical.
+- V10 gitleaks (CI shape, see deviation 5) → exit 0.
+- Break-then-revert, each red on the named test and green after revert: 3 (sha), 4 (fixture copied
+  in → `test_eval_031_fixture_isolation` + `test_manifest_sha_pinned`), 4b (root file, nested
+  `notes/rogue.md`; `documents/.DS_Store` stays green), 4d (inferred schema), 4e (`lifespan=`
+  dropped), 4g (cache write; `subprocess.run`), 4h (approval check), 4i (`document_id` key), 4j
+  (`|` split → 142 rows), 4l (cap 6 → (i); `_INDEX` narrowed to the four `eligibility-verification`
+  rows → (ii) `assert 4 > 5` with (i) green; text-only `MAX_ROW_BYTES`; query `*` accepted), 4m
+  (hand `Literal`), 4n (id-fragment tier), 4o (publish on every load → both named tests), 4p
+  (both pins). Process note: a same-size edit inside one mtime second served a stale `__pycache__`
+  once; the battery was re-run with `PYTHONDONTWRITEBYTECODE=1` and caches cleared.
+
 ## Findings
 
 Gate rounds start at 1 for this ticket; carried findings: f2 (gate round 2 on the monolithic plan — SPEC-7 corpus-scan scope, `index.json` / `document-manifest.json` as unlisted files) — **dispositioned 2026-08-26** in the `policy_index.py` change row and verification 4b (scope: manifest path roots + two named root-level files); the item-level cell in plans/eligibility-assistant.md carries the record.
@@ -484,3 +536,55 @@ Per-SPEC verdicts: SPEC-7 FINDING (f1, rig row; sha pin / whole-tree scan / `.DS
 checked: eligibility-assistant-SPEC-7, 8, 9, 10, 11, 38, 43 (7 ids, the `corpus` `Scope:` line) against Decisions eligibility-assistant-D-1..81, Evidence E-1..7, `corpus.md` Changes (18 rows) / Verification 1–4p, 5, 8, 9, 10, 19 / Gate interactions / Landmines / Findings r1–r9, the five sibling `Scope:` + `Depends on:` lines, the item ticket table and the contract `## Delivery` table · **plan-text hash read: `79f465824551c29478729ad3dc74fd044e68e32f`** (round 9 recorded `3baddbaf12c8363d15eaeb18252e5852a5447035`; r9 f1 carries its `Sites changed:` list; no cross-ticket disposition since r9 touched this file — `lifecycle` r3 f1/f2 and `retrieval-eval` r3 f1 list only their own files and register D-77) · **origin: 0 new · 1 pre-existing · 0 class-repeat** · check map 66/66 single-mechanism (machine-counted over contract `:259-324`) · ⚠ rows 7, 8, 9, 10 — PHI-handling entered, D-56 cited by id and date with the D-61/62/63/64 carry-forward and the D-80 re-close; all 12 §1 zones written out; four residuals written · freeze scope 0 `DEFERRED` · ownership 66/66 once (corpus 7 · llm-seam 2 · turn 39 · trace 9 · lifecycle 5 · retrieval-eval 4; `Scope:` lines = `## Delivery` = item ticket table; SPEC-57 unallocated) · cites resolve; change list closes both ways · facts verified in tree: `app.py:30-36` seven imports, `:51` bare `FastAPI(...)`, `breaker` only at `:508`/`:848` (comments), `eligibility_client.py:29`; `Dockerfile:3/:8`, `.dockerignore` 3 lines, `.gitignore:6`, `docker-compose.yml:222-247` (`:223` build, `expose` only, `volumes:` only at `:10`/`:267`, zero `restart:`), `Makefile:34-35/:43-44/:46-47`, `ci.yml:72-76/:86/:120-129/:135-155/:207/:222`, `conftest.py:16-26`, `test_ai_visit_chat.py:38-39/:41-50/:51-73/:68`, `config.py:64/:75`, `llm_client.py:336-337/:368-375/:458-461/:494-495/:727-732`, `tests/README.md:32`, `CLAUDE.md:97-98/:138-141`, `docs/landmines.md:87`, `requirements*.txt` langsmith 0.10.5 and no `langchain*`, no `adr/0019-*`, no `policy_*` / `a1_*` on the tree · package recomputed (read-only): 87/87 approved, 25 categories, 0 sha mismatch, max file 2,448, `MAX_ROW_BYTES` 2,789 on `DOC-FED-COB-PROVIDER-SERVICES`, paths 41/26/14/2/4 at depths 67+16+4, `retrieval_date` 2026-08-24 ×87, categories >5 = COB 7 / MMC 7 / PTS 7 / ECB 6 / PEP 14, `eligibility-verification` 4, 142 labels / 62 docs with no heading label, 81 applicability strings, eight single-row categories, 32 cases / 27 retrievable, seven reason ids present, 7 `FIX-NEG-*`, no `status`/`superseded_by` key · docker daemon and the `langchain-core` wheel not re-exercised (r9 record stands) · 1 finding, minor, pre-existing.
 
 **Stamped `plan GATED 2026-08-28` under owner override** (in session, 2026-08-28): f1 accepted as named residual (e) and dispositioned in the same act; no fresh re-run — the `drift-gate` "never stamp with an open finding" rule set aside by explicit owner decision for this wave, recorded here and in the Status line. Writes by the gate session under the override: this cell, residual (e), the Status line, the contract ticket row. Plan-text hash read this round (`79f46582…`) is the pre-override text; the stamped text differs from it by those sites only.
+
+### Impl gate — round 1, 2026-08-29
+
+Fresh-context session (this session wrote none of the branch); spawned `impl-gate-agent` and
+`adv-reviewer-agent` in parallel with item + ticket + branch only, no characterization; neither
+agent reported receiving any. Branch `feat/noref-eligibility-corpus`, 5 commits `0504b7e..e9eaaff`
+over `main` @8b2a23b; `git diff main...HEAD --stat` 117 files, +7093/−58; uncommitted sibling
+ticket files in the working tree excluded from the read. **Three findings — no stamp; back to
+stage 4.** One red (CI-blocking), two minor record-shape. Spec unchanged. Mechanisms, tests and
+counts all verified clean — nothing below moves code.
+
+| # | anchor | finding | disposition |
+|---|--------|---------|-------------|
+| 1 | Contract-file cap · `docs/workflow/eligibility-assistant.md` (414 lines; `main` 339) · `.github/workflows/ci.yml:135-160` `workflow-doc-cap` (cap 400, ratchet exemption list `e5b.md` only, "never add one") · `verify` `needs:` it | **Red.** The `### corpus — delivery DRAFT` record (`:341-414`, 74 lines, landed @e9eaaff) tips the contract over the 400-line cap; CI reddens at `workflow-doc-cap` and `verify` never runs, whatever the register says. The `implementation` evidence rule (references + ≤5-line notes) is the lever — the break-then-revert bullet is 9 lines, the deviations list 15. **Class, not instance:** the ticket table promises five more per-ticket records in this same file, so the fix is a compact per-ticket record shape that holds for six, not a one-off trim of this one; if the shape needs a README rule, that is a process change to record, not a silent convention. | |
+| 2 | Change-list closure · stamp commit `0504b7e` (README landing rule: "the contract's ticket-row edit") · Delivery ticket table `:334-339` · `corpus.md:329` (`lifecycle.md:21`, `retrieval-eval.md:1x`) and the Delivery record ("the form `lifecycle`'s runbook command uses") | The stamp commit carries contract edits beyond the `corpus` ticket row — in-place frozen-text amendments owned by other tickets (SPEC-48 / D-74 `turn`; REQ-9 Notes / D-79 and SPEC-28 / D-81 `trace`) and the five sibling rows stamped `GATED`. All are registered owner decisions in the same commit's register and no code scope leaks — record shape. But `lifecycle.md` and `retrieval-eval.md` exist on neither HEAD nor `main` (`git ls-tree`: corpus / llm-seam / trace / turn only; both live only on local `wip/eligibility-assistant-plans`), and this branch's committed `corpus.md` and Delivery record cite them by line number — a reviewer of this PR cannot resolve the cites. Adjacent to gate r2 f2's class (a claim here depending on a DRAFT sibling); if stage 4 judges it the same class, closure is a sweep of every sibling-file cite in the branch's committed files plus a stated landing order for the `wip/` files, not a one-cite fix. Minor. | |
+| 3 | SPEC-7 / 9 / 10 · `tests/a1_corpus_rig.py:37-55` vs the rig change row (`corpus.md:24`) · Landmines residual (e) (`:92`) · register eligibility-assistant-D-66 · Delivery "Deviations" | Plan text and D-66 say the rig pins four bare names (`config`, `logging_config`, `policy_index`, `policy_tool`); the shipped rig pins all eight house-idiom names plus the two — the form residual (e) said the implementation would take. Delivery says "residual (e) is closed, not carried" but does not list four→eight under Deviations, and the committed residual (e) / D-66 still describe the four-pin rig. Record-only — no mechanism, test or count moves; the Landmines block dies at merge but D-66 in `plans/eligibility-assistant.md` outlives this ticket, so the register is the site that needs the note. Minor. | |
+
+Verified clean, for the record: all seven `test:` cells (SPEC-7, 8, 9, 10, 11, 38, 43) filled with
+the frozen ids, each resolving to a real test in the diff, none renamed / removed / rewritten; no
+`cmd:` or `gate:` cell in the checked set (**human observation required: none** — SPEC-40's `gate:`
+is `trace`'s row); 87 documents + manifest + harness jsonl + seven `FIX-NEG-*` `cmp`-identical to the
+client package; V2 `87 rows 0 mismatched`; V4f → `2`; V5 keyless `env -i` → `ok`; V8 → `2`; V19 empty;
+V10 gitleaks over a clean `git archive HEAD` export (471 files) → `no leaks found`; index.json
+curation obligations and cap arithmetic (5×2,789+5,000 = 18,945 ≤ 20,000; largest legal set 7 > cap)
+re-derived from the tree; tier partition 9/32/16/23/7; all 18 change rows present in the diff;
+idiom sweep clean (no routes, no logging in new code, no `Co-Authored-By` trailers, D-56 cited by
+id + date in the PHI §1 entry); D13 untouched, no §1 / debt-log site in the `app.py` hunk; ADR 0019
+carries every required template section. Break-then-revert (3, 4, 4b, 4d, 4e, 4g–4p) and 4k
+accepted as recorded — re-running them mutates the tree.
+
+**Baseline observed:** `make test-docker` → **1355 passed, 19 deselected, 1 xfailed** (35.38s);
+`.venv` 3.12 `pytest -m "not integration" -q` → same (26.27s); no `skipped` term. The three new
+files collect 21 (12 + 8 + 1); branch tree with them ignored → 1334 / 19 / 1 = the ticket row's
+`Baseline at branch`; Δ +21 exactly the tests the branch adds, deselected and xfailed unmoved.
+
+checked: eligibility-assistant-SPEC-7, 8, 9, 10, 11, 38, 43 (7 ids, the `corpus` `Scope:` line) against the contract `## Spec` / `## Delivery` (ticket row + corpus DRAFT record), `plans/eligibility-assistant.md` Decisions D-1..81 / Evidence E-1..7, `corpus.md` Changes (18 rows) / Verification 1–4p, 5, 8, 9, 10, 19 / Gate interactions / Landmines / Findings r1–r10, `.github/workflows/ci.yml` · plan-text hash of `corpus.md` @HEAD `eaa569b433bdf308b48154d61f3746d61ac264d9` · checks: pinned-test diff 7/7 · contract cap **red 414 > 400** · `cmd:` none · `gate:` none · spec-first read · change-list closure both ways except the stamp-commit surplus (f2) · planted defects preserved · baseline 1355/19/1 (docker + venv) · idiom sweep clean · delivery evidence present, residuals as IDs · **3 findings: 1 red · 2 minor; 0 class-repeat of a dispositioned impl-gate class (first round)**
+
+### Adv review — round 1, 2026-08-29
+
+`adv-reviewer-agent`, frozen Spec + diff only, never the plan. **Clean — no findings.** Ran the
+three new test files (21 passed) and the full default suite under a 3.12 venv (1355 / 19 / 1,
+matching the Delivery record); independently recomputed manifest count 87, categories 25, tier
+partition 9/32/16/23/7 = 87, `FIX-NEG` count 7, and confirmed `document-manifest.json` /
+`index.json` are git-tracked (SPEC-11 "tracked artifact"). One observation recorded, **not a
+finding** (test-coverage nuance, no production-code bug, no stated-spec violation):
+`tests/test_a1_corpus.py::test_fix_neg_negative`'s "no marker text leaks into a retrievable row"
+sub-check iterates `policy_index.lookup(category, "medicare", "unconfirmed", "unconfirmed")` per
+category, so payer-specific rows for the other five payers are not exercised by that sub-check;
+SPEC-8 stays independently satisfied by the id / hash / index-membership checks and the
+whole-corpus `section_text != text` scan over all 87 rows in the same test.
+
+checked: eligibility-assistant-SPEC-7, 8, 9, 10, 11, 38, 43 against `git diff main...HEAD` (117 files, +7093/−58) · `policy_index.py`, `policy_tool.py`, `config.py`, `app.py` lifespan hook, the three test files, `a1_corpus_rig.py`, `policy_corpus/`, `tests/fixtures/a1/` · 0 findings · 1 observation (above)
