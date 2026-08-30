@@ -547,5 +547,7 @@ planned and neither moved: eligibility-assistant-SPEC-24 →
 **Residuals.** The two the Landmines block already names, as registry IDs only: the live
 composition under `langsmith==0.10.5` → eligibility-assistant-SPEC-17 / SPEC-32, E-5 (D13 stays
 OPEN in `docs/debt-log.md`, neither narrowed nor fixed); SPEC-30 proven for this service, not the
-estate → the `trace` ticket's rows. No new residual surfaced, so nothing is filed in
+estate → eligibility-assistant-SPEC-28 / SPEC-29, the `trace` rows whose "every emitted run
+payload" spans the gateway process this ticket does not reach (impl gate r1 f2: a ticket name is
+not a registry ID). No new residual surfaced, so nothing is filed in
 `docs/debt-log.md` or `docs/todo.md` by this ticket.
