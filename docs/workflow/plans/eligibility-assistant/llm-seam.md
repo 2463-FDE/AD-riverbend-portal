@@ -549,12 +549,12 @@ residual IDs — are in the contract's per-ticket delivery record row.
 Branch `feat/noref-eligibility-llm-seam` off `main` @5ae3df0 (`corpus` merged @1430ec3, so the
 `Depends on:` edge is landed and the LangChain pins are on both requirements files already).
 
-**Deviations (3, all plan-fact; no mechanism moved).**
+**Deviations (4, all plan-fact; no mechanism moved).**
 
 1. The `CLAUDE.md` §6 change row cites `:141`, `1317 passed, 19 deselected, 1 xfailed`. `corpus`
    had already moved that line to `1355 passed, 19 deselected, 1 xfailed` (2026-08-29). The row's
    action is unchanged — the line is updated to this ticket's post-count — so it reads
-   `1361 passed, 19 deselected, 1 xfailed`, measured 2026-08-30.
+   `1362 passed, 19 deselected, 1 xfailed`, measured 2026-08-30.
 2. The `agent_binding.py` row says `bind_tools` → Anthropic `tools` in `extra_body` without naming
    the conversion route. `langchain-core==1.6.0` ships no Anthropic tool converter, only
    `convert_to_openai_function` / `convert_to_openai_tool` (`utils/function_calling.py:377`,
@@ -672,7 +672,7 @@ planned and neither moved: eligibility-assistant-SPEC-24 →
 `tests/test_llm_client.py::test_a1_binding_uses_seam_fail_closed`; eligibility-assistant-SPEC-30 →
 `tests/test_a1_trace.py::test_model_call_not_streamed`. No pinned test changed.
 
-**Residuals.** The two the Landmines block already names, as registry IDs only: the live
+**Residuals.** The three the Landmines block names, as registry IDs only: the live
 composition under `langsmith==0.10.5` → eligibility-assistant-SPEC-17 / SPEC-32, E-5 (D13 stays
 OPEN in `docs/debt-log.md`, neither narrowed nor fixed); SPEC-30 proven for this service, not the
 estate → eligibility-assistant-SPEC-28 / SPEC-29, the `trace` rows whose "every emitted run
