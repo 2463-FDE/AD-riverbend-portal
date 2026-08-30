@@ -53,12 +53,34 @@ def _corpus_digest() -> str:
     return h.hexdigest()
 
 
+def _empty_record(topic, payer, product, state, provenance):
+    """The record a stubbed lookup leaves — same shape as the module's own."""
+    labels = {axis: (provenance or {}).get(axis, "application_default") for axis in
+              ("topic", "payer", "product", "state")}
+    return policy_index.LookupRecord(
+        topic=topic,
+        topic_provenance=labels["topic"],
+        payer=payer,
+        payer_provenance=labels["payer"],
+        product=product,
+        product_provenance=labels["product"],
+        state=state,
+        state_provenance=labels["state"],
+        pre_filter_rows=0,
+        post_filter_rows=0,
+        returned_rows=0,
+        cap=settings.a1_retrieval_max_rows,
+        truncated=False,
+        empty=True,
+    )
+
+
 def _recording_lookup(monkeypatch):
     calls = []
 
-    def _lookup(topic, payer, product, state):
+    def _lookup(topic, payer, product, state, *, provenance=None):
         calls.append((topic, payer, product, state))
-        return []
+        return [], _empty_record(topic, payer, product, state, provenance)
 
     monkeypatch.setattr(policy_index, "lookup", _lookup)
     return calls
@@ -156,15 +178,16 @@ def test_in_process_read_only_capped(monkeypatch):
         m.setattr(builtins, "open", _read_only_open)  # read-only
         # capped: a legal call with more candidates than the cap
         assert settings.a1_retrieval_max_rows == 5
-        rows = policy_index.lookup(*legal)
+        rows, record = policy_index.lookup(*legal)
+        assert (record.post_filter_rows, record.returned_rows) == (7, 5)
         assert len(rows) == 5
         assert [row.id for row in rows] == expected_order[:5]
         m.setattr(settings, "a1_retrieval_max_rows", 7)
-        assert [row.id for row in policy_index.lookup(*legal)] == expected_order
+        assert [row.id for row in policy_index.lookup(*legal)[0]] == expected_order
         m.setattr(settings, "a1_retrieval_max_rows", 1)
-        assert [row.id for row in policy_index.lookup(*legal)] == expected_order[:1]
+        assert [row.id for row in policy_index.lookup(*legal)[0]] == expected_order[:1]
         # the by-id application entry under the same guards
-        fetched = policy_index.fetch_by_id(["DOC-SYN-EMERGENCY", "DOC-FED-EMTALA-CMS"])
+        fetched, _by_id = policy_index.fetch_by_id(["DOC-SYN-EMERGENCY", "DOC-FED-EMTALA-CMS"])
         assert [row.id for row in fetched] == ["DOC-SYN-EMERGENCY", "DOC-FED-EMTALA-CMS"]
         # `*` is an index-row value, never a query value
         with pytest.raises(ValueError):
@@ -224,14 +247,14 @@ def test_unconfirmed_axis_non_filtering(case_id):
     assert entry["needs_product_confirmation"] is True
     topic = "payer-eligibility-public"
     # `unconfirmed` on product and state does not filter: the citation-only row is returned
-    ids = [r.id for r in policy_index.lookup(topic, "unitedhealthcare", "unconfirmed", "unconfirmed")]
+    ids = [r.id for r in policy_index.lookup(topic, "unitedhealthcare", "unconfirmed", "unconfirmed")[0]]
     assert "DOC-PAY-UHC-ELIG-REFERRALS" in ids
     # ... and neither does a confirmed value the row carries
-    ids = [r.id for r in policy_index.lookup(topic, "unitedhealthcare", "commercial", "other_us")]
+    ids = [r.id for r in policy_index.lookup(topic, "unitedhealthcare", "commercial", "other_us")[0]]
     assert "DOC-PAY-UHC-ELIG-REFERRALS" in ids
     # a confirmed value the row does not carry DOES filter — that is what makes
     # `unconfirmed` an absence of a filter rather than a wildcard the row must match
-    ids = [r.id for r in policy_index.lookup(topic, "unitedhealthcare", "medicaid_mco", "other_us")]
+    ids = [r.id for r in policy_index.lookup(topic, "unitedhealthcare", "medicaid_mco", "other_us")[0]]
     assert "DOC-PAY-UHC-ELIG-REFERRALS" not in ids
     # the state axis, on the one California-only public page
     assert "DOC-PAY-ANTHEM-CA-ELIG" in [
@@ -244,7 +267,11 @@ def test_unconfirmed_axis_non_filtering(case_id):
         r.id for r in policy_index._filter(topic, "anthem_blue", "unconfirmed", "other_us")
     ]
     # the empty result on a foreign payer is a filter outcome, not a mismatch verdict
-    assert policy_index.lookup("medicaid-managed-care", "aetna", "commercial", "unconfirmed") == []
+    empty_rows, empty_record = policy_index.lookup(
+        "medicaid-managed-care", "aetna", "commercial", "unconfirmed"
+    )
+    assert empty_rows == []
+    assert empty_record.empty is True
 
 
 # --- SPEC-11 --------------------------------------------------------------------
@@ -283,7 +310,10 @@ def test_index_covers_every_row():
     assert entries["DOC-SYN-NEVER-STATE"]["products"] == "*"
     assert entries["DOC-SYN-NEVER-STATE"]["states"] == "*"
     for payer in policy_index.PAYERS:
-        assert [r.id for r in policy_index.lookup("front-desk-scripts", payer, "unconfirmed", "unconfirmed")] == [
+        assert [
+            r.id
+            for r in policy_index.lookup("front-desk-scripts", payer, "unconfirmed", "unconfirmed")[0]
+        ] == [
             "DOC-SYN-NEVER-STATE"
         ]
 
