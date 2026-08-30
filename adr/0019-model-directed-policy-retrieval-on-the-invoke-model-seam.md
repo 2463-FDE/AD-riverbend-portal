@@ -75,9 +75,93 @@ by the ticket whose diff lands the mechanism, and a section not yet written is n
   shows ai-assistant exited; the gateway's `/ai/*` proxies return their upstream-failure contract),
   never a turn that cites a partial set.
 
-### 2–6. Seam binding · bounded loop and outcome derivation · trace shape · lifecycle · retrieval record and eval
+### 2. Seam binding (`llm-seam`)
 
-Appended by `llm-seam`, `turn`, `trace`, `lifecycle` and `retrieval-eval` respectively, each as a
+- **The framework's only egress is `llm_client._call`.** `services/ai-assistant/agent_binding.py`
+  defines `SeamChatModel(BaseChatModel)`, whose `_generate` converts framework messages into the
+  Anthropic body and calls `_call`. The framework never constructs a provider client of its own,
+  so the four **pre-egress** controls that live on `_call` — the gross-size char cap, the
+  token/cost budget gate against the byte-based upper bound, the bearer fail-closed guard, and the
+  typed-error mapping — apply to the bytes an agent run actually emits. Tool definitions ride
+  `extra_body["tools"]`, which `_enforce_char_cap` and `max_input_tokens` both count, so the tool
+  surface is inside the budget gate rather than beside it. This is the eligibility-assistant-D-9
+  shape-(ii) reason: a Converse-style client would have been gated on a payload that is not the
+  egress payload.
+- **The system prompt is `_call`'s `system` argument.** Exactly one `SystemMessage`, and only as
+  the leading message, maps to `body["system"]` — the key `max_input_tokens` counts on its own
+  line. A `SystemMessage` elsewhere, more than one, or a non-`None` `stop` raises `ValueError`
+  before `_call`, with zero egress. Folding the system prompt into a `user` turn is exactly the
+  smuggling the separate byte line exists to prevent.
+- **A post-egress twin guard, not a bypass of ADR 0004.** `_call` returns before
+  `_result_from_response`, so the two post-egress controls ADR 0004 names (`:38-40`, `:57`) do not
+  come for free on this path: `_generate` applies them itself, as **three** checks rather than two
+  — fail closed on a malformed 200 (content present; every field the receive half reads
+  shape-checked, `id` / `name` str and `input` dict on a `tool_use` block and `text` str on a text
+  block, because those fields exist on this path and `_adapt` defaults them to `None`; explicit
+  integer usage), errors carrying the field name and the request id only, and emit the same
+  metadata-only `llm call model=… in_tokens=… out_tokens=… cost=… latency=… request_id=…` line.
+  The third check is what keeps the guarantee typed: without it a malformed `tool_use` block leaves
+  the binding as a pydantic `ValidationError` — not an `LLMError`, and carrying the offending value
+  in its message.
+  The twin is stated **control by control**, not as a count of checks: a control the reference
+  applies and the twin quietly lacks is a divergence on the estate's only vendor-egress path, and
+  "the two ADR 0004 checks" was the framing under which exactly that happened twice. The
+  enumeration lives in `_guarded_message`'s docstring — usable answer required, which text is the
+  answer, explicit integer usage, typed failure, request-id-only message, the metadata-only line,
+  the `model` fallback, and the twin-only field shapes — with **three** deliberate differences and
+  no undeclared ones:
+  (i) a `tool_use` block satisfies the usable-answer rule beside `text`, because a tool-only turn
+  is the agent path's valid answer — which is why `_result_from_response`'s text-required guard
+  could not simply be reused; it is untouched, and
+  `test_non_text_content_block_raises_through_adapter` still pins the rejection for `complete()`;
+  (ii) the twin joins every `text` block in response order where the reference answers with the
+  first and drops the rest, because the agent path can interleave text and `tool_use`;
+  (iii) the field-shape check above is twin-only and stricter, the reference never reading those
+  fields. Emptiness is **not** a difference: a text-only turn whose text is `""` fails closed here
+  exactly as the reference's `if not text` does. `tests/test_llm_client.py::test_a1_binding_guard
+  _parity` pins the binding's log record and `complete()`'s against one six-field pattern, and
+  `::test_a1_binding_twin_control_enumeration` pins the SET — one body corpus driven through both
+  halves, each case declaring agreement or a named difference, the difference set asserted closed
+  — so this is a second application of every ADR 0004 control, not a bypass of any.
+- **`_adapt` is a superset, not a rewrite, and TOTAL over a JSON body.** Content blocks now carry
+  `id` / `name` / `input` on every block and the response carries `stop_reason`, all `None` when
+  the body does not have them. The text-only shape is byte-for-byte what it was. `_adapt` runs
+  AHEAD of both post-egress guards and reads the body with `.get`, so a non-dict root, a non-list
+  `content` or a non-dict block used to leave `_call` as an `AttributeError`/`TypeError` — untyped,
+  before either guard, on both halves. Those three shapes now fail closed as `LLMResponseError`
+  naming the offending shape's class and the request id and nothing off the body, and `_call`'s
+  malformed-body clause catches `AttributeError`/`TypeError` as a backstop for the SDK envelope it
+  also reads. Absence is preserved as above; a type violation cannot be, which is why it raises.
+- **The binding cannot stream (SPEC-30).** `_stream` is deliberately unimplemented and raises.
+  LangSmith's `hide_inputs` / `hide_outputs` redaction — the two-layer hide ADR 0006 relies on to
+  keep trace payloads metadata-only — is bypassed on streamed payloads, so the guarantee is
+  structural rather than a policy line asking callers not to stream.
+  `tests/test_a1_trace.py::test_model_call_not_streamed` pins both halves: no
+  `invoke_model_with_response_stream` reference exists in the service, and `_stream` raises.
+- **This ticket lands dark.** `app.py` imports the binding so CI's keyless `services` smoke proves
+  it against the *service* requirements; no route calls it and no model call is made. The one new
+  log site is the twin guard's `llm call` line, metadata-only and unreached at runtime here.
+- **Subclassing `BaseChatModel` adds a second LangSmith emitter, and the seam does not own it.**
+  With tracing v2 enabled, `langchain_core.callbacks.manager._configure` (1.6.0, `:2524-2544`)
+  auto-attaches a `LangChainTracer` whose `client` is `run_tree.client` when a parent run tree
+  exists and `tracing_context["client"]` otherwise — `None` on a bare `invoke`, so the tracer
+  builds a **default `Client()`** and the framework-native chat-model run reaches LangSmith
+  redacted by the `LANGSMITH_HIDE_*` env layer alone. The in-code layer ADR 0006 decision 1 pairs
+  with it — `ls.Client(hide_inputs=_blank, hide_outputs=_blank)` in `tracing.py::wrap_create` — is
+  bound to the `bedrock.invoke_model` run and does not reach this one, so "two independent layers"
+  holds for that run and not for this. It is **not** closed inside the binding on purpose:
+  `_configure` skips the auto-attach when a `LangChainTracer` is already among the handlers, so
+  pre-binding one here would preempt the parent run tree's client, which is exactly what the
+  end-to-end trace must own. SPEC-28's payload allowlist and SPEC-29's per-path negative scan are
+  the checks that see the run.
+- **Not proven here:** the composition's live Bedrock leg under the pinned `langsmith==0.10.5`
+  (E-4 ran on `0.11.1`, E-5 measured the pins offline only); it is first exercised at SPEC-17 /
+  SPEC-32's opt-in runs in `turn` / `trace`. And SPEC-30 is proven for this service — the
+  gateway's own LangSmith client is `trace`'s row to state and prove.
+
+### 3–6. Bounded loop and outcome derivation · trace shape · lifecycle · retrieval record and eval
+
+Appended by `turn`, `trace`, `lifecycle` and `retrieval-eval` respectively, each as a
 change row of its own ticket plan, so that no decision a review round could reopen rests on a
 plan file that is deleted at merge (eligibility-assistant-D-42, note 2026-08-27).
 
@@ -121,6 +205,9 @@ plan file that is deleted at merge (eligibility-assistant-D-42, note 2026-08-27)
   87 documents, `index.json`), config `A1_RETRIEVAL_MAX_ROWS` (fresh-deploy default **5**, clamped
   ≥ 1), `.dockerignore` `**/.DS_Store`, the LangChain pins in both requirements files, and the
   lifespan hook in `app.py`. Nothing on the request path is wired: the tool lands dark.
+- New (`llm-seam`): `services/ai-assistant/agent_binding.py` (`SeamChatModel`), the `_adapt`
+  superset in `llm_client.py`, and the dark `import agent_binding` in `app.py`. Nothing on the
+  request path is wired: the binding lands dark.
 - Fixtures: `tests/fixtures/a1/` (harness jsonl verbatim, `case_selections.json`, seven
   `FIX-NEG-*` under `fix_neg/`) and the pinned module rig `tests/a1_corpus_rig.py`
   (eligibility-assistant-D-66).
@@ -128,7 +215,8 @@ plan file that is deleted at merge (eligibility-assistant-D-42, note 2026-08-27)
   negatives, approval gate, module-state non-publish, boot-fail hook), `tests/test_a1_retriever.py`
   (topic-only tool, extra-key rejection, in-process/read-only/no-network/capped, cap sizing, enum
   three-way equality, non-filtering `unconfirmed`, index coverage and row shape, case selections),
-  `tests/test_a1_conflict.py` (tier partition over all 87 rows, rank key).
+  `tests/test_a1_conflict.py` (tier partition over all 87 rows, rank key), and — from `llm-seam` —
+  `tests/test_llm_client.py::test_a1_binding_*` plus `tests/test_a1_trace.py`.
 - ADR 0006 and ADR 0011 carry an `Extended by ADR 0019` status note; their decisions are unchanged.
 - Harder from here: widening what the model may pass to the retriever, or adding a second
   manifest reader — both redden a pinned test and re-open the §1 approval of record

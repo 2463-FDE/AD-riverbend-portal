@@ -36,7 +36,14 @@ the module under test by file path (see `conftest.py::load_module`).
   (`test_visit_memory.py`), tracing (`test_tracing.py`), and the eligibility-assistant
   policy corpus — sha pin, fixture isolation, boot-fail hook (`test_a1_corpus.py`), the
   topic-only retriever tool, index and cap (`test_a1_retriever.py`), the tier rule and rank key
-  (`test_a1_conflict.py`); all three share the pinned module rig `a1_corpus_rig.py`.
+  (`test_a1_conflict.py`); all three share the pinned module rig `a1_corpus_rig.py`. The agent
+  binding on the `invoke_model` seam — fail-closed guards on the tool payload, the send/receive
+  round trip, the SystemMessage rules, the post-egress guard/telemetry parity with
+  `complete()` and the control-by-control enumeration of that twin — is in `test_llm_client.py`
+  (`test_a1_binding_*`), and the never-stream guarantee
+  in `test_a1_trace.py`, which the `trace` ticket extends. The adapter that feeds both halves is
+  pinned total over a drifted 200 body in the same file
+  (`test_a1_adapt_total_over_non_dict_bodies`, `test_a1_call_types_shape_errors_outside_adapt`).
 - **Intake and HL7** — payload validation (`test_intake_schemas.py`), the route itself
   end to end (`test_intake_endpoint.py`), the two-sided payload declaration
   (`test_intake_payload_contract.py`, whose portal twin is
