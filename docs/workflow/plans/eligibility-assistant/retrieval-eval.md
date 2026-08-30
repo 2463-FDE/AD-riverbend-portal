@@ -1,6 +1,6 @@
 # eligibility-assistant / retrieval-eval — ticket plan file (deleted at its merge; contract: docs/workflow/eligibility-assistant.md)
 
-Status: plan GATED 2026-08-28 (**owner override 2026-08-28, in session: stamped in the gate session without a fresh re-run; the drift-gate rule "never stamp with an open finding" set aside by explicit owner decision for this wave; gate r4's one finding accepted under the round-3 rule as a named residual and dispositioned A in the same act**) (gate r3 dispositioned 2026-08-28, stage 3 — the one finding `pre-existing`, **A**, bookkeeping only: the ⚠ approval-of-record paragraph's lead clause (`:46`) brought to the re-opened-by-r1 / re-closed-same-day form the Status line and register already hold; the six-block class sweep enumerated; `Depends on:` item-plan cite `:102` → `:103` after eligibility-assistant-D-81's row; no mechanism, test or decision moves) (gate r2 dispositioned 2026-08-27, stage 3 — both findings **A**, fact-trail only: `Depends on:` re-cited by section per the README stable-ID rule with `:102` for the record, `:15`'s "four" → three; the count sweep (nineteen sites) and the six-file sibling-line-cite sweep (with `lifecycle` r2 f3) enumerated; no mechanism, test or decision moves) (gate r1 dispositioned 2026-08-27, stage 3 — twelve findings, all **A**, f8(b) closed with the rest; NEW eligibility-assistant-D-67 (where SPEC-65's numbers live under the CI 400-line cap), D-68 (the record is a log line only — no run payload carries it), D-69 (`LookupRecord` axis shape, by-id and direct-call provenance), D-70 (the named argument sets and the `index.json` curation obligation they rest on) — **all four confirmed by owner 2026-08-27 (in session); no owner call open**; dated notes on eligibility-assistant-D-58 (the SPEC-64 measurable-case reading) and D-59 (this ticket's landing slot). **Cross-ticket revisions this file has received:** `corpus` gate r4 f3 2026-08-27 inserted the `tests/test_a1_retriever.py` change row (recorded in `corpus.md:29`); `corpus` gate r7 f1 2026-08-27 rewrote both NEW-test rows onto `tests/a1_corpus_rig.py` (eligibility-assistant-D-66); the **D-59..D-65 propagation sweep 2026-08-27, stage 3** propagated eligibility-assistant-D-62 and D-61 into the `policy_index.py` and eval-test rows, closing gate r1 f8(a) — enumerated site lists in the eligibility-assistant-D-61 / D-62 / D-63 sweep notes in the decision register)
+Status: plan GATED 2026-08-28 · delivery DRAFT 2026-08-30 (**owner override 2026-08-28, in session: stamped in the gate session without a fresh re-run; the drift-gate rule "never stamp with an open finding" set aside by explicit owner decision for this wave; gate r4's one finding accepted under the round-3 rule as a named residual and dispositioned A in the same act**) (gate r3 dispositioned 2026-08-28, stage 3 — the one finding `pre-existing`, **A**, bookkeeping only: the ⚠ approval-of-record paragraph's lead clause (`:46`) brought to the re-opened-by-r1 / re-closed-same-day form the Status line and register already hold; the six-block class sweep enumerated; `Depends on:` item-plan cite `:102` → `:103` after eligibility-assistant-D-81's row; no mechanism, test or decision moves) (gate r2 dispositioned 2026-08-27, stage 3 — both findings **A**, fact-trail only: `Depends on:` re-cited by section per the README stable-ID rule with `:102` for the record, `:15`'s "four" → three; the count sweep (nineteen sites) and the six-file sibling-line-cite sweep (with `lifecycle` r2 f3) enumerated; no mechanism, test or decision moves) (gate r1 dispositioned 2026-08-27, stage 3 — twelve findings, all **A**, f8(b) closed with the rest; NEW eligibility-assistant-D-67 (where SPEC-65's numbers live under the CI 400-line cap), D-68 (the record is a log line only — no run payload carries it), D-69 (`LookupRecord` axis shape, by-id and direct-call provenance), D-70 (the named argument sets and the `index.json` curation obligation they rest on) — **all four confirmed by owner 2026-08-27 (in session); no owner call open**; dated notes on eligibility-assistant-D-58 (the SPEC-64 measurable-case reading) and D-59 (this ticket's landing slot). **Cross-ticket revisions this file has received:** `corpus` gate r4 f3 2026-08-27 inserted the `tests/test_a1_retriever.py` change row (recorded in `corpus.md:29`); `corpus` gate r7 f1 2026-08-27 rewrote both NEW-test rows onto `tests/a1_corpus_rig.py` (eligibility-assistant-D-66); the **D-59..D-65 propagation sweep 2026-08-27, stage 3** propagated eligibility-assistant-D-62 and D-61 into the `policy_index.py` and eval-test rows, closing gate r1 f8(a) — enumerated site lists in the eligibility-assistant-D-61 / D-62 / D-63 sweep notes in the decision register)
 Scope: SPEC rows eligibility-assistant-SPEC-63, -64, -65, -66 (REQ-19; eligibility-assistant-D-49, eligibility-assistant-D-58 — the lookup record, the recall baseline, the isolated ranking unit; lands dark, not wired to the request path)
 Depends on: corpus (`policy_index` — `_filter` / `rank` / `lookup` / `fetch_by_id`, `policy_tool`, `tests/a1_corpus_rig.py`, `tests/fixtures/a1/case_selections.json`, the vendored harness jsonl). **Landing position: third — after `corpus` and `llm-seam`, before `turn`** (eligibility-assistant-D-59's order clause, owner-confirmed 2026-08-27, with its note 2 of the same day; restated in the item plan's `## Plan` `Status:` line — cited by section per the README stable-ID rule, `plans/eligibility-assistant.md:103` as read 2026-08-27 after the eligibility-assistant-D-80 row; gate r2 f1); no dependency on `turn` — the ticket lands dark and nothing in its change list reads the turn rig (gate r1 f2)
 
@@ -149,3 +149,118 @@ Per-SPEC verdicts: SPEC-63 FINDING (f1 — stale quote in the ⚠ record; the fo
 checked: eligibility-assistant-SPEC-63, 64, 65, 66 (4 ids, the `retrieval-eval` `Scope:` line) against Decisions eligibility-assistant-D-1..81, Evidence E-1..7, `retrieval-eval.md` Changes (11 rows) / Gate interactions (5) / Verification 1–5 / Landmines / Findings r1–r3, sibling `Scope:` + `Depends on:` lines, item ticket table, contract `## Delivery` · **plan-text hash read: `0f4cafcdc8ced2e8e53822afb8b2bbea56b48f37`** (round 3 recorded `9d129d4f1e561eb27b0eeb1e80610be9e5ae17cc`; the one r3 disposition carries its `Sites changed:` list) · **origin: 0 new · 0 pre-existing · 1 class-repeat** · check map 66/66 (4/4 in set: 3 `test:`, 1 `gate:` SPEC-65) · ⚠ row 63 — PHI-handling entered, D-56 cited by id and date, D-68 / D-69 confirmations recorded as the re-close in the r3-corrected form; other 11 §1 zones written out · freeze scope 0 `DEFERRED` · ownership 66/66 once · cites resolve (`corpus.md:14/:15/:16/:18/:19/:25/:26/:27/:29/:53/:60/:65`, `llm-seam.md:15/:34/:35`, `turn.md:5/:64`, `lifecycle.md:18`, `trace.md:15`, item plan `:103`, contract `:191-198/:203-210/:287`, phi rules `:9/:23/:37/:41` + table `:80`, `tests/test_visit_chat_phi.py:261`, `CLAUDE.md:62/:82/:97-98/:141`, `docs/todo.md:62/:69`, `docs/runbook.md:303`, `ci.yml:72-76/:135-155/:207` hold; contract `:286` holds as a locator but not as quoted — f1) · change list closes both ways (2 + 3 `lookup`/`fetch_by_id` call sites re-swept over `corpus.md`; `llm-seam.md` 0 hits) · counts re-derived: 14 fields; five legs; COB×medicare 7 (ids match `corpus.md:26`), MMC×medicaid 7 all CMS / Medicaid.gov / eCFR publishers so the `aetna`/`commercial` quadruple is curation-empty, Humana 3 + `DOC-PAY-AVAILITY-ELIG`; 27/32 with EVAL-010/011/029/030/031 the five; the six deterministic cases' `expected_source_ids` ⊆ their reason rows; `4 passed`, `2`, `+ 4`, no `skipped` · registry sweep re-run: zero hits for the six terms in landmines / debt-log / phi-policy / ARCHITECTURE §7; `CLAUDE.md:141` the only falsified clause · 1 finding, minor, class-repeat.
 
 **Stamped `plan GATED 2026-08-28` under owner override** (in session, 2026-08-28): f1 accepted as a named residual and dispositioned in the same act; no fresh re-run — the `drift-gate` "never stamp with an open finding" rule set aside by explicit owner decision for this wave, recorded here and in the Status line. Writes by the gate session under the override: this cell, the residual sentence, the Status line, the contract ticket row. Plan-text hash read this round (`0f4cafcd…`) is the pre-override text; the stamped text differs from it by those sites only.
+
+
+## Delivery evidence
+
+Status: delivery DRAFT 2026-08-30. Branch `feat/noref-eligibility-retrieval-eval` off `main`
+@434342a · stamp @620f932 · code @3e4aa0a · docs @f91c396. Baseline at branch
+`1364 passed, 19 deselected, 1 xfailed`; at delivery `1368 passed, 19 deselected, 1 xfailed`
+(`make test-docker` and `.venv` 3.12 agree) — +4, exactly this branch's four tests; deselected
+and xfailed unmoved. The references — shas, baseline movement, the test-first split,
+traceability and residual IDs — are in the contract's per-ticket record row; this section holds
+the deviations and the live-run detail, and dies with the file at merge.
+
+### Deviations
+
+Six, all **plan-fact** (a stated fact was wrong or incomplete); no mechanism, seam or decision
+moved, and no `Changes` row was dropped or added beyond the registry entry named in 6.
+
+1. **The change-list closure missed two `lookup` call sites.** The closure swept the three
+   tickets landing at or before this one and concluded `test_cap_binds_on_a_legal_call` and
+   `test_index_covers_every_row` "drive `_filter` / `_INDEX`, not `lookup`". `test_index_covers_every_row`
+   (`tests/test_a1_retriever.py`) does call `lookup`, and so does
+   `test_a1_conflict.py::test_tier_rank_in_code` — a file absent from the change list entirely,
+   named there only as a `rank(rows)` call site unbroken by the added keyword. Both were red on the
+   return-shape change and are patched to unpack `(rows, record)`, every assertion staying on the
+   rows. Seven call sites in three files, not five in two.
+2. **The planted member-id shape does not exist.** The plan planted "a member id (`MBR-…`, the
+   `tests/fixtures/a1/` id shape)"; no `MBR-` string appears anywhere under `tests/fixtures/a1/`
+   or `services/ai-assistant/`. The estate's member ids are the `AI_MEMBER_ID_PREFIXES` catalog
+   (`services/ai-assistant/config.py:206-209` — `AETN,AETNA,BCBS,BLUE,CIGN,KAIS,MEDI,UNIT`), so the
+   plant is `AETNA5501`, a valid id in that catalog's shape and used nowhere else in the suite. The
+   mechanism is unchanged: the string is offered to the tool as `topic` and rejected by the
+   `PolicyLookupArgs` `Literal` before any record exists, then asserted absent from every record and
+   log line the three legal paths produce.
+3. **Ranking bucket 3 holds six rows, not four.** The plan named
+   `("payer-eligibility-public", "humana", "unconfirmed", "unconfirmed")` as "the three
+   `DOC-PAY-HUMANA-*` rows, four with the multi-payer `DOC-PAY-AVAILITY-ELIG`". Measured against the
+   loaded index it is six: those four plus `DOC-MAC-CGS-ELIG` and `DOC-PAY-NOVITAS-HETS`, all tier 3.
+   The plan's stated precondition — **≥ 2 rows before any comparison, so a reordering can be
+   observed at all** — is what the test asserts, and it holds; no bucket moved.
+4. **The substituted ranking unit could not have failed.** The plan wrote
+   `rank(rows, ranker=reversed_order)` — a unit defined as the default, reversed. Verification 2's
+   fourth break (make the default ranker drop the last row of its input) **ran green** under that
+   definition: both sides delegate to the same broken default, so membership matched and the test
+   could not see the drop. The substituted unit now orders the rows itself (`document_id` desc) and
+   never calls `rank`; the break then reddens on all three buckets, as the plan intended. The
+   assertion pair the plan specified — membership compared as a set, order as a list — is unchanged,
+   and a third assertion recomputes the default order from row fields so the eligibility-assistant-D-62
+   key is pinned rather than assumed. Test design only; `default_ranker` and `rank` are as planned.
+5. **The stubbed lookup in `test_a1_retriever.py` needed a record.** `_recording_lookup`
+   monkeypatches `policy_index.lookup` and returned `[]`; with the two-tuple return it must return a
+   record too, so a `_empty_record` helper builds a real `LookupRecord` in the module's own shape.
+   Inside a change-list file, but not a row the plan spelled out.
+6. **One registry entry the plan did not name: `docs/todo.md` TODO-69.** The contract's
+   Delivery-record budget (eligibility-assistant-D-55: the six records inside the 61 lines spare
+   under the blocking 400-line `workflow-doc-cap`) is spent — measured growth is 19–25 lines per
+   ticket against the ~10 assumed, leaving 11 lines for `turn`, `lifecycle` and `trace`. Flagged to
+   the owner at this branch's cut and deferred by owner decision to this Delivery write; filed as a
+   loose end rather than carried in prose, per this stage's residuals rule. The plan's gate-interaction
+   bullet anticipated the cheap check (`wc -l` before the push) but not that the budget itself would
+   be exhausted.
+
+Not a deviation, recorded so the next reader does not re-derive it: the plan's residual bullet names
+`DOC-SYN-EMERGENCY` as "EVAL-024's third citation". The harness row's `expected_source_ids` for
+EVAL-024 is `DOC-FED-EMTALA-CMS` + `policies/conflict-resolution.md` +
+`procedures/coverage-question-cheat-sheet.md`; `DOC-SYN-EMERGENCY` is the reason table's, not the
+harness's. Under the subset reading (Open (5)) EVAL-024's recall is 1.0 either way, so nothing moves.
+
+### Test-first split
+
+**Red first** (the mechanism did not exist when the test was written):
+`test_record_fields_and_provenance` (SPEC-63 — failed on `len(logged) == 0`, no `LookupRecord`, no
+log line, no two-tuple) and `test_ranking_isolated_from_filtering` (SPEC-66 — failed on
+`TypeError: rank() got an unexpected keyword argument 'ranker'`).
+
+**Green on first run**, pinned by break-then-revert instead:
+`test_record_metadata_only_every_path` — the closed fourteen-field dataclass written for the first
+test already satisfied it; breaks (b) and (e) below are what hold it.
+`test_recall_at_cap_per_case_min_headline` — a measurement over `lookup` / `fetch_by_id` as they
+already stood, adding no production code; it asserts **no floor** by design
+(eligibility-assistant-D-49), so nothing can break it into red. Verification 1's `-s` output is its
+evidence, and the SPEC-65 numbers in the contract are what it exists to produce.
+
+**Verification-covered only** (no behavioural seam): `adr/0019` section 6 and its two Consequences
+bullets, the `tests/README.md` AI-paths bullet, the `CLAUDE.md` §6 baseline line, and the
+`docs/todo.md` TODO-69 entry.
+
+### Live-run evidence
+
+All runs are local, source-only edits in the working tree against the `.venv` 3.12 interpreter and
+`make test-docker`'s python:3.12 container: **no service is running, no Postgres or Redis is
+touched, no network call is made, no `.env` or secret file is read, and every break is reverted from
+a byte-identical backup taken before the first edit** (`policy_index.py` / `policy_tool.py` copied
+aside, restored by `cp`, `git diff` clean after each). No §1 zone is entered by any run.
+
+- **V1** `.venv/bin/python -m pytest tests/test_a1_retrieval_record.py tests/test_a1_retrieval_eval.py -q -s`
+  → `4 passed`; the `-s` output carries the 27-row recall table and `min recall@5 = 0.50 (EVAL-001)`.
+  Copied into the contract's `## Delivery` per eligibility-assistant-D-67.
+- **V2** break-then-revert, five breaks over the three tests; each reverted and re-run green:
+  (a) `truncated` a constant `False` → `test_record_fields_and_provenance` red on the truncated leg;
+  (b) the first returned row's `section_text[:80]` into the record → `test_record_metadata_only_every_path`
+  red on the success path; (c) `provenance=` dropped from `policy_tool`'s `lookup` call →
+  `test_record_fields_and_provenance` red (`application_default` ×4 where the tool must record
+  `clerk_selection` ×3 + `model_topic`); (d) the default ranker drops the last row of its input →
+  `test_ranking_isolated_from_filtering` red on all three buckets (see deviation 4: green under the
+  plan's ranker, red under the independent one); (e) an extra key on `LookupRecord.as_dict` → **both**
+  record tests red, so the closed-key half is pinned as well as the value half.
+- **V3** `--collect-only` EVAL-id count → `2` (`EVAL-023`, `EVAL-031`), unmoved; this ticket adds no
+  parametrised case id (eligibility-assistant-D-54).
+- **V4** `cd services/ai-assistant && env -i PATH="$PATH" ../../.venv/bin/python -c "import app, policy_index, policy_tool; print('ok')"`
+  → `ok`; keyless and offline, the CI `services` smoke shape.
+- **V5** `git diff --stat main -- db/ config/ services/gateway/authz.py services/gateway/security.py services/eligibility-service/ services/ai-assistant/eligibility_client.py docker-compose.yml eval/`
+  → **empty**; the structural exclusion holds by diff, not by assertion. `make eval` not run: nothing
+  under `eval/rag/` or the RIV-160 retrieval path changed (the slug collision is named, not resolved).
+- **Baseline** `make test-docker` → `1368 passed, 19 deselected, 1 xfailed`; `.venv` 3.12 agrees.
+  Branch baseline was `1364 / 19 / 1` measured off `main` @434342a at the cut, both runners agreeing.
