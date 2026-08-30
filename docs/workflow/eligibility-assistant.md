@@ -332,7 +332,7 @@ Open before FROZEN: none — eligibility-assistant-D-20..24 resolved 2026-08-24 
 | ticket | SPEC rows | plan | baseline at branch | delivery | plan-file deletion sha |
 |---|---|---|---|---|---|
 | corpus | eligibility-assistant-SPEC-7–11, 38, 43 | GATED 2026-08-28 | 1334 passed, 19 deselected, 1 xfailed (2026-08-28, `.venv` 3.12 `pytest -m "not integration"`; docker daemon down, `make test-docker` re-run before push) | MERGED 1430ec3 (PR #93, 2026-08-30; IMPLEMENTED 2026-08-29) | a93f7c4 |
-| llm-seam | eligibility-assistant-SPEC-24, 30 | GATED 2026-08-27 | 1355 passed, 19 deselected, 1 xfailed (2026-08-30, `make test-docker` at branch cut off `main` @5ae3df0; `.venv` 3.12 agrees) | DRAFT 2026-08-30 | — |
+| llm-seam | eligibility-assistant-SPEC-24, 30 | GATED 2026-08-27 | 1355 passed, 19 deselected, 1 xfailed (2026-08-30, `make test-docker` at branch cut off `main` @5ae3df0; `.venv` 3.12 agrees) | IMPLEMENTED 2026-08-30 | — |
 | turn | eligibility-assistant-SPEC-1–6, 12–23, 25–26, 33, 36–37, 39a, 41–42, 44–56 | GATED 2026-08-28 | — | — | — |
 | trace | eligibility-assistant-SPEC-27–29, 31–32, 34–35, 39b, 40 | GATED 2026-08-28 | — | — | — |
 | lifecycle | eligibility-assistant-SPEC-58–62 | GATED 2026-08-28 | — | — | — |
@@ -362,3 +362,15 @@ at gate: `1355 passed, 19 deselected, 1 xfailed` (`make test-docker` and `.venv`
 are all `test:`. Residuals accepted here: (a)–(d) of the record row above, as IDs, plus r1 f2's
 sibling-cite anchor (`origin/wip/eligibility-assistant-plans` @6a773fd, eligibility-assistant-D-59
 landing order); no new residual. Push stays human-gated. **Merged 2026-08-30** — PR #93 squash @1430ec3 (codex r1: approve, 0 A / 0 B / 0 C / 1 E declined per eligibility-assistant-D-6; no re-tag, owner call); ticket plan file deleted @a93f7c4.
+
+**Impl gate — `llm-seam`** — 2026-08-30, impl-gated fresh-context rounds 1–3 + adv review
+rounds 1–3 (findings and dispositions in the ticket file's `## Findings`; r3 under the
+round-3 rule, both findings C-fixed doc-only @8fef109 / @a8ffe80, dispositions @651c45f;
+adv review r3 clean). **Round 4 full re-run waived by owner 2026-08-30** — r3 fixes
+doc-only, adv r3 clean on the code diff, class sweep + post-fix suite re-run in the r3
+disposition cells; the waiver round in the ticket file's `## Findings` records the basis
+and the deviation from `.claude/skills/impl-gate/`. Branch `feat/noref-eligibility-llm-seam`
+@651c45f, merge-base `5ae3df0`. Baseline observed at gate (r3, docker + `.venv` 3.12
+agree): `1362 passed, 19 deselected, 1 xfailed` = 1355 + 7, deselected / xfailed unmoved.
+`gate:` observations: none required — both scope rows are `test:`. Residuals accepted
+here: (a)–(c) of the record row above, as IDs; D13 stays OPEN. Push stays human-gated.

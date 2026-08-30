@@ -1,6 +1,6 @@
 # eligibility-assistant / llm-seam — ticket plan file (deleted at its merge; contract: docs/workflow/eligibility-assistant.md)
 
-Status: plan GATED 2026-08-27 · delivery DRAFT 2026-08-30 (gate r8 clean 2026-08-27, dry round; gate r7 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated the one finding 2026-08-27 as accepted → stage 3, A, `tool_calls` asserted per field against the pinned `langchain-core==1.6.0`, no owner call open; gate r6 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, `adr/0019-*.md` change row added here and in `turn`, eligibility-assistant-D-42 note, no owner call open; gate r5 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated all three findings 2026-08-27 as accepted → stage 3, all A, verification 7i, no owner call open; gate r4 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, no owner call open; gate r3 dispositioned 2026-08-27 under the round-3 rule — all six A, no owner call pending on this ticket; gate r2 dispositioned 2026-08-27; re-sliced 2026-08-25 from the item plan; gate rounds 1–2 on the monolithic plan are in plans/eligibility-assistant.md)
+Status: plan GATED 2026-08-27 · delivery IMPLEMENTED 2026-08-30 (impl-gate rounds 1–3 2026-08-30, r3 under the round-3 rule, both findings C-fixed doc-only @8fef109 / @a8ffe80, dispositions @651c45f; r4 full re-run waived by owner 2026-08-30 — waiver round in `## Findings`; adv review r3 clean; gate r8 clean 2026-08-27, dry round; gate r7 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated the one finding 2026-08-27 as accepted → stage 3, A, `tool_calls` asserted per field against the pinned `langchain-core==1.6.0`, no owner call open; gate r6 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, `adr/0019-*.md` change row added here and in `turn`, eligibility-assistant-D-42 note, no owner call open; gate r5 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated all three findings 2026-08-27 as accepted → stage 3, all A, verification 7i, no owner call open; gate r4 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, no owner call open; gate r3 dispositioned 2026-08-27 under the round-3 rule — all six A, no owner call pending on this ticket; gate r2 dispositioned 2026-08-27; re-sliced 2026-08-25 from the item plan; gate rounds 1–2 on the monolithic plan are in plans/eligibility-assistant.md)
 Scope: SPEC rows eligibility-assistant-SPEC-24, -30 (eligibility-assistant-D-34 as read through eligibility-assistant-D-55, PR-1b — the egress seam and its never-stream guarantee; lands dark, not wired to the request path)
 Depends on: corpus (the LangChain v1 pins — `langchain` / `langchain-core` / `langgraph` in `services/ai-assistant/requirements.txt` and the root `requirements-dev.txt`; eligibility-assistant-D-59)
 
@@ -539,6 +539,27 @@ divergence; cross-checked `adr/0019` section 2 prose against the code; confirmed
 test files (61 passed) and the full default suite (`1362 passed, 19 deselected, 1 xfailed`).
 
 checked: full frozen `## Spec` (SPEC-1–66, Appendix, Exclusions) read, SPEC-24 / SPEC-30 as the rows the code bears on · diff 10 files, +1846/−24 (plan-file and `## Delivery` changes excluded from review input) · **0 findings** · clean.
+
+### Impl gate — round 4, 2026-08-30 — owner waiver
+
+No agent run. Impl gate r3's two findings were both C-fixed on the branch under the
+round-3 rule (@8fef109, @a8ffe80 — doc-only: 9 insertions / 8 deletions across this file
+and the contract record row, no code file touched), dispositions recorded @651c45f.
+**Owner decision 2026-08-30, in session (fresh, post-`/clear`, wrote no part of this
+branch): the full r4 re-run — both agents + baseline re-run — is waived for this branch
+state; delivery is stamped on the r3 evidence.** Basis recorded: adv review r3 was clean
+on the code diff and the r3 fixes touch no reviewable code; r3's f2 disposition carries
+the class sweep and a post-fix `.venv` 3.12 suite re-run (`1362 passed, 19 deselected,
+1 xfailed`); this session diff-read both fix commits against the r3 closure
+prescriptions — every named site present ((c) into the residual-honesty bullet, `:53`
+qualified, both counts, both `Deviations` headers, deviation 1's `1362`, the two sweep
+catches), no other hunks. `gate:` observations: none in scope (r3 mechanical half — both
+scope rows are `test:`). This waiver is a recorded deviation from
+`.claude/skills/impl-gate/` (“re-gate is a full re-run, fresh session, both agents”),
+owner-accepted for a doc-only fix delta; the skill has no doc-only lite path — that is a
+candidate meta fix, not folded here.
+
+checked: fix commits @8fef109 @a8ffe80 diff-read against the r3 disposition cells · HEAD @651c45f = r3 shas + disposition commit only · **owner waiver — no agents spawned, no findings** · delivery stamped.
 
 ## Delivery evidence
 
