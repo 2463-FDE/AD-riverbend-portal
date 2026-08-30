@@ -135,6 +135,19 @@ by the ticket whose diff lands the mechanism, and a section not yet written is n
 - **This ticket lands dark.** `app.py` imports the binding so CI's keyless `services` smoke proves
   it against the *service* requirements; no route calls it and no model call is made. The one new
   log site is the twin guard's `llm call` line, metadata-only and unreached at runtime here.
+- **Subclassing `BaseChatModel` adds a second LangSmith emitter, and the seam does not own it.**
+  With tracing v2 enabled, `langchain_core.callbacks.manager._configure` (1.6.0, `:2524-2544`)
+  auto-attaches a `LangChainTracer` whose `client` is `run_tree.client` when a parent run tree
+  exists and `tracing_context["client"]` otherwise — `None` on a bare `invoke`, so the tracer
+  builds a **default `Client()`** and the framework-native chat-model run reaches LangSmith
+  redacted by the `LANGSMITH_HIDE_*` env layer alone. The in-code layer ADR 0006 decision 1 pairs
+  with it — `ls.Client(hide_inputs=_blank, hide_outputs=_blank)` in `tracing.py::wrap_create` — is
+  bound to the `bedrock.invoke_model` run and does not reach this one, so "two independent layers"
+  holds for that run and not for this. It is **not** closed inside the binding on purpose:
+  `_configure` skips the auto-attach when a `LangChainTracer` is already among the handlers, so
+  pre-binding one here would preempt the parent run tree's client, which is exactly what the
+  end-to-end trace must own. SPEC-28's payload allowlist and SPEC-29's per-path negative scan are
+  the checks that see the run.
 - **Not proven here:** the composition's live Bedrock leg under the pinned `langsmith==0.10.5`
   (E-4 ran on `0.11.1`, E-5 measured the pins offline only); it is first exercised at SPEC-17 /
   SPEC-32's opt-in runs in `turn` / `trace`. And SPEC-30 is proven for this service — the
