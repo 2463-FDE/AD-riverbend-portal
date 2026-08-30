@@ -9,6 +9,7 @@ message.
 """
 import json
 import logging
+import re
 import sys
 from types import SimpleNamespace
 
@@ -22,7 +23,9 @@ from botocore.exceptions import (
     PartialCredentialsError,
     ReadTimeoutError,
 )
-from pydantic import BaseModel, Field
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, ConfigDict, Field
 
 from conftest import load_module
 
@@ -37,6 +40,32 @@ sys.modules["logging_config"] = load_module(
 )
 llm_mod = load_module("services/ai-assistant/llm_client.py", "ai_llm_client")
 for _name, _module in _saved.items():
+    if _module is not None:
+        sys.modules[_name] = _module
+    else:
+        sys.modules.pop(_name, None)
+
+# The agent binding (eligibility-assistant SPEC-24) reaches the seam by the
+# service idiom `import llm_client` (app.py:33's shape), but the block above
+# deliberately leaves NOTHING under the bare name `llm_client` — it loads the
+# module as `ai_llm_client` and restores the bare sibling names. So pin this
+# file's llm_mod (with the two siblings agent_binding's own imports need) while
+# agent_binding loads, then restore: the house idiom
+# (tests/test_ai_visit_chat.py:51-73; CLAUDE.md §6). Every binding test opens
+# with `agent_binding.llm_client is llm_mod`, so an unpinned second copy reddens
+# before any invoke — and _stub_runtime_returning's monkeypatch of
+# `llm_mod.client` is then provably the runtime the binding reaches.
+_saved_binding = {
+    name: sys.modules.pop(name, None)
+    for name in ("config", "logging_config", "llm_client")
+}
+sys.modules["config"] = load_module("services/ai-assistant/config.py", "a1b_config")
+sys.modules["logging_config"] = load_module(
+    "services/ai-assistant/logging_config.py", "a1b_logging_config"
+)
+sys.modules["llm_client"] = llm_mod
+agent_binding = load_module("services/ai-assistant/agent_binding.py", "ai_agent_binding")
+for _name, _module in _saved_binding.items():
     if _module is not None:
         sys.modules[_name] = _module
     else:
@@ -780,9 +809,44 @@ def test_wellformed_response_succeeds_through_adapter(monkeypatch):
     assert result.request_id == "req_real"
 
 
+# --- eligibility-assistant llm-seam: the _adapt superset (SPEC-24) ----------
+# The agent binding reads tool_use blocks (id/name/input) and the response's
+# stop_reason off the adapted namespace, so _adapt has to carry them. The
+# change is a SUPERSET: this characterization pins that a text-only body is
+# shaped exactly as it was before — same block type/text, same usage, id and
+# model — with the new attributes present and None. A regression that made the
+# tool fields conditional on the block type would still pass the round trip and
+# fail here.
+
+
+def test_a1_adapt_superset_keeps_text_only_shape():
+    adapted = llm_mod._adapt(
+        {
+            "content": [{"type": "text", "text": "hello world"}],
+            "usage": {"input_tokens": 12, "output_tokens": 7},
+            "id": "msg_text_only",
+            "model": "anthropic.claude-sonnet-4-6",
+        },
+        "req_fallback",
+    )
+    assert [(b.type, b.text) for b in adapted.content] == [("text", "hello world")]
+    assert adapted.usage.input_tokens == 12
+    assert adapted.usage.output_tokens == 7
+    assert adapted.id == "msg_text_only"
+    assert adapted.model == "anthropic.claude-sonnet-4-6"
+    # The superset attributes exist on every block and on the response, and are
+    # None when the body does not carry them — structural absence preserved,
+    # the _adapt docstring's rule.
+    assert adapted.content[0].id is None
+    assert adapted.content[0].name is None
+    assert adapted.content[0].input is None
+    assert adapted.stop_reason is None
+
+
 # --- PHI safety ------------------------------------------------------------
 
 PHI_PROMPT = "Draft instructions for Jane Doe, SSN 123-45-6789, phone 555-867-5309"
+SYSTEM_TEXT = "You are the front-desk eligibility assistant."
 
 
 def test_prompt_never_reaches_logs(monkeypatch, caplog):
@@ -840,3 +904,309 @@ def test_module_client_import_works_keyless():
     # AWS_BEARER_TOKEN_BEDROCK set — CI's keyless import smoke passes.
     assert llm_mod.client is not None
     assert hasattr(llm_mod.client, "messages")
+
+
+# --- eligibility-assistant llm-seam: the agent binding (SPEC-24, SPEC-30) ----
+# SeamChatModel is the framework's ONLY egress: every payload it sends goes
+# through llm_client._call, so the four pre-egress controls that sit there —
+# the byte-based char cap, the token/cost budget gate, the bearer fail-closed
+# guard and the typed errors — apply to the bytes an agent run actually emits.
+# These tests run against a stubbed boto3 runtime (_stub_runtime_returning), so
+# "zero egress" is an assertion on the recorded calls, not an inference.
+
+
+def _binding_tool():
+    """One StructuredTool shaped like the real retriever — a single closed
+    argument behind an explicit args_schema (policy_tool.py's idiom). The
+    binding never RUNS a tool; it only puts the definition on the wire."""
+
+    class _Args(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        topic: str = Field(description="The policy topic to retrieve for.")
+
+    return StructuredTool.from_function(
+        func=lambda topic: "the binding never invokes the tool",
+        name="policy_lookup",
+        description="Retrieve approved policy documents for one topic.",
+        args_schema=_Args,
+    )
+
+
+_OK_TOOL_BODY = {
+    "content": [
+        {"type": "text", "text": "Looking that up."},
+        {
+            "type": "tool_use",
+            "id": "toolu_1",
+            "name": "policy_lookup",
+            "input": {"topic": "eligibility-verification"},
+        },
+    ],
+    "stop_reason": "tool_use",
+    "usage": {"input_tokens": 40, "output_tokens": 11},
+    "id": "msg_round_trip",
+    "model": "anthropic.claude-sonnet-4-6",
+}
+
+
+def test_a1_binding_uses_seam_fail_closed(monkeypatch):
+    # SPEC-24. The binding is pinned to THIS llm_client (see the rig), so the
+    # stubbed runtime below is the one it would reach.
+    assert agent_binding.llm_client is llm_mod
+
+    calls = _stub_runtime_returning(monkeypatch, _OK_TOOL_BODY)
+    model = agent_binding.SeamChatModel().bind_tools([_binding_tool()])
+
+    # (1) Bearer unset: _require_bearer_token refuses before the runtime is
+    # touched, so the agent path fails closed with zero egress and the typed
+    # error — carrying egressed=False — propagates through the framework.
+    monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
+    with pytest.raises(llm_mod.LLMConfigError) as excinfo:
+        model.invoke([HumanMessage(content="does this plan cover an MRI?")])
+    assert excinfo.value.egressed is False
+    assert calls == []
+
+    # (2) The char cap counts the TOOL PAYLOAD: bind_tools puts the definitions
+    # in extra_body, which _enforce_char_cap includes, so an oversized tool
+    # surface is refused before egress and not only an oversized prompt.
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "test-bearer-token")
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_chars", 20)
+    with pytest.raises(llm_mod.LLMBudgetExceeded) as excinfo:
+        model.invoke([HumanMessage(content="hi")])
+    assert "chars exceeds local cap" in str(excinfo.value)
+    assert calls == []
+
+    # (3) The token/cost budget gate runs on the same payload, against the
+    # byte-based upper bound that includes extra_body.
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_chars", 100_000)
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_tokens", 5)
+    with pytest.raises(llm_mod.LLMBudgetExceeded) as excinfo:
+        model.invoke([HumanMessage(content="hi")])
+    assert "exceed cap" in str(excinfo.value)
+    assert calls == []
+
+    # (4) Control: with the caps restored the same invoke reaches the seam and
+    # exactly one call is recorded — the failures above are the guards, not a
+    # binding that cannot call at all.
+    monkeypatch.setattr(llm_mod.settings, "llm_max_input_tokens", 20_000)
+    model.invoke([HumanMessage(content="hi")])
+    assert len(calls) == 1
+
+
+def test_a1_binding_round_trip_through_seam(monkeypatch):
+    # SPEC-24, both halves, against a stubbed runtime — nothing leaves the
+    # process. SEND: tool definitions, the system prompt, alternating roles and
+    # a tool_result block. RECEIVE: the model's text, its tool_use blocks and
+    # the stop reason coming back as an AIMessage the agent loop can act on.
+    assert agent_binding.llm_client is llm_mod
+
+    calls = _stub_runtime_returning(monkeypatch, _OK_TOOL_BODY)
+    model = agent_binding.SeamChatModel().bind_tools([_binding_tool()])
+
+    system_text = "You are the front-desk eligibility assistant."
+    reply = model.invoke(
+        [
+            SystemMessage(content=system_text),
+            HumanMessage(content="does this plan cover an MRI?"),
+            HumanMessage(content="the member is on the PPO product"),
+        ]
+    )
+
+    assert len(calls) == 1
+    body = json.loads(calls[0]["body"])
+
+    # --- send: the system prompt is _call's `system` argument, never a turn ---
+    assert body["system"] == system_text
+    assert all(
+        system_text not in json.dumps(message) for message in body["messages"]
+    )
+    # --- send: the output cap is config's, not a framework kwarg -------------
+    assert body["max_tokens"] == llm_mod.settings.llm_max_output_tokens
+    # --- send: tool definitions ride extra_body in the Anthropic shape -------
+    assert body["tools"][0]["name"] == "policy_lookup"
+    assert "input_schema" in body["tools"][0]
+    # --- send: roles alternate; the two human turns fold into one ------------
+    roles = [message["role"] for message in body["messages"]]
+    assert roles == ["user"]
+    assert all(
+        roles[i] != roles[i + 1] for i in range(len(roles) - 1)
+    )
+    assert len(body["messages"][0]["content"]) == 2
+
+    # --- receive: text, tool calls and stop reason survive the binding -------
+    assert reply.content == "Looking that up."
+    assert len(reply.tool_calls) == 1
+    # Per FIELD, never one equality against a three-key literal: AIMessage's
+    # `mode="before"` validator rebuilds every entry through tool_call(), which
+    # adds the package's own `type: "tool_call"` key (langchain_core 1.6.0,
+    # messages/ai.py:331-338 → messages/tool.py:242-258). A three-key equality
+    # would be false on a CORRECT binding.
+    assert reply.tool_calls[0]["id"] == "toolu_1"
+    assert reply.tool_calls[0]["name"] == "policy_lookup"
+    assert reply.tool_calls[0]["args"] == {"topic": "eligibility-verification"}
+    assert reply.response_metadata["stop_reason"] == "tool_use"
+
+    # --- send: a tool result rides a tool_result block in a user turn --------
+    model.invoke(
+        [
+            SystemMessage(content=system_text),
+            HumanMessage(content="does this plan cover an MRI?"),
+            reply,
+            ToolMessage(content="[rows]", tool_call_id="toolu_1"),
+        ]
+    )
+    assert len(calls) == 2
+    second = json.loads(calls[1]["body"])
+    assert [message["role"] for message in second["messages"]] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    last = second["messages"][-1]["content"]
+    assert last[0]["type"] == "tool_result"
+    assert last[0]["tool_use_id"] == "toolu_1"
+
+    # --- receive: the _adapt superset is what makes the above readable ------
+    adapted = llm_mod._adapt(_OK_TOOL_BODY, "req_ignored")
+    tool_block = [b for b in adapted.content if b.type == "tool_use"][0]
+    assert tool_block.id == "toolu_1"
+    assert tool_block.name == "policy_lookup"
+    assert tool_block.input == {"topic": "eligibility-verification"}
+    assert adapted.stop_reason == "tool_use"
+
+
+def test_a1_binding_system_message_rules(monkeypatch):
+    # SPEC-24. Exactly one SystemMessage, and only as the LEADING message, maps
+    # to _call's `system`. Anything else is a caller bug that would otherwise
+    # silently move the system prompt into a user turn (or drop it), so it is
+    # refused BEFORE egress — the assertion each time is `calls == []`.
+    assert agent_binding.llm_client is llm_mod
+
+    calls = _stub_runtime_returning(monkeypatch, _OK_TOOL_BODY)
+    model = agent_binding.SeamChatModel()
+
+    with pytest.raises(ValueError):
+        model.invoke([HumanMessage(content="hi"), SystemMessage(content="sys")])
+    assert calls == []
+
+    with pytest.raises(ValueError):
+        model.invoke(
+            [
+                SystemMessage(content="one"),
+                SystemMessage(content="two"),
+                HumanMessage(content="hi"),
+            ]
+        )
+    assert calls == []
+
+    # `stop` is a framework knob with no seam equivalent: honouring it would
+    # mean a request shape _call never gated. Refuse rather than drop silently.
+    with pytest.raises(ValueError):
+        model.invoke([HumanMessage(content="hi")], stop=["x"])
+    assert calls == []
+
+    # No SystemMessage at all → no `system` key in the body (system=None).
+    model.invoke([HumanMessage(content="hi")])
+    assert len(calls) == 1
+    assert "system" not in json.loads(calls[0]["body"])
+
+
+# The two POST-egress controls ADR 0004 names live in _result_from_response,
+# which _call does not reach — so the binding carries a twin. One pattern is
+# asserted over BOTH callers' log records in this test: a binding line that
+# drops cost=/latency=/request_id= fails while complete()'s still matches, so
+# the failure attributes to the binding.
+_LLM_CALL_LINE = re.compile(
+    r"^llm call model=\S+ in_tokens=\d+ out_tokens=\d+ "
+    r"cost=\$\d+\.\d{4} latency=\d+\.\d{2}s request_id=\S+$"
+)
+
+
+def test_a1_binding_guard_parity(monkeypatch, caplog):
+    # SPEC-24 / ADR 0004 :57. The binding is fed the same malformed bodies this
+    # file feeds complete(), plus the one body complete() rejects and the agent
+    # path must accept: a valid tool-only turn.
+    assert agent_binding.llm_client is llm_mod
+    model = agent_binding.SeamChatModel()
+
+    # (1) No content block at all — malformed 200, fail closed.
+    _stub_runtime_returning(monkeypatch, {"usage": {"input_tokens": 10, "output_tokens": 5}})
+    with pytest.raises(llm_mod.LLMResponseError):
+        model.invoke([HumanMessage(content="hi")])
+
+    # (2) Content but no usage — a clean-looking $0 call for a real egress.
+    _stub_runtime_returning(monkeypatch, {"content": [{"type": "text", "text": "hi"}]})
+    with pytest.raises(llm_mod.LLMResponseError):
+        model.invoke([HumanMessage(content="hi")])
+
+    # (3) A valid TOOL-ONLY turn: no text block, which complete() rejects
+    # (test_non_text_content_block_raises_through_adapter pins that, unchanged)
+    # and the agent path must accept. content is "" — the mapping, not a
+    # dropped block — and the metadata line is emitted exactly as complete()'s.
+    _stub_runtime_returning(
+        monkeypatch,
+        {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_only",
+                    "name": "policy_lookup",
+                    "input": {"topic": "eligibility-verification"},
+                }
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 31, "output_tokens": 9},
+            "id": "msg_parity",
+            "model": "anthropic.claude-sonnet-4-6",
+        },
+    )
+    with caplog.at_level(logging.INFO):
+        reply = model.invoke(
+            [SystemMessage(content=SYSTEM_TEXT), HumanMessage(content=PHI_PROMPT)]
+        )
+    assert reply.content == ""
+    assert len(reply.tool_calls) == 1
+    assert reply.tool_calls[0]["id"] == "toolu_only"
+
+    binding_lines = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("llm call model=")
+    ]
+    assert len(binding_lines) == 1
+    assert _LLM_CALL_LINE.match(binding_lines[0])
+    assert " in_tokens=31 " in binding_lines[0]
+    assert " out_tokens=9 " in binding_lines[0]
+    assert (
+        " cost=%s " % ("$%.4f" % llm_mod.estimate_cost(31, 9))
+    ) in binding_lines[0]
+    assert binding_lines[0].endswith(" request_id=msg_parity")
+
+    # (4) The parity half: complete()'s record, in the same test, against the
+    # same pattern.
+    caplog.clear()
+    _stub_runtime_returning(
+        monkeypatch,
+        {
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {"input_tokens": 12, "output_tokens": 4},
+            "id": "msg_complete",
+        },
+    )
+    with caplog.at_level(logging.INFO):
+        llm_mod.complete(PHI_PROMPT, system=SYSTEM_TEXT)
+    complete_lines = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("llm call model=")
+    ]
+    assert len(complete_lines) == 1
+    assert _LLM_CALL_LINE.match(complete_lines[0])
+
+    # (5) Metadata only — neither caller's records carry the prompt or system
+    # text (docs/phi-logging-policy.md).
+    for record in caplog.records:
+        assert "Jane Doe" not in record.getMessage()
+        assert "123-45-6789" not in record.getMessage()
+        assert SYSTEM_TEXT not in record.getMessage()

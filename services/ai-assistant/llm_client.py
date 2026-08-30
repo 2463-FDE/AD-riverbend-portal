@@ -202,7 +202,17 @@ def _adapt(payload: Dict[str, Any], request_id: Optional[str]) -> SimpleNamespac
     Bedrock always returns both in practice; their absence is a defect signal,
     not a case to degrade past."""
     content = [
-        SimpleNamespace(type=block.get("type"), text=block.get("text"))
+        SimpleNamespace(
+            type=block.get("type"),
+            text=block.get("text"),
+            # tool_use fields, carried for the agent binding (agent_binding.py,
+            # eligibility-assistant SPEC-24). Set on EVERY block, None when the
+            # body does not carry them, so the shape is a superset of the
+            # text-only one and _result_from_response is unaffected.
+            id=block.get("id"),
+            name=block.get("name"),
+            input=block.get("input"),
+        )
         for block in payload.get("content", []) or []
     ]
     usage = payload.get("usage")
@@ -215,6 +225,9 @@ def _adapt(payload: Dict[str, Any], request_id: Optional[str]) -> SimpleNamespac
         ),
         id=payload.get("id") or request_id,
         model=payload.get("model", settings.bedrock_model_id),
+        # Why the turn ended — "tool_use" is how the binding's caller learns the
+        # model asked for a tool. Absent on a malformed body, like the rest.
+        stop_reason=payload.get("stop_reason"),
     )
 
 
@@ -574,7 +587,13 @@ def _result_from_response(response: Any, started: float) -> LLMResult:
     # text block would otherwise become a blank but "successful" completion —
     # e.g. empty patient intake instructions returned to a clinician while the
     # caller sees no error (Codex review, PR #5 round 4). Both complete() and
-    # complete_structured() flow through here, so the guard lives here once.
+    # complete_structured() flow through here, so the guard lives here once for
+    # the text callers. It is NOT the only copy any more: _call has a second
+    # caller, agent_binding.SeamChatModel._generate, which does not reach this
+    # function (a tool-only turn carries no text block and is a valid answer on
+    # the agent path) and therefore carries a TWIN of this guard and of the
+    # `llm call` line below. tests/test_llm_client.py::test_a1_binding_guard
+    # _parity pins the two equal; adr/0019 records why the split exists.
     # Messages carry the request id only — never the prompt or response bytes.
     if not text:
         raise LLMResponseError(

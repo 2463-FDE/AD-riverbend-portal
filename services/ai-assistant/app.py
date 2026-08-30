@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 
 from config import settings
 from logging_config import configure
+import agent_binding  # noqa: F401  (dark import — see the seam note below)
 import eligibility_client
 import llm_client
 import policy_index
@@ -50,6 +51,14 @@ from schemas import (
 )
 
 log = configure(settings.service_name)
+
+# eligibility-assistant (ADR 0019): `import agent_binding` above is DARK — no
+# route calls it and no model call is made through it yet. It is here so CI's
+# keyless `services` import smoke (`pip install -r requirements.txt`, then
+# `python -c "import app"`) actually loads the binding against the SERVICE
+# requirements, which is the only place the langchain_core pins are proven
+# importable in the deployed image. The wiring to the request path lands with
+# the `turn` ticket.
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
