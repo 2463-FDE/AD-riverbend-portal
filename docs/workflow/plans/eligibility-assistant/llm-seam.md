@@ -496,6 +496,49 @@ to both halves — `agent_binding._guarded_message` returned `AIMessage(content=
 
 checked: full frozen `## Spec` (SPEC-1–66, Appendix, Exclusions) read, SPEC-24 / SPEC-30 as the rows the code bears on · diff 10 files, +1449/−24 (plan-file and `## Delivery` changes excluded from review input) · **1 finding** (twin-guard/reference divergence on an empty `text` block — blank-but-successful `AIMessage` where `complete()` raises) · no stamp.
 
+### Impl gate — round 3, 2026-08-30
+
+Fresh-session gate (post-`/clear`; this session wrote no part of this branch). Adversarial
+read by `impl-gate-agent`, spawning prompt = item + ticket + branch name only
+(`feat/noref-eligibility-llm-seam` off `main` @5ae3df0, HEAD @7484801, 13 commits), no
+characterization received. **Two findings — no stamp; round-3 rule applies: the loop stops
+here and the owner adjudicates each finding in its disposition cell (accept as named residual,
+overrule, or stage 3).** Both re-verified in this session before writing, repo untouched: f1 by
+reading the Landmines block (`:54`, `:64`) against the contract record row's residual (c); f2 by
+counting the numbered items under the `Deviations` header at both sites. Both are the **same
+class as impl gate r2 f2** (a count or enumeration not re-summed when a disposition added an
+item) — its second and third surface on the branch — so under the class-recurrence rule the
+disposition records a sweep of every count / enumeration / "nothing else" claim in the ticket
+file and the contract record row against the list it summarises, not fixes at the sites named.
+This session's own re-verification found a third instance the agent did not list, recorded
+under f2 so the sweep scope is checkable.
+
+| # | anchor | finding | disposition |
+|---|--------|---------|-------------|
+| 1 | ticket `## Landmines` PHI-handling entry (`docs/workflow/plans/eligibility-assistant/llm-seam.md:54` "Accepted residuals on this ticket's rows: the two in the residual-honesty bullet below; nothing else"; `:64` "Two residuals on this ticket's rows: (a) … (b) …"; `:53` "this ticket adds no egress that was not already gated") · impl gate r2 f1 disposition (@4f2a8e9) · contract record row `docs/workflow/eligibility-assistant.md:351` residual (c) | **class-repeat (r2 f2 shape).** Residual (c) — the framework-native LangSmith chat-model run that subclassing `BaseChatModel` adds, redacted by the env layer alone — was written at r2 f1 into the contract record row, `## Delivery evidence` and `adr/0019` section 2, but **not** into the Landmines block, which still enumerates two residuals, says "nothing else", and states the ticket adds no egress not already gated. The block is, by its own `:51` sentence, what the PR "Risk & landmines" section is drafted from, and it is the §1 record the two eligibility-assistant-D-56 re-grants were given against. Closure: (c) into the residual-honesty bullet, both counts corrected, and `:53` qualified (a trace emitter the seam does not own, inert at rest with `LANGSMITH_TRACING` off) — plus the class sweep above. | |
+| 2 | ticket `## Delivery evidence` `:508` "**Deviations (3, all plan-fact; no mechanism moved).**" followed by four numbered items (`:510`, `:514`, `:520`, `:523`) · contract record row `docs/workflow/eligibility-assistant.md:351` "Deviations (3, all plan-fact, no mechanism moved)" · **third instance, this session:** `llm-seam.md:513` (deviation 1) states the `CLAUDE.md` §6 line "reads `1361 passed, 19 deselected, 1 xfailed`" — `CLAUDE.md:141` reads `1362` since @7c42730, and deviation 4 four lines below says so | **class-repeat (r2 f2 shape).** Deviation 4 (the seventh test, `test_a1_binding_twin_control_enumeration`, adv review r2 f1) was appended without re-summing the header at either site, and deviation 1's post-count was not moved when the same disposition moved the baseline. The contract row is the artifact that survives the plan file's deletion at merge, so — as with r2 f2 — the wrong number is the one that lasts. Both `Deviations` sites → 4; `:513` → `1362`. (`:551` "the suite stays `1361`" is the r1 paragraph describing r1's state and is left as history.) | |
+
+Noted, not findings: (i) `main` holds the 30-line DRAFT of this ticket file (`c969599`); the GATED text arrives with the stamp @ba6eb4e — the shape the `corpus` impl gate r1 f2 recorded as an accepted residual. (ii) The two 2026-08-30 eligibility-assistant-D-56 re-grants (r1 f1, adv r2 f1) are recorded in this ticket's Findings cells and Landmines block; the register entry in `plans/eligibility-assistant.md` (outside this diff) carries no dated note of them — the approval is in the block, which is what check 9 asks; the `adr/0019` section 2 bullet carries the mechanism durably. (iii) `agent_binding._content_blocks` renders a list-typed `message.content` via `str()` — a Python repr on the wire if `turn` ever builds list-content messages; the binding's own `AIMessage`s are str-content, so unreachable on this ticket; for `turn`. (iv) The working tree carries uncommitted `turn.md` / `trace.md` edits and untracked `lifecycle.md` / `retrieval-eval.md`; all outside `main...HEAD` and outside this ticket — this gate read committed HEAD @7484801 only, and the tree is unchanged by the agents' runs.
+
+Mechanical half, all clean: SPEC-24 `test:` = `tests/test_llm_client.py::test_a1_binding_uses_seam_fail_closed`, SPEC-30 `test:` = `tests/test_a1_trace.py::test_model_call_not_streamed`, both unchanged on the branch (the contract diff touches the two `## Delivery` tables only, zero `SPEC-` rows), both collect and pass by node id; `tests/test_llm_client.py` 54 → 60 tests, the only removed line the widened `pydantic` import — no pinned test renamed, removed or rewritten; contract 364/400 lines; no `cmd:` / `gate:` cells in scope (human observation required: **none** — confirmed independently by this session against the two scoped rows); no `Co-Authored-By` trailer on any of the 13 commits; no gateway route touched; no `str(e)` or PHI-bearing exception text in the diff; the one new log site is the six-field metadata-only `llm call` line, regex-pinned to `complete()`'s; §1 PHI-handling entry cites eligibility-assistant-D-56 with date; V19 empty; `grep -rn invoke_model_with_response_stream services/` empty; `langchain_core 1.6.0` / `langsmith 0.10.5` in the venv, `_configure`'s `LangChainTracer(` at `manager.py:2532` as residual (c) states. Planted-defect sweep clean (`_result_from_response` code untouched — comment only; `_adapt` a strict superset; D13 / TODO-12 / D1 / D3 / D11 untouched; `debt-log.md` / `landmines.md` / `phi-logging-policy.md` / `todo.md` absent from the diff). Change list closes both ways: 8 planned rows + 2 ceremony files in the 10-file diff, 0 untraceable, 0 planned slices absent. Delivery evidence present with the isolation clause, test-first split disclosed, 18-break tally sums correctly against its bullets, residuals as registry IDs. V5 → `ok`; V6 → `11 passed, 50 deselected`; V8 → `2` (`EVAL-023`, `EVAL-031`). Baseline: `make test-docker` **1362 passed, 19 deselected, 1 xfailed** (35.56s); `.venv` 3.12 agrees (26.19s); vs 1355/19/1 at branch → +7 = exactly the tests the branch adds (`test_llm_client.py` +6, `test_a1_trace.py` +1), deselected / xfailed unmoved, no `skipped` term; matches the contract record row, `## Delivery evidence` V9 and `CLAUDE.md:141`.
+
+checked: eligibility-assistant-SPEC-24, -30 (the `llm-seam` `Scope:` line = contract `## Delivery` table) against the GATED Plan (Changes 8 rows, Verification 5 / 6 / 7 / 7f / 7b–7i / 8 / 9 / 19, Gate interactions, Landmines block), the contract `## Delivery` record row and the ticket `## Delivery evidence` · diff `git diff main...HEAD --stat`: 10 files, +1846/−24, merge-base `5ae3df0`, HEAD `7484801`, 13 commits · pinned-test diff, contract cap (364/400), `cmd:`/`gate:` cells (none in scope), trailers, planted defects, idiom sweep, closure both ways, V5/V6/V8/V19 re-run, baseline re-run (docker 1362/19/1 + venv 1362/19/1) · **2 findings** (f1 Landmines block still enumerates two residuals and "no new egress" after residual (c) was filed elsewhere; f2 deviation count 3 vs 4 items at both record sites + deviation 1's stale `1361`) — both record-shape, class-repeat of r2 f2 · no stamp · **round-3 rule: loop stopped, owner adjudicates per finding.**
+
+### Adv review — round 3, 2026-08-30
+
+`adv-reviewer-agent`, same spawning prompt (item + ticket + branch only, no characterization
+received), frozen `## Spec` + diff only, Plan unread. **Clean — no findings.** Traced every
+send/receive path of `SeamChatModel` (`_to_bedrock`, `_content_blocks`, `_split_system`,
+`bind_tools`, `_generate`, `_stream`, `_guarded_message`, `_has_usable_answer`,
+`_message_from_response`) against SPEC-24 and SPEC-30; walked the `_TWIN_CONTROL_CASES` corpus
+case by case through both `_result_from_response` and `_guarded_message` — no undeclared
+divergence; cross-checked `adr/0019` section 2 prose against the code; confirmed the
+`langchain-core==1.6.0` / `langchain==1.3.16` pins pre-exist on `services/ai-assistant/requirements.txt`
+(`corpus`, not this diff) and that every `agent_binding.py` import resolves. Ran the two touched
+test files (61 passed) and the full default suite (`1362 passed, 19 deselected, 1 xfailed`).
+
+checked: full frozen `## Spec` (SPEC-1–66, Appendix, Exclusions) read, SPEC-24 / SPEC-30 as the rows the code bears on · diff 10 files, +1846/−24 (plan-file and `## Delivery` changes excluded from review input) · **0 findings** · clean.
+
 ## Delivery evidence
 
 Status: delivery DRAFT 2026-08-30. Deviations and live-run detail live here and die with this
