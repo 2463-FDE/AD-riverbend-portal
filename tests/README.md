@@ -36,7 +36,9 @@ the module under test by file path (see `conftest.py::load_module`).
   (`test_visit_memory.py`), tracing (`test_tracing.py`), and the eligibility-assistant
   policy corpus — sha pin, fixture isolation, boot-fail hook (`test_a1_corpus.py`), the
   topic-only retriever tool, index and cap (`test_a1_retriever.py`), the tier rule and rank key
-  (`test_a1_conflict.py`); all three share the pinned module rig `a1_corpus_rig.py`. The agent
+  (`test_a1_conflict.py`), the lookup record and its metadata-only negative
+  (`test_a1_retrieval_record.py`), and the recall baseline and substitutable ranking unit
+  (`test_a1_retrieval_eval.py`); all five share the pinned module rig `a1_corpus_rig.py`. The agent
   binding on the `invoke_model` seam — fail-closed guards on the tool payload, the send/receive
   round trip, the SystemMessage rules, the post-egress guard/telemetry parity with
   `complete()` and the control-by-control enumeration of that twin — is in `test_llm_client.py`
