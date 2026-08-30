@@ -332,7 +332,7 @@ Open before FROZEN: none — eligibility-assistant-D-20..24 resolved 2026-08-24 
 | ticket | SPEC rows | plan | baseline at branch | delivery | plan-file deletion sha |
 |---|---|---|---|---|---|
 | corpus | eligibility-assistant-SPEC-7–11, 38, 43 | GATED 2026-08-28 | 1334 passed, 19 deselected, 1 xfailed (2026-08-28, `.venv` 3.12 `pytest -m "not integration"`; docker daemon down, `make test-docker` re-run before push) | MERGED 1430ec3 (PR #93, 2026-08-30; IMPLEMENTED 2026-08-29) | a93f7c4 |
-| llm-seam | eligibility-assistant-SPEC-24, 30 | GATED 2026-08-27 | 1355 passed, 19 deselected, 1 xfailed (2026-08-30, `make test-docker` at branch cut off `main` @5ae3df0; `.venv` 3.12 agrees) | PUSHED PR #94 2026-08-30 (codex r1: 1 major, C, fixed @9cabdea; 1 env note answered from the record · r2: approve, 0 findings, dry round, loop closed in 2) | — |
+| llm-seam | eligibility-assistant-SPEC-24, 30 | GATED 2026-08-27 | 1355 passed, 19 deselected, 1 xfailed (2026-08-30, `make test-docker` at branch cut off `main` @5ae3df0; `.venv` 3.12 agrees) | MERGED c4cdb47 (PR #94, 2026-08-30; IMPLEMENTED 2026-08-30; codex r1: 1 major, C, fixed @9cabdea, 1 env note answered from the record · r2: approve, 0 findings, dry round, loop closed in 2) | 8fa44ee |
 | turn | eligibility-assistant-SPEC-1–6, 12–23, 25–26, 33, 36–37, 39a, 41–42, 44–56 | GATED 2026-08-28 | — | — | — |
 | trace | eligibility-assistant-SPEC-27–29, 31–32, 34–35, 39b, 40 | GATED 2026-08-28 | — | — | — |
 | lifecycle | eligibility-assistant-SPEC-58–62 | GATED 2026-08-28 | — | — | — |
@@ -374,3 +374,10 @@ and the deviation from `.claude/skills/impl-gate/`. Branch `feat/noref-eligibili
 agree): `1362 passed, 19 deselected, 1 xfailed` = 1355 + 7, deselected / xfailed unmoved.
 `gate:` observations: none required — both scope rows are `test:`. Residuals accepted
 here: (a)–(c) of the record row above, as IDs; D13 stays OPEN. Push stays human-gated.
+**Merged 2026-08-30, squash `c4cdb47`**, after codex rounds 1–2 on PR #94: r1 one major, labelled
+**C** — `llm_client._adapt` read a 200 body with `.get` ahead of both guard halves, so a non-dict
+root / non-list `content` / non-dict block escaped `_call` untyped on `complete()` as well as the
+binding; closed as a class at the adapter with a `_call` envelope backstop @9cabdea under a
+re-granted eligibility-assistant-D-56 §1 approval — and r2 approve, 0 findings, dry, no re-tag.
+Final baseline `1364 passed, 19 deselected, 1 xfailed` = 1355 + 9, the two above the gate-time
+count being r1's class guards; deselected / xfailed unmoved. 16/16 CI checks green at merge.
