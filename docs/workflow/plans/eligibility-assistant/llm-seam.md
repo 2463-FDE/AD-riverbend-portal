@@ -1,6 +1,6 @@
 # eligibility-assistant / llm-seam — ticket plan file (deleted at its merge; contract: docs/workflow/eligibility-assistant.md)
 
-Status: plan GATED 2026-08-27 · delivery IMPLEMENTED 2026-08-30 (impl-gate rounds 1–3 2026-08-30, r3 under the round-3 rule, both findings C-fixed doc-only @8fef109 / @a8ffe80, dispositions @651c45f; r4 full re-run waived by owner 2026-08-30 — waiver round in `## Findings`; adv review r3 clean; gate r8 clean 2026-08-27, dry round; gate r7 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated the one finding 2026-08-27 as accepted → stage 3, A, `tool_calls` asserted per field against the pinned `langchain-core==1.6.0`, no owner call open; gate r6 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, `adr/0019-*.md` change row added here and in `turn`, eligibility-assistant-D-42 note, no owner call open; gate r5 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated all three findings 2026-08-27 as accepted → stage 3, all A, verification 7i, no owner call open; gate r4 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, no owner call open; gate r3 dispositioned 2026-08-27 under the round-3 rule — all six A, no owner call pending on this ticket; gate r2 dispositioned 2026-08-27; re-sliced 2026-08-25 from the item plan; gate rounds 1–2 on the monolithic plan are in plans/eligibility-assistant.md)
+Status: plan GATED 2026-08-27 · delivery PUSHED PR #94 2026-08-30 (codex review r1 2026-08-30 — 1 major, labelled **C**, fixed on the branch @9cabdea, `_adapt` made total over a JSON body; 1 environment note answered from the record as residual (c); IMPLEMENTED 2026-08-30, impl-gate rounds 1–3 2026-08-30, r3 under the round-3 rule, both findings C-fixed doc-only @8fef109 / @a8ffe80, dispositions @651c45f; r4 full re-run waived by owner 2026-08-30 — waiver round in `## Findings`; adv review r3 clean; gate r8 clean 2026-08-27, dry round; gate r7 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated the one finding 2026-08-27 as accepted → stage 3, A, `tool_calls` asserted per field against the pinned `langchain-core==1.6.0`, no owner call open; gate r6 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, `adr/0019-*.md` change row added here and in `turn`, eligibility-assistant-D-42 note, no owner call open; gate r5 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated all three findings 2026-08-27 as accepted → stage 3, all A, verification 7i, no owner call open; gate r4 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, no owner call open; gate r3 dispositioned 2026-08-27 under the round-3 rule — all six A, no owner call pending on this ticket; gate r2 dispositioned 2026-08-27; re-sliced 2026-08-25 from the item plan; gate rounds 1–2 on the monolithic plan are in plans/eligibility-assistant.md)
 Scope: SPEC rows eligibility-assistant-SPEC-24, -30 (eligibility-assistant-D-34 as read through eligibility-assistant-D-55, PR-1b — the egress seam and its never-stream guarantee; lands dark, not wired to the request path)
 Depends on: corpus (the LangChain v1 pins — `langchain` / `langchain-core` / `langgraph` in `services/ai-assistant/requirements.txt` and the root `requirements-dev.txt`; eligibility-assistant-D-59)
 
@@ -561,6 +561,25 @@ candidate meta fix, not folded here.
 
 checked: fix commits @8fef109 @a8ffe80 diff-read against the r3 disposition cells · HEAD @651c45f = r3 shas + disposition commit only · **owner waiver — no agents spawned, no findings** · delivery stamped.
 
+### Review — round 1, 2026-08-30
+
+Codex bounded adversarial review on **PR #94** (`@codex-review`), verdict `needs-attention`,
+round 1 of 3: 0 blockers, **1 major**, 0 minors, 1 environment note. Re-verified in this session
+before writing, in the `.venv` 3.12 with the repo untouched: `_adapt` raised
+`AttributeError: 'NoneType' object has no attribute 'get'` on `{"content": [None], "usage": {…}}`
+and `'list' object has no attribute 'get'` on a non-dict root, and `complete()` propagated it
+untyped through `_call`.
+
+| # | anchor | finding | disposition |
+|---|--------|---------|-------------|
+| 1 | A1-M1 · eligibility-assistant-SPEC-24 ("typed errors apply") · `services/ai-assistant/llm_client.py` `_adapt` (`:192-247`) and `_call`'s malformed-body clause (`:610`) · `llm_client.py` `_adapt` superset change row · Landmines PHI (1) "typed failure" | **C**, not A — the class is impl gate r1 f1's ("a malformed 200 must surface as a payload-free typed error"), whose fix (@15a6b9f) closed it in `_guarded_message` and not at the adapter one call earlier. `_adapt` reads the body with `.get` and runs AHEAD of both guard halves, so a non-dict root, a non-list `content` or a non-dict block left `_call` as `AttributeError`/`TypeError` — untyped, so a caller mapping `LLMError` to a fallback misses it — on `complete()` as well as on the binding, which the report did not reach. Wider than reported and fixed as a class, not per shape. | **C · fixed @9cabdea.** `_adapt` is now **total over a JSON body**: the three type violations raise `LLMResponseError` naming the offending shape's class and the request id and nothing off the body (absence stays preserved — only a type violation, which cannot be defaulted, raises), and `_call`'s malformed-body clause catches `AttributeError`/`TypeError` as the backstop for the SDK envelope `_BedrockMessages.create` also reads. Class guard rather than three instance patches: three rows in the `_TWIN_CONTROL_CASES` corpus drive `content-block-null` / `content-block-string` / `content-not-a-list` through **both** halves, `::test_a1_adapt_total_over_non_dict_bodies` covers the root shapes the corpus cannot carry (every row there is a dict body) and asserts typed / request-id-only / payload-free on both halves, and `::test_a1_call_types_shape_errors_outside_adapt` pins the backstop. Four break-then-revert checks (7c, third through sixth) — including the one that shows the backstop degrades the block check's `LLMResponseError` to `LLMUnavailable`, so the two layers are not redundant. `adr/0019` section 2's `_adapt` bullet carries the rule durably past this file's deletion. §1 PHI zone re-entered under the owner's re-granted eligibility-assistant-D-56 approval (2026-08-30, in session). Suite `1355 → 1364 passed, 19 deselected, 1 xfailed`; deviation 4 re-summed at both sites. |
+
+Environment note, not a finding: **A1-E1** (`agent_binding.py:124`) — subclassing `BaseChatModel`
+can attach LangChain's native LangSmith chat-model run once tracing is enabled. Already the
+ticket's residual **(c)**, routed by the owner 2026-08-30 to eligibility-assistant-SPEC-28 /
+SPEC-29 with the durable note in `adr/0019` section 2 (impl gate r2 f1); the reviewer records it as
+not affecting the verdict. Answered from the record — no re-litigation, no code change.
+
 ## Delivery evidence
 
 Status: delivery DRAFT 2026-08-30. Deviations and live-run detail live here and die with this
@@ -621,6 +640,15 @@ their shas are in `## Findings`. f1 hardened the post-egress twin guard to three
 (@15a6b9f), which re-opened and was re-granted the eligibility-assistant-D-56 §1 approval in
 session; the mechanism did not move, its field coverage did. f2 was record shape only (@2798064).
 Neither adds a test id: the suite stays `1361 passed, 19 deselected, 1 xfailed`.
+
+**Codex review round 1 (2026-08-30), one major, fixed on the branch** — the disposition and its
+sha are in `## Findings`. Labelled **C**: a second class-repeat of impl gate r1 f1, this time one
+call upstream in `llm_client._adapt`, which runs ahead of BOTH guard halves and so defeated the
+typed-failure control on `complete()` and on the binding alike. Closed at the boundary (@9cabdea)
+rather than per shape, with the corpus rows and two guards deviation 4 counts; the round's
+environment note is residual (c), answered from the record. The §1 PHI approval
+(eligibility-assistant-D-56) was re-opened and re-granted in session, as at impl gate r1 f1 and adv
+review r2 f1 — the mechanism did not move, its totality did.
 
 **Impl gate round 2 and adv review round 2 (2026-08-30)** — dispositions and their shas are in
 `## Findings`. Adv review r2 f1 was labelled **C**, a class-repeat of impl gate r1 f1 whose

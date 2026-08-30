@@ -1350,3 +1350,17 @@ ticket — not as a note in the ticket file that dies at merge. Lesson: when a l
 byte-identity invariant disagree, the disposition needs the arithmetic that shows they *cannot*
 both hold — "vendored, do not touch" reads as preference and gets re-raised at the next
 vendoring; `1,227 → 1,223 → CorpusLoadError` does not.
+
+**PR #94 r1 — 2026-08-30, needs-attention.** 1 finding (0 blockers, 1 major, 0 minors) plus 1
+environment note, **0 A / 0 B / 1 C / 0 E**. A1-M1 (C): `llm_client._adapt` reads a Bedrock 200
+with `.get`, so a non-dict root, a non-list `content` or a non-dict block escaped `_call` as an
+`AttributeError` — untyped, and *ahead of both* post-egress guards, so it hit `complete()` as well
+as the new binding. Labelled C rather than A because impl gate r1 f1 had already fixed this class
+— "a malformed 200 must surface as a payload-free typed error" — one call downstream in
+`_guarded_message`; the class was closed there and not at the adapter. Fixed as a class at
+`9cabdea`: `_adapt` is total over a JSON body, `_call` catches `AttributeError`/`TypeError` as the
+envelope backstop, and the guard is a corpus driven through *both* halves plus two dedicated tests,
+not three shape patches. The environment note (the framework-native LangSmith run) was answered
+from the record as residual (c) — no re-litigation. Lesson: when a fix closes a class at one guard,
+the same round should ask what runs *before* that guard — the reviewer found this hole where the
+earlier fix had stopped, in code the branch had edited but not re-read as a whole.
