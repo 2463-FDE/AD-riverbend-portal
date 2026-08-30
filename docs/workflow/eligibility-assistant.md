@@ -331,7 +331,7 @@ Open before FROZEN: none — eligibility-assistant-D-20..24 resolved 2026-08-24 
 
 | ticket | SPEC rows | plan | baseline at branch | delivery | plan-file deletion sha |
 |---|---|---|---|---|---|
-| corpus | eligibility-assistant-SPEC-7–11, 38, 43 | GATED 2026-08-28 | 1334 passed, 19 deselected, 1 xfailed (2026-08-28, `.venv` 3.12 `pytest -m "not integration"`; docker daemon down, `make test-docker` re-run before push) | PUSHED PR #93 (IMPLEMENTED 2026-08-29) | — |
+| corpus | eligibility-assistant-SPEC-7–11, 38, 43 | GATED 2026-08-28 | 1334 passed, 19 deselected, 1 xfailed (2026-08-28, `.venv` 3.12 `pytest -m "not integration"`; docker daemon down, `make test-docker` re-run before push) | MERGED 1430ec3 (PR #93, 2026-08-30; IMPLEMENTED 2026-08-29) | a93f7c4 |
 | llm-seam | eligibility-assistant-SPEC-24, 30 | GATED 2026-08-27 | — | — | — |
 | turn | eligibility-assistant-SPEC-1–6, 12–23, 25–26, 33, 36–37, 39a, 41–42, 44–56 | GATED 2026-08-28 | — | — | — |
 | trace | eligibility-assistant-SPEC-27–29, 31–32, 34–35, 39b, 40 | GATED 2026-08-28 | — | — | — |
@@ -361,4 +361,4 @@ at gate: `1355 passed, 19 deselected, 1 xfailed` (`make test-docker` and `.venv`
 1334 + 21, deselected / xfailed unmoved. `gate:` observations: none required — the seven scope rows
 are all `test:`. Residuals accepted here: (a)–(d) of the record row above, as IDs, plus r1 f2's
 sibling-cite anchor (`origin/wip/eligibility-assistant-plans` @6a773fd, eligibility-assistant-D-59
-landing order); no new residual. Push stays human-gated.
+landing order); no new residual. Push stays human-gated. **Merged 2026-08-30** — PR #93 squash @1430ec3 (codex r1: approve, 0 A / 0 B / 0 C / 1 E declined per eligibility-assistant-D-6; no re-tag, owner call); ticket plan file deleted @a93f7c4.
