@@ -208,13 +208,22 @@ def _guarded_message(response: Any, started: float) -> AIMessage:
 
     `_call` returns the adapted response without applying them, because
     `_result_from_response` is `complete()`'s tail and this path does not go
-    through it. The checks are the same two ADR 0004 names (`:38-40`, `:57`),
-    with ONE deliberate difference: a `tool_use` block satisfies the
+    through it. The checks are the ADR 0004 names (`:38-40`, `:57`) applied to
+    this path's response shape, with ONE deliberate difference: a `tool_use` block satisfies the
     content check beside `text`, because a tool-only turn is the agent path's
     valid answer. Everything else — fail closed on a malformed 200, require
     explicit integer usage, carry only the request id on the error, emit the
     same metadata-only `llm call` line — is identical, and
-    `test_a1_binding_guard_parity` pins the two equal."""
+    `test_a1_binding_guard_parity` pins the two equal.
+
+    THREE controls, not two: the receive half reads more fields off the
+    response than `_result_from_response` does (`id` / `name` / `input` on a
+    `tool_use` block, which `_adapt` defaults to `None` when the body omits
+    them), so their shapes are checked here as well. Without that check a
+    malformed 200 leaves this function as a pydantic `ValidationError` raised
+    inside `_message_from_response` — untyped, so a caller mapping `LLMError`
+    to a fallback misses it, and payload-bearing, because pydantic embeds the
+    offending value in its message."""
     request_id = getattr(response, "id", None)
     blocks = getattr(response, "content", []) or []
     if not any(getattr(block, "type", None) in ("text", "tool_use") for block in blocks):
@@ -222,6 +231,23 @@ def _guarded_message(response: Any, started: float) -> AIMessage:
             "no text or tool_use block in response (request_id=%s)" % request_id,
             request_id=request_id,
         )
+    for block in blocks:
+        # Field names only in the message — a fixed vocabulary, never the
+        # response bytes the field carries.
+        block_type = getattr(block, "type", None)
+        if block_type == "text":
+            fields = (("text", str),)
+        elif block_type == "tool_use":
+            fields = (("id", str), ("name", str), ("input", dict))
+        else:
+            continue
+        for field, expected in fields:
+            if not isinstance(getattr(block, field, None), expected):
+                raise llm_client.LLMResponseError(
+                    "malformed %s block: %s (request_id=%s)"
+                    % (block_type, field, request_id),
+                    request_id=request_id,
+                )
     usage = getattr(response, "usage", None)
     input_tokens = getattr(usage, "input_tokens", None)
     output_tokens = getattr(usage, "output_tokens", None)

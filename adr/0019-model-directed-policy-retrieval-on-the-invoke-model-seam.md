@@ -94,9 +94,15 @@ by the ticket whose diff lands the mechanism, and a section not yet written is n
   smuggling the separate byte line exists to prevent.
 - **A post-egress twin guard, not a bypass of ADR 0004.** `_call` returns before
   `_result_from_response`, so the two post-egress controls ADR 0004 names (`:38-40`, `:57`) do not
-  come for free on this path: `_generate` applies them itself — fail closed on a malformed 200
-  (content present, explicit integer usage; errors carry the request id only) and emit the same
+  come for free on this path: `_generate` applies them itself, as **three** checks rather than two
+  — fail closed on a malformed 200 (content present; every field the receive half reads
+  shape-checked, `id` / `name` str and `input` dict on a `tool_use` block and `text` str on a text
+  block, because those fields exist on this path and `_adapt` defaults them to `None`; explicit
+  integer usage), errors carrying the field name and the request id only, and emit the same
   metadata-only `llm call model=… in_tokens=… out_tokens=… cost=… latency=… request_id=…` line.
+  The third check is what keeps the guarantee typed: without it a malformed `tool_use` block leaves
+  the binding as a pydantic `ValidationError` — not an `LLMError`, and carrying the offending value
+  in its message.
   The one deliberate difference is that a `tool_use` block satisfies the content check beside
   `text`, because a tool-only turn is the agent path's valid answer — which is why
   `_result_from_response`'s text-required guard could not simply be reused; it is untouched, and

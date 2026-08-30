@@ -1140,6 +1140,65 @@ def test_a1_binding_guard_parity(monkeypatch, caplog):
     with pytest.raises(llm_mod.LLMResponseError):
         model.invoke([HumanMessage(content="hi")])
 
+    # (2a-2d) One negative per field the receive half READS off the adapted
+    # response. Each body below is a malformed 200 that _adapt's superset
+    # defaults to None (llm_client.py:205-213): without the shape check the
+    # binding emits the `llm call` line and then raises pydantic
+    # ValidationError / TypeError out of _message_from_response — not an
+    # LLMError, so a caller mapping LLMError to a fallback would see an
+    # unhandled exception; and pydantic embeds the offending value
+    # (`input_value=...`) in its message, putting a model-response fragment
+    # into an exception string that must carry the request id alone.
+    shape_gaps = {
+        "tool_use with no id": {
+            "type": "tool_use",
+            "name": "policy_lookup",
+            "input": {"topic": "eligibility-verification"},
+        },
+        "tool_use with no name": {
+            "type": "tool_use",
+            "id": "toolu_x",
+            "input": {"topic": "eligibility-verification"},
+        },
+        "tool_use with a non-dict input": {
+            "type": "tool_use",
+            "id": "toolu_x",
+            "name": "policy_lookup",
+            "input": "member Jane Doe 123-45-6789",
+        },
+        "text block with a non-str text": {
+            "type": "text",
+            "text": {"member": "Jane Doe", "ssn": "123-45-6789"},
+        },
+    }
+    for case, block in shape_gaps.items():
+        caplog.clear()
+        _stub_runtime_returning(
+            monkeypatch,
+            {
+                "content": [block],
+                "stop_reason": "tool_use",
+                "usage": {"input_tokens": 7, "output_tokens": 3},
+                "id": "msg_shape",
+                "model": "anthropic.claude-sonnet-4-6",
+            },
+        )
+        with caplog.at_level(logging.INFO):
+            with pytest.raises(llm_mod.LLMResponseError) as excinfo:
+                model.invoke([HumanMessage(content="hi")])
+        # Typed, request-id-only, and refused BEFORE the metadata line: the
+        # guard's three controls all apply to the same malformed body.
+        assert excinfo.value.request_id == "msg_shape"
+        message = str(excinfo.value)
+        assert "request_id=msg_shape" in message
+        assert "Jane Doe" not in message, case
+        assert "123-45-6789" not in message, case
+        assert not [
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("llm call model=")
+        ], case
+
     # (3) A valid TOOL-ONLY turn: no text block, which complete() rejects
     # (test_non_text_content_block_raises_through_adapter pins that, unchanged)
     # and the agent path must accept. content is "" — the mapping, not a
