@@ -1,6 +1,6 @@
 # eligibility-assistant / llm-seam — ticket plan file (deleted at its merge; contract: docs/workflow/eligibility-assistant.md)
 
-Status: plan GATED 2026-08-27 · delivery PUSHED PR #94 2026-08-30 (codex review r1 2026-08-30 — 1 major, labelled **C**, fixed on the branch @9cabdea, `_adapt` made total over a JSON body; 1 environment note answered from the record as residual (c); IMPLEMENTED 2026-08-30, impl-gate rounds 1–3 2026-08-30, r3 under the round-3 rule, both findings C-fixed doc-only @8fef109 / @a8ffe80, dispositions @651c45f; r4 full re-run waived by owner 2026-08-30 — waiver round in `## Findings`; adv review r3 clean; gate r8 clean 2026-08-27, dry round; gate r7 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated the one finding 2026-08-27 as accepted → stage 3, A, `tool_calls` asserted per field against the pinned `langchain-core==1.6.0`, no owner call open; gate r6 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, `adr/0019-*.md` change row added here and in `turn`, eligibility-assistant-D-42 note, no owner call open; gate r5 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated all three findings 2026-08-27 as accepted → stage 3, all A, verification 7i, no owner call open; gate r4 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, no owner call open; gate r3 dispositioned 2026-08-27 under the round-3 rule — all six A, no owner call pending on this ticket; gate r2 dispositioned 2026-08-27; re-sliced 2026-08-25 from the item plan; gate rounds 1–2 on the monolithic plan are in plans/eligibility-assistant.md)
+Status: plan GATED 2026-08-27 · delivery PUSHED PR #94 2026-08-30 (codex review r2 2026-08-30 — **approve, 0 findings, dry round**, loop closed in 2 rounds, no re-tag; codex review r1 2026-08-30 — 1 major, labelled **C**, fixed on the branch @9cabdea, `_adapt` made total over a JSON body; 1 environment note answered from the record as residual (c); IMPLEMENTED 2026-08-30, impl-gate rounds 1–3 2026-08-30, r3 under the round-3 rule, both findings C-fixed doc-only @8fef109 / @a8ffe80, dispositions @651c45f; r4 full re-run waived by owner 2026-08-30 — waiver round in `## Findings`; adv review r3 clean; gate r8 clean 2026-08-27, dry round; gate r7 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated the one finding 2026-08-27 as accepted → stage 3, A, `tool_calls` asserted per field against the pinned `langchain-core==1.6.0`, no owner call open; gate r6 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, `adr/0019-*.md` change row added here and in `turn`, eligibility-assistant-D-42 note, no owner call open; gate r5 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated all three findings 2026-08-27 as accepted → stage 3, all A, verification 7i, no owner call open; gate r4 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, no owner call open; gate r3 dispositioned 2026-08-27 under the round-3 rule — all six A, no owner call pending on this ticket; gate r2 dispositioned 2026-08-27; re-sliced 2026-08-25 from the item plan; gate rounds 1–2 on the monolithic plan are in plans/eligibility-assistant.md)
 Scope: SPEC rows eligibility-assistant-SPEC-24, -30 (eligibility-assistant-D-34 as read through eligibility-assistant-D-55, PR-1b — the egress seam and its never-stream guarantee; lands dark, not wired to the request path)
 Depends on: corpus (the LangChain v1 pins — `langchain` / `langchain-core` / `langgraph` in `services/ai-assistant/requirements.txt` and the root `requirements-dev.txt`; eligibility-assistant-D-59)
 
@@ -580,6 +580,18 @@ ticket's residual **(c)**, routed by the owner 2026-08-30 to eligibility-assista
 SPEC-29 with the durable note in `adr/0019` section 2 (impl gate r2 f1); the reviewer records it as
 not affecting the verdict. Answered from the record — no re-litigation, no code change.
 
+### Review — round 2, 2026-08-30
+
+Codex bounded adversarial review on PR #94, verdict **approve**, round 2 of 3: **0 findings** —
+0 blockers, 0 majors, 0 minors. **Dry round; the loop closes here.** r1's A1-M1 confirmed fixed at
+`llm_client.py:215` with the regression set named back (the three `_TWIN_CONTROL_CASES` rows through
+both halves, `::test_a1_adapt_total_over_non_dict_bodies`, `::test_a1_call_types_shape_errors
+_outside_adapt`), and the reviewer states what the fix deliberately did *not* do: structural absence
+(missing `content`, missing `usage`) still defaults rather than raising, so the round-1 fix did not
+over-tighten the reference path. A1-E1 recorded as needing no code change, residual (c)'s routing
+unchallenged. No re-tag — the bounded review ends at a clean round (the `corpus` precedent, PR #93).
+Owner approved the round 2026-08-30 in session. All 16 CI checks green; `mergeStateStatus` CLEAN.
+
 ## Delivery evidence
 
 Status: delivery DRAFT 2026-08-30. Deviations and live-run detail live here and die with this
@@ -641,8 +653,8 @@ their shas are in `## Findings`. f1 hardened the post-egress twin guard to three
 session; the mechanism did not move, its field coverage did. f2 was record shape only (@2798064).
 Neither adds a test id: the suite stays `1361 passed, 19 deselected, 1 xfailed`.
 
-**Codex review round 1 (2026-08-30), one major, fixed on the branch** — the disposition and its
-sha are in `## Findings`. Labelled **C**: a second class-repeat of impl gate r1 f1, this time one
+**Codex review rounds 1–2 (2026-08-30). Loop closed in two rounds: r2 is approve, 0 findings, a
+dry round with no re-tag.** The r1 disposition and its sha are in `## Findings`. Labelled **C**: a second class-repeat of impl gate r1 f1, this time one
 call upstream in `llm_client._adapt`, which runs ahead of BOTH guard halves and so defeated the
 typed-failure control on `complete()` and on the binding alike. Closed at the boundary (@9cabdea)
 rather than per shape, with the corpus rows and two guards deviation 4 counts; the round's

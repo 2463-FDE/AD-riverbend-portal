@@ -1364,3 +1364,10 @@ not three shape patches. The environment note (the framework-native LangSmith ru
 from the record as residual (c) — no re-litigation. Lesson: when a fix closes a class at one guard,
 the same round should ask what runs *before* that guard — the reviewer found this hole where the
 earlier fix had stopped, in code the branch had edited but not re-read as a whole.
+
+**PR #94 r2 — 2026-08-30, approve.** 0 findings; A1-M1 confirmed fixed at `9cabdea`, A1-E1 recorded
+as needing no code change. Loop closed in 2 rounds (0 A / 0 B / 1 C / 0 E total). No re-tag: the
+bounded review ends at a clean round. Worth keeping: the round-2 note calls out what the fix did
+*not* do — structural absence still defaults rather than raising — which is the check a
+totality fix most easily fails. A class fix that has to be argued as "not over-tightened" is one the
+disposition should say so about up front; r1's did, and the reviewer read it back.
