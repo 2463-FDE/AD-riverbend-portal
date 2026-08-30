@@ -1337,3 +1337,16 @@ when a fix names one case, name the complement in the same sentence.
 **PR #92 r3 — 2026-08-28, approve.** 0 findings; B4 / M4 confirmed fixed at `d1751ff`, r1's
 five carried as fixed. Loop closed in 3 rounds (6 A / 1 B / 1 C / 0 E total). No re-tag: the
 bounded review ends at round 3; this line lands with the merge as bookkeeping.
+
+**PR #93 r1 — 2026-08-30, approve.** 1 finding (0 blockers, 0 majors, 1 minor), **0 A / 0 B /
+0 C / 1 E**. MINOR-1 (E): `git diff --check` flags two trailing-whitespace lines in a vendored
+corpus file — answered from eligibility-assistant-D-6, whose byte-identical-to-the-package
+vendoring is the frozen decision, and declined with runtime evidence rather than weighed:
+stripping the two-space markdown hard line breaks takes the file 1,227 → 1,223 bytes and
+`policy_index.load()` raises `CorpusLoadError: sha256 mismatch`, while the reviewer's other leg
+(update the manifest sha) would break `document-manifest.json`'s own byte-identity; no CI job
+runs `git diff --check`. Recorded as a standing exception on D-6, the site that outlives the
+ticket — not as a note in the ticket file that dies at merge. Lesson: when a linter and a frozen
+byte-identity invariant disagree, the disposition needs the arithmetic that shows they *cannot*
+both hold — "vendored, do not touch" reads as preference and gets re-raised at the next
+vendoring; `1,227 → 1,223 → CorpusLoadError` does not.

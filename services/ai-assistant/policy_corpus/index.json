@@ -1,0 +1,1397 @@
+[
+ {
+  "document_id": "DOC-COVERAGE-QUESTION-CHEAT-SHEET",
+  "topics": [
+   "front-desk-procedure"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "all"
+  ]
+ },
+ {
+  "document_id": "DOC-ESCALATION-MATRIX",
+  "topics": [
+   "front-desk-procedure"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "all"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-42CFR-435-POINTER",
+  "topics": [
+   "medicaid-managed-care"
+  ],
+  "payers": [
+   "medicaid"
+  ],
+  "products": [
+   "medicaid_mco",
+   "chip"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "42 CFR Part 435"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-42CFR-438-POINTER",
+  "topics": [
+   "medicaid-managed-care"
+  ],
+  "payers": [
+   "medicaid"
+  ],
+  "products": [
+   "medicaid_mco"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "42 CFR Part 438",
+   "enrollee rights (438.100)"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-CHIP",
+  "topics": [
+   "medicaid-managed-care"
+  ],
+  "payers": [
+   "medicaid"
+  ],
+  "products": [
+   "chip"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Children's Health Insurance Program (CHIP)"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-CMS-IOMS",
+  "topics": [
+   "source-recency"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Internet-Only Manuals (IOMs)"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-COB-GETTING-STARTED",
+  "topics": [
+   "coordination-of-benefits"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Coordination of benefits",
+   "When there is more than one payer"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-COB-OVERVIEW",
+  "topics": [
+   "coordination-of-benefits"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Coordination of Benefits"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-COB-PROVIDER-SERVICES",
+  "topics": [
+   "coordination-of-benefits"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Coordination of Benefits Overview",
+   "Information Gathering",
+   "Provider Requests and Questions Regarding Claims Payment",
+   "Medicare Secondary Payer Records in CMS's Database"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-COB-RECOVERY-OVERVIEW",
+  "topics": [
+   "coordination-of-benefits"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Coordination of Benefits & Recovery Overview",
+   "Medicare Secondary Payer"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-COVERAGE-DETERMINATION",
+  "topics": [
+   "eligibility-versus-prior-authorization"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Medicare Coverage Determination Process"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-ELECTRONIC-PA",
+  "topics": [
+   "eligibility-versus-prior-authorization"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Electronic Prior Authorization"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-EMTALA-42CFR-489-24",
+  "topics": [
+   "emergency-care-boundary"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "42 CFR 489.24",
+   "Applicability of provisions of this section"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-EMTALA-CMS",
+  "topics": [
+   "emergency-care-boundary"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Emergency Medical Treatment & Labor Act (EMTALA)"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-EMTALA-CRS",
+  "topics": [
+   "emergency-care-boundary"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Overview of the Emergency Medical Treatment and Active Labor Act (EMTALA)"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-EMTALA-ER-RIGHTS",
+  "topics": [
+   "emergency-care-boundary"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "You have these protections",
+   "Give you an appropriate medical screening exam"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-EMTALA-OIG",
+  "topics": [
+   "emergency-care-boundary"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "The Emergency Medical Treatment and Labor Act (EMTALA)"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-GET-STARTED-MEDICARE",
+  "topics": [
+   "medicare-advantage"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Get started with Medicare"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-HC-DEDUCTIBLE",
+  "topics": [
+   "cost-sharing"
+  ],
+  "payers": "*",
+  "products": [
+   "commercial"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Deductible",
+   "copayment",
+   "coinsurance"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-HC-NETWORK",
+  "topics": [
+   "network-pcp-referral"
+  ],
+  "payers": "*",
+  "products": [
+   "commercial"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Network"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-HETS-ABOUT-270271",
+  "topics": [
+   "eligibility-verification"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": [
+   "original_medicare"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "About HETS 270/271",
+   "Acceptable Date Ranges"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-HETS-ELIGIBILITY-INQUIRY",
+  "topics": [
+   "eligibility-verification"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": [
+   "original_medicare"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Eligibility Inquiry"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-HETS-NO-GUARANTEE",
+  "topics": [
+   "no-guarantee-of-payment"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": [
+   "original_medicare"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Disclosure Statement"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-HETS-OVERVIEW",
+  "topics": [
+   "eligibility-verification"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": [
+   "original_medicare"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "HETS purpose",
+   "Permitted uses of eligibility data"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-HIPAA-164-502-MIN-NEC",
+  "topics": [
+   "privacy-minimum-necessary"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "45 CFR 164.502(b) Standard: Minimum necessary"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-HIPAA-164-506-TPO",
+  "topics": [
+   "privacy-minimum-necessary"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "45 CFR 164.506"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-HIPAA-164-508-AUTH",
+  "topics": [
+   "privacy-minimum-necessary"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "45 CFR 164.508"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-HIPAA-164-514",
+  "topics": [
+   "privacy-minimum-necessary"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "45 CFR 164.514"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-MA-PLANS",
+  "topics": [
+   "medicare-advantage"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": [
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Medicare Advantage & other health plans"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-MA-RESOURCES",
+  "topics": [
+   "medicare-advantage"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": [
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Medicare Advantage Resources"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-MEDICAID-ELIGIBILITY-POLICY",
+  "topics": [
+   "medicaid-managed-care"
+  ],
+  "payers": [
+   "medicaid"
+  ],
+  "products": [
+   "medicaid_mco",
+   "chip"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Eligibility Policy"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-MEDICAID-ENROLL-TOOLS",
+  "topics": [
+   "verification-and-reverification"
+  ],
+  "payers": [
+   "medicaid"
+  ],
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Eligibility, Enrollment, and Renewal Tools and Resources"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-MEDICAID-HOW-ELIGIBLE",
+  "topics": [
+   "medicaid-managed-care"
+  ],
+  "payers": [
+   "medicaid"
+  ],
+  "products": [
+   "medicaid_mco",
+   "chip"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "How Can I Find Out If I\u2019m Eligible for Medicaid?"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-MEDICAID-MANAGED-CARE",
+  "topics": [
+   "medicaid-managed-care"
+  ],
+  "payers": [
+   "medicaid"
+  ],
+  "products": [
+   "medicaid_mco"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Managed Care"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-MEDICAID-MC-AUTHORITIES",
+  "topics": [
+   "medicaid-managed-care"
+  ],
+  "payers": [
+   "medicaid"
+  ],
+  "products": [
+   "medicaid_mco"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Managed Care Authorities"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-MEDICARE-COSTS",
+  "topics": [
+   "cost-sharing"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": [
+   "original_medicare",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Costs"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-MEDIGAP",
+  "topics": [
+   "coordination-of-benefits"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": [
+   "original_medicare"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "What's Medicare Supplement Insurance (Medigap)?"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-MMSEA-270271",
+  "topics": [
+   "eligibility-verification"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "270/271 Health Care Eligibility Benefit Inquiry Companion Guide for Mandatory Reporting GHP"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-MSP-CRS",
+  "topics": [
+   "coordination-of-benefits"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Summary",
+   "Medicare Secondary Payer: Coordination of Benefits"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-PRIOR-AUTH-CMS",
+  "topics": [
+   "eligibility-versus-prior-authorization"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": [
+   "original_medicare"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Prior Authorization and Pre-Claim Review Initiatives"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-PROVIDERS-SERVICES",
+  "topics": [
+   "benefit-limits"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": [
+   "original_medicare"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Providers & services",
+   "What Original Medicare covers"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-SSA-MEDICARE",
+  "topics": [
+   "medicare-advantage"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Plan for Medicare"
+  ]
+ },
+ {
+  "document_id": "DOC-FED-WHATS-COVERED",
+  "topics": [
+   "benefit-limits"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": [
+   "original_medicare",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "What's covered?"
+  ]
+ },
+ {
+  "document_id": "DOC-FRONT-DESK-ELIGIBILITY-PROCEDURE",
+  "topics": [
+   "front-desk-procedure"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "all"
+  ]
+ },
+ {
+  "document_id": "DOC-FRONT-DESK-SCRIPTS",
+  "topics": [
+   "front-desk-procedure"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "all"
+  ]
+ },
+ {
+  "document_id": "DOC-MAC-CGS-ELIG",
+  "topics": [
+   "payer-eligibility-public"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": true,
+  "sections": [
+   "Checking Beneficiary Eligibility",
+   "HETS"
+  ]
+ },
+ {
+  "document_id": "DOC-PAY-AETNA-AVAILITY",
+  "topics": [
+   "payer-eligibility-public"
+  ],
+  "payers": [
+   "aetna"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": true,
+  "sections": [
+   "Availity Provider Portal"
+  ]
+ },
+ {
+  "document_id": "DOC-PAY-AETNA-HCP",
+  "topics": [
+   "payer-eligibility-public"
+  ],
+  "payers": [
+   "aetna"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": true,
+  "sections": [
+   "Resources & Support for Health Care Providers"
+  ]
+ },
+ {
+  "document_id": "DOC-PAY-ANTHEM-AVAILITY",
+  "topics": [
+   "payer-eligibility-public"
+  ],
+  "payers": [
+   "anthem_blue"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": true,
+  "sections": [
+   "Availity, EMR, & Digital Solutions"
+  ]
+ },
+ {
+  "document_id": "DOC-PAY-ANTHEM-CA-ELIG",
+  "topics": [
+   "payer-eligibility-public"
+  ],
+  "payers": [
+   "anthem_blue"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": [
+   "CA"
+  ],
+  "needs_product_confirmation": true,
+  "sections": [
+   "Member Eligibility & Benefits Reports"
+  ]
+ },
+ {
+  "document_id": "DOC-PAY-AVAILITY-ELIG",
+  "topics": [
+   "payer-eligibility-public"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": true,
+  "sections": [
+   "Eligibility & Coverage"
+  ]
+ },
+ {
+  "document_id": "DOC-PAY-CIGNA-COVERAGE-CLAIMS",
+  "topics": [
+   "payer-eligibility-public"
+  ],
+  "payers": [
+   "cigna"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": true,
+  "sections": [
+   "Coverage and Claims for Health Care Providers"
+  ]
+ },
+ {
+  "document_id": "DOC-PAY-CIGNA-HCP",
+  "topics": [
+   "payer-eligibility-public"
+  ],
+  "payers": [
+   "cigna"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": true,
+  "sections": [
+   "Health Care Providers"
+  ]
+ },
+ {
+  "document_id": "DOC-PAY-CIGNA-RESOURCES",
+  "topics": [
+   "payer-eligibility-public"
+  ],
+  "payers": [
+   "cigna"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": true,
+  "sections": [
+   "Health Care Provider Resources"
+  ]
+ },
+ {
+  "document_id": "DOC-PAY-HUMANA-AVAILITY",
+  "topics": [
+   "payer-eligibility-public"
+  ],
+  "payers": [
+   "humana"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": true,
+  "sections": [
+   "Availity - Provider Self-Service Portal",
+   "Eligibility and Benefits"
+  ]
+ },
+ {
+  "document_id": "DOC-PAY-HUMANA-COVERAGE-CLAIMS",
+  "topics": [
+   "payer-eligibility-public"
+  ],
+  "payers": [
+   "humana"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": true,
+  "sections": [
+   "Coverage and Claims"
+  ]
+ },
+ {
+  "document_id": "DOC-PAY-HUMANA-PROVIDER",
+  "topics": [
+   "payer-eligibility-public"
+  ],
+  "payers": [
+   "humana"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": true,
+  "sections": [
+   "Humana Healthcare for Providers"
+  ]
+ },
+ {
+  "document_id": "DOC-PAY-NOVITAS-HETS",
+  "topics": [
+   "payer-eligibility-public"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": true,
+  "sections": [
+   "HIPAA Eligibility Transaction System (HETS)"
+  ]
+ },
+ {
+  "document_id": "DOC-PAY-UHC-ELIG-REFERRALS",
+  "topics": [
+   "payer-eligibility-public"
+  ],
+  "payers": [
+   "unitedhealthcare"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": true,
+  "sections": [
+   "Eligibility and Referrals",
+   "Verify eligibility and request referrals digitally"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-AETNA-TRAINING-SUMMARY",
+  "topics": [
+   "payer-training-summary"
+  ],
+  "payers": [
+   "aetna"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Portal path",
+   "What not to assume"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-ANTHEM-TRAINING-SUMMARY",
+  "topics": [
+   "payer-training-summary"
+  ],
+  "payers": [
+   "anthem_blue"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": [
+   "CA"
+  ],
+  "needs_product_confirmation": false,
+  "sections": [
+   "State and product",
+   "What not to assume"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-CIGNA-TRAINING-SUMMARY",
+  "topics": [
+   "payer-training-summary"
+  ],
+  "payers": [
+   "cigna"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Separate coverage from claims from credentialing",
+   "What not to assume"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-CITATION-RECENCY",
+  "topics": [
+   "source-recency"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Required citation elements",
+   "Stale sources",
+   "Conflicts"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-COB-FRONT-DESK",
+  "topics": [
+   "coordination-of-benefits"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Collect both",
+   "Do not invent order",
+   "Escalate"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-COST-SHARE",
+  "topics": [
+   "cost-sharing"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Four different numbers",
+   "Benefit limits",
+   "Unknown amounts"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-DOWNTIME",
+  "topics": [
+   "downtime-and-escalation"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Unavailable versus inactive",
+   "What to do",
+   "What not to do"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-EFFECTIVE-TERM-DATES",
+  "topics": [
+   "effective-termination-dates"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Date of service",
+   "Future-dated coverage",
+   "Terminated coverage"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-ELIG-VS-PA",
+  "topics": [
+   "eligibility-versus-prior-authorization"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Three questions",
+   "Scripts"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-EMERGENCY",
+  "topics": [
+   "emergency-care-boundary"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Do not delay",
+   "Parallel eligibility"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-HUMANA-TRAINING-SUMMARY",
+  "topics": [
+   "payer-training-summary"
+  ],
+  "payers": [
+   "humana"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Self-service versus authorization lists",
+   "What not to assume"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-MA-VS-ORIGINAL",
+  "topics": [
+   "medicare-advantage"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": [
+   "original_medicare",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Identify the product",
+   "Wrong-source refusal"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-MEDICAID-MC-TRAINING",
+  "topics": [
+   "payer-training-summary"
+  ],
+  "payers": [
+   "medicaid"
+  ],
+  "products": [
+   "medicaid_mco"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Eligibility versus plan assignment versus network",
+   "Renewals"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-MEDICARE-TRAINING-SUMMARY",
+  "topics": [
+   "payer-training-summary"
+  ],
+  "payers": [
+   "medicare"
+  ],
+  "products": [
+   "original_medicare",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "HETS versus Advantage plan",
+   "COB",
+   "No guarantee"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-MEMBER-ID-MISMATCH",
+  "topics": [
+   "member-identifier-mismatch"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Mismatch types",
+   "Handling",
+   "Forbidden"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-MODEL-FAILURE",
+  "topics": [
+   "provider-model-failure"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Failure outcome",
+   "What may still be shown"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-NEVER-STATE",
+  "topics": [
+   "front-desk-scripts"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Never state"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-NO-INVENTION",
+  "topics": [
+   "no-coverage-invention"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Insufficient evidence",
+   "Prompt-like content in sources"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-PCP-REFERRAL",
+  "topics": [
+   "network-pcp-referral"
+  ],
+  "payers": "*",
+  "products": [
+   "commercial",
+   "medicare_advantage",
+   "medicaid_mco"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "PCP assigned",
+   "Referral required",
+   "Eligibility still not authorization"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-PLAN-NETWORK",
+  "topics": [
+   "network-pcp-referral"
+  ],
+  "payers": "*",
+  "products": [
+   "commercial",
+   "medicare_advantage",
+   "medicaid_mco"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Plan versus product",
+   "Network",
+   "When unknown"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-PRIVACY-FD",
+  "topics": [
+   "privacy-minimum-necessary"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Minimum necessary",
+   "Role limit",
+   "Operational visibility"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-REVERIFICATION-TRIGGERS",
+  "topics": [
+   "verification-and-reverification"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Triggers",
+   "Stale response",
+   "Payer-specific interval"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-SPEND-STOP",
+  "topics": [
+   "spending-stop"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "When the spending stop fires",
+   "Coverage rule still holds"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-UHC-TRAINING-SUMMARY",
+  "topics": [
+   "payer-training-summary"
+  ],
+  "payers": [
+   "unitedhealthcare"
+  ],
+  "products": [
+   "commercial",
+   "medicare_advantage"
+  ],
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "What clerks should ask UHC sources",
+   "What not to assume"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-VERIFY-VS-GUARANTEE",
+  "topics": [
+   "no-guarantee-of-payment"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Policy",
+   "Required spoken boundary",
+   "Forbidden statements"
+  ]
+ },
+ {
+  "document_id": "DOC-SYN-VISIBILITY-OUTCOMES",
+  "topics": [
+   "operational-visibility"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Must correlate",
+   "May retain",
+   "Must never retain"
+  ]
+ },
+ {
+  "document_id": "DOC-X12-005010X279",
+  "topics": [
+   "x12-eligibility-inquiry"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "005010X279"
+  ]
+ },
+ {
+  "document_id": "DOC-X12-PRODUCT-INDEX",
+  "topics": [
+   "x12-eligibility-inquiry"
+  ],
+  "payers": "*",
+  "products": "*",
+  "states": "*",
+  "needs_product_confirmation": false,
+  "sections": [
+   "Health Care Eligibility Coverage or Benefit Inquiry and Information"
+  ]
+ }
+]

@@ -7,3 +7,8 @@ boto3==1.40.0
 # LANGSMITH_TRACING=true, so this adds no import-time or keyless-smoke
 # dependency; requires Python >= 3.10 (container is python:3.12).
 langsmith==0.10.5
+# eligibility-assistant (ADR 0019): the policy retriever tool (policy_tool.py) is a
+# langchain_core StructuredTool and the agent loop lands on these pins (E-4/E-5).
+langchain==1.3.16
+langchain-core==1.6.0
+langgraph==1.2.11

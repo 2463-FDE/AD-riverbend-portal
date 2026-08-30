@@ -1,6 +1,6 @@
 # ADR 0006 — ai-assistant observability: LangSmith tracing (metadata-only)
 
-**Status:** Accepted
+**Status:** Accepted. Extended by ADR 0019 (eligibility-assistant)
 **Date:** 2026-07-15
 **Author:** Riverbend engagement team
 **Relates to:** ADR 0004 (ai-assistant service + PHI-safe LLM wrapper) and
