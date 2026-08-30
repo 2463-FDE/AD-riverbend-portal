@@ -1,6 +1,6 @@
 # eligibility-assistant / llm-seam — ticket plan file (deleted at its merge; contract: docs/workflow/eligibility-assistant.md)
 
-Status: plan GATED 2026-08-27 (gate r8 clean 2026-08-27, dry round; gate r7 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated the one finding 2026-08-27 as accepted → stage 3, A, `tool_calls` asserted per field against the pinned `langchain-core==1.6.0`, no owner call open; gate r6 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, `adr/0019-*.md` change row added here and in `turn`, eligibility-assistant-D-42 note, no owner call open; gate r5 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated all three findings 2026-08-27 as accepted → stage 3, all A, verification 7i, no owner call open; gate r4 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, no owner call open; gate r3 dispositioned 2026-08-27 under the round-3 rule — all six A, no owner call pending on this ticket; gate r2 dispositioned 2026-08-27; re-sliced 2026-08-25 from the item plan; gate rounds 1–2 on the monolithic plan are in plans/eligibility-assistant.md)
+Status: plan GATED 2026-08-27 · delivery DRAFT 2026-08-30 (gate r8 clean 2026-08-27, dry round; gate r7 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated the one finding 2026-08-27 as accepted → stage 3, A, `tool_calls` asserted per field against the pinned `langchain-core==1.6.0`, no owner call open; gate r6 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, `adr/0019-*.md` change row added here and in `turn`, eligibility-assistant-D-42 note, no owner call open; gate r5 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated all three findings 2026-08-27 as accepted → stage 3, all A, verification 7i, no owner call open; gate r4 dispositioned 2026-08-27 under the round-3 rule — owner adjudicated both findings 2026-08-27 as accepted → stage 3, both A, no owner call open; gate r3 dispositioned 2026-08-27 under the round-3 rule — all six A, no owner call pending on this ticket; gate r2 dispositioned 2026-08-27; re-sliced 2026-08-25 from the item plan; gate rounds 1–2 on the monolithic plan are in plans/eligibility-assistant.md)
 Scope: SPEC rows eligibility-assistant-SPEC-24, -30 (eligibility-assistant-D-34 as read through eligibility-assistant-D-55, PR-1b — the egress seam and its never-stream guarantee; lands dark, not wired to the request path)
 Depends on: corpus (the LangChain v1 pins — `langchain` / `langchain-core` / `langgraph` in `services/ai-assistant/requirements.txt` and the root `requirements-dev.txt`; eligibility-assistant-D-59)
 
@@ -424,3 +424,99 @@ Per-SPEC verdicts: SPEC-24 residual-named (residual (a): E-4 live leg on `langsm
 Noted, not findings: verification 7c's second break — the receive-half red is more likely an `AttributeError` inside the first `invoke` than an assertion failure, so "send-half assertions … all still pass" describes what the break isolates, not what pytest reports; red-then-green holds either way. The r3 f3 cell still cites `retrieval-eval.md:18` for that file's README row (now `:19`) — history cell, left per the item's convention (noted at r7).
 
 checked: eligibility-assistant-SPEC-24, 30 (2 ids, the `llm-seam` `Scope:` line) against Decisions eligibility-assistant-D-1..79, Evidence E-1..7, `llm-seam.md` Changes (8 rows) / Verification 5, 6, 7, 7b–7i, 8, 9, 19 / Gate interactions (3) / Landmines (11 top-level bullets) / Findings r1–r7, the five sibling `Scope:` + `Depends on:` lines and the contract `## Delivery` table · **plan-text hash read: `d395b31522718f92ecf4456243d684457c9cb836`** (round 7 recorded `dd4196cf955e3ca5bed10c0e19ec5e3dc7ec588e`; the one r7 disposition carries its `Sites changed:` list) · **origin: 0 new · 0 pre-existing · 0 class-repeat** · check map 66/66 single-mechanism (scripted over the `## Spec` table) · ⚠ coverage: SPEC-30 → D-56 with date; SPEC-24 not ⚠ · freeze scope: 0 `DEFERRED`, both rows on REQ-6‴ / REQ-8‴ · ownership 66/66 once (`Scope:` lines = `## Delivery` table = item ticket table; corpus 7 · llm-seam 2 · turn 39 · trace 9 · lifecycle 5 · retrieval-eval 4; SPEC-57 unallocated); `Depends on:` lines and table cells agree row-for-row · cites: every SPEC / D-1..79 / E-1..7 id in plan text resolves (scripted) · change list closes both ways (SPEC-24 → `llm_client.py` / `agent_binding.py` / `tests/test_llm_client.py` / `app.py` / `adr/0019-*.md`; SPEC-30 → `agent_binding.py` / `tests/test_a1_trace.py` / `adr/0019-*.md`; `tests/README.md` → registry upkeep + D-60; `CLAUDE.md` §6 → D-43 + sweep) · **tree facts verified:** `services/ai-assistant/llm_client.py` `_adapt` :192 (blocks :204-207 `type`/`text` only; carries `id=payload.get("id") or request_id` and `model`, so the twin guard's `request_id="msg_parity"` claim holds) · `_BedrockMessages.create` :229, `body["system"]` :244, `extra_body` merge :245-248, `invoke_model` :249-254 · `estimate_cost` :323 · overheads :336-337 · `max_input_tokens` system term :368, `str(content)` :371 · `_require_bearer_token` :428, `egressed=False` :454 · `_enforce_budget` :458 · `_call` :471-476, controls :493-496 · `_result_from_response` :566, `request_id = getattr(response,"id")` :572, comment :576-577, no-text guard :578-583, int-usage guard :589-595, six-field log line :606-614 (pattern matches) · `complete()` max_tokens :650 / call :653, `complete_structured()` :701-705, `import tracing` + `wrap_create` :728-730 · `config.py:64` 20000 / `:65` `llm_max_output_tokens` · `tests/test_llm_client.py` rig :33-43, autouse bearer :46-52, `_stub_runtime_returning` :659 (`ResponseMetadata.RequestId`="req_stub_ok") / setattr :669, no-content body :673-680, tool_use case :683, no-usage body :696-703, caplog idiom :788-797, 54 tests · `tests/test_ai_visit_chat.py:51-73` pin idiom (pins `llm_client`) · `app.py:30-36` imports, `:33` `import llm_client` · `agent_binding.py` / `tests/test_a1_trace.py` absent (NEW true) · no `langchain*` / `BaseChatModel` / `langgraph` in any tracked non-doc file; `.venv` (py 3.12.13) has no `langchain_core`, `langsmith 0.10.5`; `requirements.txt:9` / `requirements-dev.txt:13` langsmith only · `ci.yml` services :72-76 (matrix includes gateway :58), tests :86, gitleaks v8.18.4 :120-129 · `tests/README.md:32` · `CLAUDE.md:141` · `adr/0004:38-40`, `:41-44`, `:57` · `corpus.md:16` dark import, `:24` rig row, `:27-28` ADR authorship / README row, `:60` bullet · **package locators verified on the 1.6.0 wheel:** `chat_models.py` `_generate` :2197-2204 (`-> ChatResult`), `_stream` :2244, `_llm_type` :2319-2320, `bind_tools` :2355, `_should_stream` :538 / `sync_not_implemented` :548 / :552 / :555, `stream` :716, `invoke(…, stop=None)` :464-471; `messages/ai.py:28` import, `tool_calls` field :170, validator :307-309, normalisation :331-338; `messages/tool.py:67` `tool_call_id`, `ToolCall` TypedDict :206, `type: NotRequired[Literal["tool_call"]]` :238, `tool_call()` :242-258 returning `type="tool_call"`; `messages/base.py:103` `content`, `:114` `response_metadata`; `callbacks/manager.py:2426` / `runnables/config.py:192` function-local langsmith imports; `tools/structured.py:40` · `grep -rn 'tool_calls\[0\]' docs/` → exactly the four `llm-seam.md` hits the r7 cell states · falsified-claims sweep (landmines / debt-log D13 / phi-policy rules 3–6 + register / todo / CLAUDE.md / ARCHITECTURE / runbook / seam-map:13 / tests README / ADR 0004-0006-0009-0011 / in-code markers) for `_adapt` · `invoke_model` · `llm_client` · `complete_structured` · `_result_from_response` · stream · langsmith: no clause falsified and unserved · wrong facts: 0 · **0 findings** — clean.
+
+## Delivery evidence
+
+Status: delivery DRAFT 2026-08-30. Deviations and live-run detail live here and die with this
+file at merge; the references — shas, baseline movement, the test-first split, traceability,
+residual IDs — are in the contract's per-ticket delivery record row.
+
+Branch `feat/noref-eligibility-llm-seam` off `main` @5ae3df0 (`corpus` merged @1430ec3, so the
+`Depends on:` edge is landed and the LangChain pins are on both requirements files already).
+
+**Deviations (3, all plan-fact; no mechanism moved).**
+
+1. The `CLAUDE.md` §6 change row cites `:141`, `1317 passed, 19 deselected, 1 xfailed`. `corpus`
+   had already moved that line to `1355 passed, 19 deselected, 1 xfailed` (2026-08-29). The row's
+   action is unchanged — the line is updated to this ticket's post-count — so it reads
+   `1361 passed, 19 deselected, 1 xfailed`, measured 2026-08-30.
+2. The `agent_binding.py` row says `bind_tools` → Anthropic `tools` in `extra_body` without naming
+   the conversion route. `langchain-core==1.6.0` ships no Anthropic tool converter, only
+   `convert_to_openai_function` / `convert_to_openai_tool` (`utils/function_calling.py:377`,
+   `:515`). `_anthropic_tool` therefore normalises through `convert_to_openai_tool` and renames
+   `parameters` → `input_schema`, rather than walking the tool object a second time. The bound
+   payload and the byte-gate consequence are exactly what the row states.
+3. The `adr/0019-*.md` row names the seam-binding paragraph only. Two `## Consequences` lines are
+   added beside it — the new files, and the tests that now hold the line — because that section
+   enumerates both and this diff would otherwise falsify it.
+
+**Test-first split.** Four of the six added tests ran red before the code that turns them green:
+`test_a1_adapt_superset_keeps_text_only_shape` (red: `AttributeError` on `content[0].id`),
+`test_a1_binding_uses_seam_fail_closed` (red: `agent_binding.py` did not exist),
+`test_a1_binding_system_message_rules` (red: `DID NOT RAISE ValueError`) and
+`test_a1_binding_guard_parity` (red: `DID NOT RAISE LLMResponseError`). Two did **not**:
+`test_a1_binding_round_trip_through_seam` and `tests/test_a1_trace.py::test_model_call_not_streamed`
+were green on first run, because the single `agent_binding.py` write that made the fail-closed test
+green already carried the leading-`SystemMessage` mapping, the receive half and the raising
+`_stream` — writing the module in three partial states would have churned a file whose halves are
+one design. The negative checks below are what actually pin those two: 7b, 7c, 7d, 7e, 7g-1, 7i
+each redden them from a working tree and go green on revert.
+
+**Planned slices absent from the diff: none.** Every change row landed.
+
+**Verification (each command run, outcome stated). Isolation, all of it: every break and every
+binding test runs against `_stub_runtime_returning`'s in-process boto3 stub with a fake bearer, so
+no request leaves the process, no credential is read and no real service is involved; the import
+smokes are keyless and offline (`env -i`).**
+
+- **V5** `cd services/ai-assistant && env -i PATH="$PATH" ../../.venv/bin/python -c "import app,
+  policy_index, policy_tool, agent_binding; print('ok')"` → `ok`. The `langchain_core` import is
+  proven import-safe keyless and offline before any wiring.
+- **V6** `.venv/bin/python -m pytest tests/test_llm_client.py tests/test_a1_trace.py -q -k "a1 or
+  adapt or streamed"` → `10 passed, 50 deselected`.
+- **V8** `.venv/bin/python -m pytest -m "not integration" --collect-only -q | grep -o
+  'EVAL-0[0-9][0-9]\(-[a-z]*\)*' | sort -u | wc -l` → `2` (`EVAL-023`, `EVAL-031`), unchanged from
+  `corpus`. No test this ticket adds is `[EVAL-n]`-parametrised.
+- **V9** `make test-docker` → `1361 passed, 19 deselected, 1 xfailed`; `.venv` 3.12
+  `pytest -m "not integration" -q` agrees. Baseline at branch was `1355 passed, 19 deselected,
+  1 xfailed`, so passed grows by exactly the 6 tests this branch adds and deselected / xfailed do
+  not move. No `skipped` term — the live tests land in `turn`.
+- **V19** `git diff --stat main -- db/ config/ services/gateway/authz.py
+  services/gateway/security.py services/eligibility-service/
+  services/ai-assistant/eligibility_client.py docker-compose.yml eval/` → empty.
+
+**Break-then-revert (13 breaks over 8 checks; every one red under the break and green on revert).**
+
+- **7** `_generate` egresses through `llm_client.client.messages.create` directly, skipping
+  `_call` → `test_a1_binding_uses_seam_fail_closed` red (the stub records a call and no
+  `LLMConfigError` is raised: `_require_bearer_token` was bypassed).
+- **7f** the `sys.modules["llm_client"] = llm_mod` pin dropped from the rig → all four binding
+  tests red on their first assertion, `agent_binding.llm_client is llm_mod`, before any `invoke`.
+- **7b** `_stream` yields one chunk → `test_model_call_not_streamed` red. Second break, an
+  `invoke_model_with_response_stream` reference in `agent_binding.py` → the same test red.
+- **7c** `_adapt` drops `stop_reason` → `test_a1_binding_round_trip_through_seam` red. Second
+  break, the `tool_use` block restored to the old `type`/`text`-only shape → the same test red
+  with `AttributeError: 'types.SimpleNamespace' object has no attribute 'id'` raised inside
+  `_message_from_response` at `agent_binding.py:265` — the receive half, as the r7-restated
+  wording requires, and the test was green before the break.
+- **7d** `bind_tools` returns the model without binding `tools` → the same test red.
+- **7e** the role-alternation merge dropped → the same test red. Second break, `ToolMessage`
+  converted to a text block → the same test red.
+- **7g** the leading `SystemMessage` folded into a `user` turn → the round-trip test red. Second
+  break, a `SystemMessage` accepted at any position → `test_a1_binding_system_message_rules` red.
+- **7h** the twin guard and its log call deleted → `test_a1_binding_guard_parity` red. Second
+  break, the line emitted as `llm call model=%s in_tokens=%d out_tokens=%d` only → the same test
+  red on the six-field pattern, which `complete()`'s record in the same test still matches.
+- **7i** the `AIMessage` built with `content=""` regardless of the response's `text` blocks →
+  the round-trip test red.
+
+**Traceability.** Both `test:` cells in the frozen spec are filled with the ids they already
+planned and neither moved: eligibility-assistant-SPEC-24 →
+`tests/test_llm_client.py::test_a1_binding_uses_seam_fail_closed`; eligibility-assistant-SPEC-30 →
+`tests/test_a1_trace.py::test_model_call_not_streamed`. No pinned test changed.
+
+**Residuals.** The two the Landmines block already names, as registry IDs only: the live
+composition under `langsmith==0.10.5` → eligibility-assistant-SPEC-17 / SPEC-32, E-5 (D13 stays
+OPEN in `docs/debt-log.md`, neither narrowed nor fixed); SPEC-30 proven for this service, not the
+estate → the `trace` ticket's rows. No new residual surfaced, so nothing is filed in
+`docs/debt-log.md` or `docs/todo.md` by this ticket.
