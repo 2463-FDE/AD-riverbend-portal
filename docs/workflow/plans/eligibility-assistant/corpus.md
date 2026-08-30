@@ -651,3 +651,28 @@ turn path (lifespan hook calls `policy_index.load()` only, `policy_tool` a dark 
 coverage observation not re-raised.
 
 checked: eligibility-assistant-SPEC-1–66 read in full, corpus rows 7, 8, 9, 10, 11, 38, 43 against `git diff main...HEAD` (118 files, +7160/−60) · `policy_index.py`, `policy_tool.py`, `config.py`, `app.py` lifespan hook, `.dockerignore`, requirements pins, the three test files, `a1_corpus_rig.py`, `policy_corpus/`, `tests/fixtures/a1/`, `adr/0019`, ADR 0006 / 0011 status notes, `docs/workflow/README.md`, `CLAUDE.md` · 0 findings · 0 observations
+
+### Review — round 1, 2026-08-30
+
+PR #93, reviewer codex (JesterCharles). **Verdict approve** — 0 blockers, 0 majors, 1 minor, no
+environment notes. One finding, **0 A / 0 B / 0 C / 1 E**: answered from the record, no code
+change and no count movement. The reviewer's "what's working" read confirms the three mechanisms
+the impl gate and adv review each checked independently (closed-tree load, topic-only tool
+boundary, manifest/index statics).
+
+| # | anchor | finding | disposition |
+|---|--------|---------|-------------|
+| 1 | `services/ai-assistant/policy_corpus/procedures/front-desk-eligibility-procedure.md:3-4` · eligibility-assistant-SPEC-7 · eligibility-assistant-D-6 · `document-manifest.json` `content_sha256` | MINOR-1 — `git diff --check origin/main...HEAD` flags trailing whitespace on lines 3–4. Either strip it and update the manifest `content_sha256`, or record it as an accepted byte-identical vendored-source exception. | **E** · **declined**, second option taken — the bytes are the package's own and byte-identical vendoring is the frozen decision, so stripping is refused rather than weighed → **eligibility-assistant-D-6, note 2026-08-30** (the site that outlives this ticket; it carries the runtime check, the sha arithmetic and the CI-job enumeration, and states the exception for every vendored file rather than this one). No code, test, fixture or count moves. |
+
+Refutation evidence (the decline is mechanical, not stylistic), **scratch copy only — `shutil.copytree`
+of `policy_corpus/` to a tmp dir and `policy_index.load(root=…)`, so the tracked tree is untouched and
+the gate r5 f3 non-publish rule leaves module state untouched**: the two lines end in the two-space
+markdown hard line break; stripping them takes the file 1,227 → 1,223 bytes and `load` raises
+`CorpusLoadError: sha256 mismatch (DOC-FRONT-DESK-ELIGIBILITY-PROCEDURE)`. The pinned sha
+`5663e141…` equals the file as committed *and* is the package manifest's own value, so the
+"update the manifest" leg would break `document-manifest.json`'s byte-identity in turn. No CI job
+runs `git diff --check`, so nothing gates on the flag.
+
+Re-verified: `.venv` 3.12 `pytest -m "not integration" -q` → **1355 passed, 19 deselected, 1 xfailed**
+(26.33s) — unmoved from the Delivery record, as a records-only round must be. `eval/rag/` untouched
+this round, `make eval` not re-run.
