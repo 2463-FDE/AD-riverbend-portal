@@ -336,7 +336,7 @@ Open before FROZEN: none — eligibility-assistant-D-20..24 resolved 2026-08-24 
 | turn | eligibility-assistant-SPEC-1–6, 12–23, 25–26, 33, 36–37, 39a, 41–42, 44–56 | GATED 2026-08-28 | — | — | — |
 | trace | eligibility-assistant-SPEC-27–29, 31–32, 34–35, 39b, 40 | GATED 2026-08-28 | — | — | — |
 | lifecycle | eligibility-assistant-SPEC-58–62 | GATED 2026-08-28 | — | — | — |
-| retrieval-eval | eligibility-assistant-SPEC-63–66 | GATED 2026-08-28 | — | — | — |
+| retrieval-eval | eligibility-assistant-SPEC-63–66 | GATED 2026-08-28 | 1364 passed, 19 deselected, 1 xfailed (2026-08-30, `make test-docker` at branch cut off `main` @434342a; `.venv` 3.12 agrees) | — | — |
 
 ### Per-ticket delivery records
 
