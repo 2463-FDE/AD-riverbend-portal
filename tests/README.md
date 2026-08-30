@@ -41,7 +41,9 @@ the module under test by file path (see `conftest.py::load_module`).
   round trip, the SystemMessage rules, the post-egress guard/telemetry parity with
   `complete()` and the control-by-control enumeration of that twin — is in `test_llm_client.py`
   (`test_a1_binding_*`), and the never-stream guarantee
-  in `test_a1_trace.py`, which the `trace` ticket extends.
+  in `test_a1_trace.py`, which the `trace` ticket extends. The adapter that feeds both halves is
+  pinned total over a drifted 200 body in the same file
+  (`test_a1_adapt_total_over_non_dict_bodies`, `test_a1_call_types_shape_errors_outside_adapt`).
 - **Intake and HL7** — payload validation (`test_intake_schemas.py`), the route itself
   end to end (`test_intake_endpoint.py`), the two-sided payload declaration
   (`test_intake_payload_contract.py`, whose portal twin is

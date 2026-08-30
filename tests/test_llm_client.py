@@ -843,6 +843,57 @@ def test_a1_adapt_superset_keeps_text_only_shape():
     assert adapted.stop_reason is None
 
 
+# --- eligibility-assistant llm-seam: _adapt is TOTAL over a JSON body -------
+# Codex PR #94 round 1 (MAJOR, label C). `_adapt` is the first thing that
+# touches a Bedrock 200, ahead of BOTH guard halves, and it read the body with
+# `.get`: a root that is not a dict, a `content` that is not a list, or a block
+# that is not a dict raised AttributeError/TypeError out of `_call` — untyped,
+# so a caller mapping LLMError to a fallback (ai-assistant app.py's 502 branch)
+# misses it, and the twin-guard "typed failure" control did not hold for those
+# shapes on either half. The class is closed at the adapter, not per shape: any
+# JSON body now yields a valid namespace or LLMResponseError.
+
+
+def test_a1_adapt_total_over_non_dict_bodies(monkeypatch):
+    # Root shapes, which cannot ride _TWIN_CONTROL_CASES (every row there is a
+    # dict body). Both halves, one loop: the reference (complete) and the twin
+    # (SeamChatModel.invoke) share `_call`, so the adapter closes both.
+    phi = "member Jane Doe 123-45-6789"
+    model = agent_binding.SeamChatModel()
+    for body in (["Jane Doe 123-45-6789"], phi, 5, None):
+        _stub_runtime_returning(monkeypatch, body)
+        with pytest.raises(llm_mod.LLMResponseError) as excinfo:
+            llm_mod.complete("hello")
+        # Typed, request-id-only: the message names the SHAPE, never the bytes.
+        assert "Jane Doe" not in str(excinfo.value)
+        assert "123-45-6789" not in str(excinfo.value)
+        assert excinfo.value.request_id == "req_stub_ok"
+
+        _stub_runtime_returning(monkeypatch, body)
+        with pytest.raises(llm_mod.LLMResponseError) as excinfo:
+            model.invoke([HumanMessage(content="hi")])
+        assert "Jane Doe" not in str(excinfo.value)
+        assert "123-45-6789" not in str(excinfo.value)
+        assert excinfo.value.request_id == "req_stub_ok"
+
+
+def test_a1_call_types_shape_errors_outside_adapt(monkeypatch):
+    # The backstop. `_adapt` is total, but it is not the only line in `_call`'s
+    # try that reads a shape off the SDK's return value: `_BedrockMessages.create`
+    # also indexes `response["body"]` and `.get`s ResponseMetadata. A drifted
+    # envelope must stay inside ADR 0004's typed-failure guarantee too, so the
+    # malformed-body clause catches AttributeError/TypeError as well as
+    # ValueError/KeyError. Message names the exception class only.
+    body = SimpleNamespace(read=lambda: json.dumps({"content": []}).encode("utf-8"))
+    stub = SimpleNamespace(
+        invoke_model=lambda **kwargs: {"body": body, "ResponseMetadata": "Jane Doe"}
+    )
+    monkeypatch.setattr(llm_mod, "client", llm_mod._BedrockClient(stub))
+    with pytest.raises(llm_mod.LLMUnavailable) as excinfo:
+        llm_mod.complete("hello")
+    assert "Jane Doe" not in str(excinfo.value)
+
+
 # --- PHI safety ------------------------------------------------------------
 
 PHI_PROMPT = "Draft instructions for Jane Doe, SSN 123-45-6789, phone 555-867-5309"
@@ -1317,6 +1368,32 @@ _ENUM_TOOL_USE = {
 # An outcome is "raises" (LLMResponseError) or the answer text the half
 # returns — LLMResult.text for the reference, AIMessage.content for the twin.
 _TWIN_CONTROL_CASES = [
+    # Control 0, adapter totality (Codex PR #94 round 1, label C). `_adapt`
+    # reads every block with `.get`, so a non-dict block — or a `content` that
+    # is not a list — used to raise AttributeError/TypeError before either
+    # half's guard ran. Both halves must fail closed and TYPED on each shape;
+    # test_a1_adapt_total_over_non_dict_bodies covers the root shapes.
+    (
+        "content-block-null",
+        {"content": [None], "usage": _ENUM_USAGE},
+        "raises",
+        "raises",
+        None,
+    ),
+    (
+        "content-block-string",
+        {"content": ["member Jane Doe 123-45-6789"], "usage": _ENUM_USAGE},
+        "raises",
+        "raises",
+        None,
+    ),
+    (
+        "content-not-a-list",
+        {"content": 5, "usage": _ENUM_USAGE},
+        "raises",
+        "raises",
+        None,
+    ),
     # Control 1, usable answer required. The reference's `if not text` exists
     # so a malformed 200 cannot become a blank but "successful" completion
     # (Codex review, PR #5 round 4); each shape it rejects is rejected here.

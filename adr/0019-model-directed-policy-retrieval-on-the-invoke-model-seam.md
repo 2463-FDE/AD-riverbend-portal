@@ -123,9 +123,15 @@ by the ticket whose diff lands the mechanism, and a section not yet written is n
   `::test_a1_binding_twin_control_enumeration` pins the SET — one body corpus driven through both
   halves, each case declaring agreement or a named difference, the difference set asserted closed
   — so this is a second application of every ADR 0004 control, not a bypass of any.
-- **`_adapt` is a superset, not a rewrite.** Content blocks now carry `id` / `name` / `input` on
-  every block and the response carries `stop_reason`, all `None` when the body does not have them.
-  The text-only shape is byte-for-byte what it was.
+- **`_adapt` is a superset, not a rewrite, and TOTAL over a JSON body.** Content blocks now carry
+  `id` / `name` / `input` on every block and the response carries `stop_reason`, all `None` when
+  the body does not have them. The text-only shape is byte-for-byte what it was. `_adapt` runs
+  AHEAD of both post-egress guards and reads the body with `.get`, so a non-dict root, a non-list
+  `content` or a non-dict block used to leave `_call` as an `AttributeError`/`TypeError` — untyped,
+  before either guard, on both halves. Those three shapes now fail closed as `LLMResponseError`
+  naming the offending shape's class and the request id and nothing off the body, and `_call`'s
+  malformed-body clause catches `AttributeError`/`TypeError` as a backstop for the SDK envelope it
+  also reads. Absence is preserved as above; a type violation cannot be, which is why it raises.
 - **The binding cannot stream (SPEC-30).** `_stream` is deliberately unimplemented and raises.
   LangSmith's `hide_inputs` / `hide_outputs` redaction — the two-layer hide ADR 0006 relies on to
   keep trace payloads metadata-only — is bypassed on streamed payloads, so the guarantee is

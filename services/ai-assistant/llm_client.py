@@ -200,7 +200,38 @@ def _adapt(payload: Dict[str, Any], request_id: Optional[str]) -> SimpleNamespac
     malformed / schema-drifted 200 instead of emitting a blank completion with
     $0 telemetry that reads as a clean success (Codex review, PR #5 round 4).
     Bedrock always returns both in practice; their absence is a defect signal,
-    not a case to degrade past."""
+    not a case to degrade past.
+
+    TOTAL over any JSON body (Codex review, PR #94 round 1). This function is
+    the first thing that touches a 200 and it runs AHEAD of both post-egress
+    guards — _result_from_response and agent_binding._guarded_message — so a
+    shape it cannot read has to leave as a TYPED error, not as the
+    AttributeError/TypeError ``.get`` raises on a non-dict. A non-dict root, a
+    non-list ``content`` and a non-dict block are each a drifted 200 and are
+    rejected here. Absence is preserved (above); a TYPE violation cannot be,
+    which is why these three fail closed instead. The message names the
+    offending shape's CLASS and the request id — never a byte off the body.
+    """
+    if not isinstance(payload, dict):
+        raise LLMResponseError(
+            "malformed response body: root is %s (request_id=%s)"
+            % (type(payload).__name__, request_id),
+            request_id=request_id,
+        )
+    blocks = payload.get("content", []) or []
+    if not isinstance(blocks, list):
+        raise LLMResponseError(
+            "malformed response body: content is %s (request_id=%s)"
+            % (type(blocks).__name__, request_id),
+            request_id=request_id,
+        )
+    for index, block in enumerate(blocks):
+        if not isinstance(block, dict):
+            raise LLMResponseError(
+                "malformed content block %d: %s (request_id=%s)"
+                % (index, type(block).__name__, request_id),
+                request_id=request_id,
+            )
     content = [
         SimpleNamespace(
             type=block.get("type"),
@@ -213,7 +244,7 @@ def _adapt(payload: Dict[str, Any], request_id: Optional[str]) -> SimpleNamespac
             name=block.get("name"),
             input=block.get("input"),
         )
-        for block in payload.get("content", []) or []
+        for block in blocks
     ]
     usage = payload.get("usage")
     usage = usage if isinstance(usage, dict) else {}
@@ -566,11 +597,23 @@ def _call(
         raise LLMUnavailable(
             "connection error after retries (%s)" % type(exc).__name__
         ) from None
-    except (ValueError, KeyError) as exc:
+    except (ValueError, KeyError, AttributeError, TypeError) as exc:
         # A malformed/empty Bedrock 200 body (json.loads → ValueError, or a
         # missing "body" key). The anthropic SDK absorbed this internally; boto3
         # does not, so map it here to keep ADR 0004's Typed-failures guarantee.
         # Message names the exception type only — never the response bytes.
+        #
+        # AttributeError/TypeError are the BACKSTOP for the same class on the
+        # shapes `.get` and indexing raise on (Codex review, PR #94 round 1).
+        # `_adapt` is total, so the drifted bodies it sees never reach here —
+        # they arrive typed as LLMResponseError, which is an LLMError and passes
+        # through untouched. What this clause covers is the rest of the try: the
+        # SDK envelope `_BedrockMessages.create` reads (`response["body"]`,
+        # `.get("ResponseMetadata")`). The cost is that a genuine kwarg mismatch
+        # inside the try would surface as LLMUnavailable; the kwargs are fixed
+        # by `_call` against keyword-only parameters one function away, so that
+        # is a code-change-only failure, and typing every response-shape drift
+        # is the trade the ADR asks for.
         raise LLMUnavailable(
             "malformed upstream response (%s)" % type(exc).__name__
         ) from None
