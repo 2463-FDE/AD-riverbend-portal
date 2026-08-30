@@ -75,9 +75,55 @@ by the ticket whose diff lands the mechanism, and a section not yet written is n
   shows ai-assistant exited; the gateway's `/ai/*` proxies return their upstream-failure contract),
   never a turn that cites a partial set.
 
-### 2–6. Seam binding · bounded loop and outcome derivation · trace shape · lifecycle · retrieval record and eval
+### 2. Seam binding (`llm-seam`)
 
-Appended by `llm-seam`, `turn`, `trace`, `lifecycle` and `retrieval-eval` respectively, each as a
+- **The framework's only egress is `llm_client._call`.** `services/ai-assistant/agent_binding.py`
+  defines `SeamChatModel(BaseChatModel)`, whose `_generate` converts framework messages into the
+  Anthropic body and calls `_call`. The framework never constructs a provider client of its own,
+  so the four **pre-egress** controls that live on `_call` — the gross-size char cap, the
+  token/cost budget gate against the byte-based upper bound, the bearer fail-closed guard, and the
+  typed-error mapping — apply to the bytes an agent run actually emits. Tool definitions ride
+  `extra_body["tools"]`, which `_enforce_char_cap` and `max_input_tokens` both count, so the tool
+  surface is inside the budget gate rather than beside it. This is the eligibility-assistant-D-9
+  shape-(ii) reason: a Converse-style client would have been gated on a payload that is not the
+  egress payload.
+- **The system prompt is `_call`'s `system` argument.** Exactly one `SystemMessage`, and only as
+  the leading message, maps to `body["system"]` — the key `max_input_tokens` counts on its own
+  line. A `SystemMessage` elsewhere, more than one, or a non-`None` `stop` raises `ValueError`
+  before `_call`, with zero egress. Folding the system prompt into a `user` turn is exactly the
+  smuggling the separate byte line exists to prevent.
+- **A post-egress twin guard, not a bypass of ADR 0004.** `_call` returns before
+  `_result_from_response`, so the two post-egress controls ADR 0004 names (`:38-40`, `:57`) do not
+  come for free on this path: `_generate` applies them itself — fail closed on a malformed 200
+  (content present, explicit integer usage; errors carry the request id only) and emit the same
+  metadata-only `llm call model=… in_tokens=… out_tokens=… cost=… latency=… request_id=…` line.
+  The one deliberate difference is that a `tool_use` block satisfies the content check beside
+  `text`, because a tool-only turn is the agent path's valid answer — which is why
+  `_result_from_response`'s text-required guard could not simply be reused; it is untouched, and
+  `test_non_text_content_block_raises_through_adapter` still pins the rejection for `complete()`.
+  `tests/test_llm_client.py::test_a1_binding_guard_parity` pins the binding's log record and
+  `complete()`'s against one six-field pattern, so this is a second application of every ADR 0004
+  control, not a bypass of any.
+- **`_adapt` is a superset, not a rewrite.** Content blocks now carry `id` / `name` / `input` on
+  every block and the response carries `stop_reason`, all `None` when the body does not have them.
+  The text-only shape is byte-for-byte what it was.
+- **The binding cannot stream (SPEC-30).** `_stream` is deliberately unimplemented and raises.
+  LangSmith's `hide_inputs` / `hide_outputs` redaction — the two-layer hide ADR 0006 relies on to
+  keep trace payloads metadata-only — is bypassed on streamed payloads, so the guarantee is
+  structural rather than a policy line asking callers not to stream.
+  `tests/test_a1_trace.py::test_model_call_not_streamed` pins both halves: no
+  `invoke_model_with_response_stream` reference exists in the service, and `_stream` raises.
+- **This ticket lands dark.** `app.py` imports the binding so CI's keyless `services` smoke proves
+  it against the *service* requirements; no route calls it and no model call is made. The one new
+  log site is the twin guard's `llm call` line, metadata-only and unreached at runtime here.
+- **Not proven here:** the composition's live Bedrock leg under the pinned `langsmith==0.10.5`
+  (E-4 ran on `0.11.1`, E-5 measured the pins offline only); it is first exercised at SPEC-17 /
+  SPEC-32's opt-in runs in `turn` / `trace`. And SPEC-30 is proven for this service — the
+  gateway's own LangSmith client is `trace`'s row to state and prove.
+
+### 3–6. Bounded loop and outcome derivation · trace shape · lifecycle · retrieval record and eval
+
+Appended by `turn`, `trace`, `lifecycle` and `retrieval-eval` respectively, each as a
 change row of its own ticket plan, so that no decision a review round could reopen rests on a
 plan file that is deleted at merge (eligibility-assistant-D-42, note 2026-08-27).
 
@@ -121,6 +167,9 @@ plan file that is deleted at merge (eligibility-assistant-D-42, note 2026-08-27)
   87 documents, `index.json`), config `A1_RETRIEVAL_MAX_ROWS` (fresh-deploy default **5**, clamped
   ≥ 1), `.dockerignore` `**/.DS_Store`, the LangChain pins in both requirements files, and the
   lifespan hook in `app.py`. Nothing on the request path is wired: the tool lands dark.
+- New (`llm-seam`): `services/ai-assistant/agent_binding.py` (`SeamChatModel`), the `_adapt`
+  superset in `llm_client.py`, and the dark `import agent_binding` in `app.py`. Nothing on the
+  request path is wired: the binding lands dark.
 - Fixtures: `tests/fixtures/a1/` (harness jsonl verbatim, `case_selections.json`, seven
   `FIX-NEG-*` under `fix_neg/`) and the pinned module rig `tests/a1_corpus_rig.py`
   (eligibility-assistant-D-66).
@@ -128,7 +177,8 @@ plan file that is deleted at merge (eligibility-assistant-D-42, note 2026-08-27)
   negatives, approval gate, module-state non-publish, boot-fail hook), `tests/test_a1_retriever.py`
   (topic-only tool, extra-key rejection, in-process/read-only/no-network/capped, cap sizing, enum
   three-way equality, non-filtering `unconfirmed`, index coverage and row shape, case selections),
-  `tests/test_a1_conflict.py` (tier partition over all 87 rows, rank key).
+  `tests/test_a1_conflict.py` (tier partition over all 87 rows, rank key), and — from `llm-seam` —
+  `tests/test_llm_client.py::test_a1_binding_*` plus `tests/test_a1_trace.py`.
 - ADR 0006 and ADR 0011 carry an `Extended by ADR 0019` status note; their decisions are unchanged.
 - Harder from here: widening what the model may pass to the retriever, or adding a second
   manifest reader — both redden a pinned test and re-open the §1 approval of record
