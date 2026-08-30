@@ -103,13 +103,26 @@ by the ticket whose diff lands the mechanism, and a section not yet written is n
   The third check is what keeps the guarantee typed: without it a malformed `tool_use` block leaves
   the binding as a pydantic `ValidationError` — not an `LLMError`, and carrying the offending value
   in its message.
-  The one deliberate difference is that a `tool_use` block satisfies the content check beside
-  `text`, because a tool-only turn is the agent path's valid answer — which is why
-  `_result_from_response`'s text-required guard could not simply be reused; it is untouched, and
-  `test_non_text_content_block_raises_through_adapter` still pins the rejection for `complete()`.
-  `tests/test_llm_client.py::test_a1_binding_guard_parity` pins the binding's log record and
-  `complete()`'s against one six-field pattern, so this is a second application of every ADR 0004
-  control, not a bypass of any.
+  The twin is stated **control by control**, not as a count of checks: a control the reference
+  applies and the twin quietly lacks is a divergence on the estate's only vendor-egress path, and
+  "the two ADR 0004 checks" was the framing under which exactly that happened twice. The
+  enumeration lives in `_guarded_message`'s docstring — usable answer required, which text is the
+  answer, explicit integer usage, typed failure, request-id-only message, the metadata-only line,
+  the `model` fallback, and the twin-only field shapes — with **three** deliberate differences and
+  no undeclared ones:
+  (i) a `tool_use` block satisfies the usable-answer rule beside `text`, because a tool-only turn
+  is the agent path's valid answer — which is why `_result_from_response`'s text-required guard
+  could not simply be reused; it is untouched, and
+  `test_non_text_content_block_raises_through_adapter` still pins the rejection for `complete()`;
+  (ii) the twin joins every `text` block in response order where the reference answers with the
+  first and drops the rest, because the agent path can interleave text and `tool_use`;
+  (iii) the field-shape check above is twin-only and stricter, the reference never reading those
+  fields. Emptiness is **not** a difference: a text-only turn whose text is `""` fails closed here
+  exactly as the reference's `if not text` does. `tests/test_llm_client.py::test_a1_binding_guard
+  _parity` pins the binding's log record and `complete()`'s against one six-field pattern, and
+  `::test_a1_binding_twin_control_enumeration` pins the SET — one body corpus driven through both
+  halves, each case declaring agreement or a named difference, the difference set asserted closed
+  — so this is a second application of every ADR 0004 control, not a bypass of any.
 - **`_adapt` is a superset, not a rewrite.** Content blocks now carry `id` / `name` / `input` on
   every block and the response carries `stop_reason`, all `None` when the body does not have them.
   The text-only shape is byte-for-byte what it was.

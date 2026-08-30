@@ -593,7 +593,9 @@ def _result_from_response(response: Any, started: float) -> LLMResult:
     # function (a tool-only turn carries no text block and is a valid answer on
     # the agent path) and therefore carries a TWIN of this guard and of the
     # `llm call` line below. tests/test_llm_client.py::test_a1_binding_guard
-    # _parity pins the two equal; adr/0019 records why the split exists.
+    # _parity pins the two equal per field and ::test_a1_binding_twin_control
+    # _enumeration pins the SET (one body corpus through both halves, the
+    # deliberate differences declared); adr/0019 records why the split exists.
     # Messages carry the request id only — never the prompt or response bytes.
     if not text:
         raise LLMResponseError(

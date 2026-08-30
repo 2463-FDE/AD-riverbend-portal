@@ -1269,3 +1269,217 @@ def test_a1_binding_guard_parity(monkeypatch, caplog):
         assert "Jane Doe" not in record.getMessage()
         assert "123-45-6789" not in record.getMessage()
         assert SYSTEM_TEXT not in record.getMessage()
+
+
+# --- The twin guard's control ENUMERATION (adv review r2 f1) ---------------
+# test_a1_binding_guard_parity pins the two guards on the bodies it names.
+# This pins the SET. One corpus is driven through BOTH halves — llm_client's
+# _result_from_response via complete(), and agent_binding's twin via invoke()
+# — and every case declares whether the two agree or deliberately differ. The
+# differences are declared once, here. A control that silently stops matching
+# the reference (the empty-text-block gap adv review r2 f1 found) reddens as a
+# case whose declared outcome no longer holds; a deliberate difference that
+# disappears reddens on the closure assertion at the end.
+#
+# Not a control, so not in the corpus: _result_from_response assembles an
+# LLMResult carrying token counts, cost and latency. The twin deliberately
+# puts none of that on the AIMessage — spend is _call's pre-egress gate, never
+# a post-hoc count — and the same scalars reach its `llm call` line instead.
+
+# divergence id -> why the twin deliberately differs from the reference.
+_DECLARED_TWIN_DIVERGENCES = {
+    "tool-call-satisfies-content": (
+        "a tool-only turn is the agent path's valid answer, so a tool_use "
+        "block satisfies the usable-answer rule the reference spells "
+        "`if not text` (llm_client.py:598; gate r5 f1)"
+    ),
+    "all-text-blocks-joined": (
+        "the reference answers with the FIRST text block and drops the rest; "
+        "the agent path can interleave text and tool_use, so the twin joins "
+        "every text block in response order"
+    ),
+    "receive-half-field-shapes": (
+        "the twin reads id / name / input off a tool_use block and the "
+        "reference never touches them, so it fails closed on shapes the "
+        "reference has no opinion about (impl gate r1 f1)"
+    ),
+}
+
+_ENUM_USAGE = {"input_tokens": 10, "output_tokens": 5}
+_ENUM_TOOL_USE = {
+    "type": "tool_use",
+    "id": "toolu_e",
+    "name": "policy_lookup",
+    "input": {"topic": "eligibility-verification"},
+}
+
+# (name, invoke_model body, reference outcome, twin outcome, divergence id).
+# An outcome is "raises" (LLMResponseError) or the answer text the half
+# returns — LLMResult.text for the reference, AIMessage.content for the twin.
+_TWIN_CONTROL_CASES = [
+    # Control 1, usable answer required. The reference's `if not text` exists
+    # so a malformed 200 cannot become a blank but "successful" completion
+    # (Codex review, PR #5 round 4); each shape it rejects is rejected here.
+    ("no-content-key", {"usage": _ENUM_USAGE}, "raises", "raises", None),
+    ("empty-content-list", {"content": [], "usage": _ENUM_USAGE}, "raises", "raises", None),
+    (
+        "text-block-absent-text",
+        {"content": [{"type": "text"}], "usage": _ENUM_USAGE},
+        "raises",
+        "raises",
+        None,
+    ),
+    (
+        "text-block-empty-string",
+        {"content": [{"type": "text", "text": ""}], "usage": _ENUM_USAGE},
+        "raises",
+        "raises",
+        None,
+    ),
+    (
+        "every-text-block-empty",
+        {
+            "content": [{"type": "text", "text": ""}, {"type": "text", "text": ""}],
+            "usage": _ENUM_USAGE,
+        },
+        "raises",
+        "raises",
+        None,
+    ),
+    (
+        "unknown-block-type-only",
+        {"content": [{"type": "thinking", "text": "hm"}], "usage": _ENUM_USAGE},
+        "raises",
+        "raises",
+        None,
+    ),
+    # Control 2, explicit integer usage: absence signals a drifted 200, and a
+    # defaulted 0 would log a clean $0 call for a real vendor egress.
+    ("usage-absent", {"content": [{"type": "text", "text": "ok"}]}, "raises", "raises", None),
+    (
+        "usage-not-integer",
+        {
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {"input_tokens": "10", "output_tokens": 5},
+        },
+        "raises",
+        "raises",
+        None,
+    ),
+    # Controls 3-5 (typed failure, request-id-only message, metadata-only log
+    # line) are asserted per field by test_a1_binding_guard_parity; here they
+    # ride every "raises" row, which pins the TYPE across the whole corpus.
+    (
+        "tool-use-missing-name",
+        {
+            "content": [{"type": "tool_use", "id": "toolu_e", "input": {}}],
+            "usage": _ENUM_USAGE,
+        },
+        "raises",
+        "raises",
+        None,
+    ),
+    # Agreement on the happy paths, including a text turn that also asks for a
+    # tool: one text block, so joining and first-block agree.
+    (
+        "text-answer",
+        {"content": [{"type": "text", "text": "ok"}], "usage": _ENUM_USAGE},
+        "ok",
+        "ok",
+        None,
+    ),
+    (
+        "text-then-tool-use",
+        {
+            "content": [{"type": "text", "text": "Looking that up."}, _ENUM_TOOL_USE],
+            "usage": _ENUM_USAGE,
+        },
+        "Looking that up.",
+        "Looking that up.",
+        None,
+    ),
+    # The three declared divergences.
+    (
+        "tool-only-turn",
+        {"content": [_ENUM_TOOL_USE], "usage": _ENUM_USAGE},
+        "raises",
+        "",
+        "tool-call-satisfies-content",
+    ),
+    (
+        "empty-text-then-tool-use",
+        {
+            "content": [{"type": "text", "text": ""}, _ENUM_TOOL_USE],
+            "usage": _ENUM_USAGE,
+        },
+        "raises",
+        "",
+        "tool-call-satisfies-content",
+    ),
+    (
+        "two-text-blocks",
+        {
+            "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}],
+            "usage": _ENUM_USAGE,
+        },
+        "a",
+        "ab",
+        "all-text-blocks-joined",
+    ),
+    (
+        "text-plus-malformed-tool-use",
+        {
+            "content": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool_use",
+                    "id": "toolu_e",
+                    "name": "policy_lookup",
+                    "input": "member Jane Doe 123-45-6789",
+                },
+            ],
+            "usage": _ENUM_USAGE,
+        },
+        "ok",
+        "raises",
+        "receive-half-field-shapes",
+    ),
+]
+
+
+def test_a1_binding_twin_control_enumeration(monkeypatch):
+    # SPEC-24 / ADR 0004 :57 / ADR 0019 section 2. The twin is not "two checks
+    # plus a log line" but a stated decision on EVERY control the reference
+    # applies; this walks that decision table against both implementations.
+    assert agent_binding.llm_client is llm_mod
+    model = agent_binding.SeamChatModel()
+
+    exercised = set()
+    for name, body, reference, twin, divergence in _TWIN_CONTROL_CASES:
+        payload = dict(body, id="msg_enum")
+
+        _stub_runtime_returning(monkeypatch, payload)
+        if reference == "raises":
+            with pytest.raises(llm_mod.LLMResponseError):
+                llm_mod.complete("hello")
+        else:
+            assert llm_mod.complete("hello").text == reference, name
+
+        _stub_runtime_returning(monkeypatch, payload)
+        if twin == "raises":
+            with pytest.raises(llm_mod.LLMResponseError):
+                model.invoke([HumanMessage(content="hi")])
+        else:
+            assert model.invoke([HumanMessage(content="hi")]).content == twin, name
+
+        if divergence is None:
+            # Agreement is the default and the declaration must say so.
+            assert reference == twin, name
+        else:
+            assert reference != twin, name
+            assert divergence in _DECLARED_TWIN_DIVERGENCES, name
+            exercised.add(divergence)
+
+    # Closure both ways: every declared divergence is exercised by a case, and
+    # no case introduces an undeclared one (the branch above refuses those).
+    assert exercised == set(_DECLARED_TWIN_DIVERGENCES)

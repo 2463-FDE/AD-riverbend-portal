@@ -38,8 +38,9 @@ the module under test by file path (see `conftest.py::load_module`).
   topic-only retriever tool, index and cap (`test_a1_retriever.py`), the tier rule and rank key
   (`test_a1_conflict.py`); all three share the pinned module rig `a1_corpus_rig.py`. The agent
   binding on the `invoke_model` seam — fail-closed guards on the tool payload, the send/receive
-  round trip, the SystemMessage rules and the post-egress guard/telemetry parity with
-  `complete()` — is in `test_llm_client.py` (`test_a1_binding_*`), and the never-stream guarantee
+  round trip, the SystemMessage rules, the post-egress guard/telemetry parity with
+  `complete()` and the control-by-control enumeration of that twin — is in `test_llm_client.py`
+  (`test_a1_binding_*`), and the never-stream guarantee
   in `test_a1_trace.py`, which the `trace` ticket extends.
 - **Intake and HL7** — payload validation (`test_intake_schemas.py`), the route itself
   end to end (`test_intake_endpoint.py`), the two-sided payload declaration

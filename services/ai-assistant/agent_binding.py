@@ -8,13 +8,16 @@ fail-closed guard, and the typed-error mapping — apply to the bytes an agent r
 actually emits, tool definitions and tool results included. A Converse-style
 client would have been gated on a payload that is not the egress payload.
 
-`_call` does not reach `_result_from_response`, so the two POST-egress controls
+`_call` does not reach `_result_from_response`, so the POST-egress controls
 ADR 0004 names (`adr/0004:38-40`, `:57`) do not come for free here: this module
-carries a TWIN of them — the same fail-closed check on a malformed 200 and the
-same metadata-only `llm call` line — pinned equal to `complete()`'s by
-`tests/test_llm_client.py::test_a1_binding_guard_parity`. The twin admits a
-`tool_use`-only turn, which is a valid answer on the agent path and is exactly
-why `_result_from_response` (text-required) cannot simply be reused.
+carries a TWIN of that function — enumerated control by control in
+`_guarded_message`'s docstring, with THREE deliberate differences and no
+undeclared ones. `tests/test_llm_client.py::test_a1_binding_guard_parity` pins
+the per-field detail and `::test_a1_binding_twin_control_enumeration` pins the
+SET, by driving one body corpus through both halves; a control that silently
+stops matching the reference reddens there. The largest difference is that the
+twin admits a `tool_use`-only turn, which is a valid answer on the agent path
+and is exactly why `_result_from_response` (text-required) cannot be reused.
 
 `_stream` is deliberately unimplemented and raises (SPEC-30): LangSmith's
 `hide_inputs` / `hide_outputs` redaction, the two-layer hide ADR 0006 relies on
@@ -203,37 +206,80 @@ def _split_system(messages: Sequence[BaseMessage]) -> tuple:
     return None, list(messages)
 
 
+def _has_usable_answer(blocks: Sequence[Any]) -> bool:
+    """Control 1 of the reference, applied to THIS path's block set.
+
+    `_result_from_response` rejects a blank completion outright (`if not
+    text`, `llm_client.py:598`) so a malformed 200 cannot become a blank but
+    "successful" answer. Here a TOOL CALL is also a usable answer, so the rule
+    is conditional on the block set rather than a flat `if not content`: a
+    turn carrying a `tool_use` block needs no text, a turn without one must
+    carry non-empty text. Call only AFTER the shape loop — it reads `.text`
+    as a str."""
+    for block in blocks:
+        if getattr(block, "type", None) == "tool_use":
+            return True
+    return bool(
+        "".join(
+            block.text for block in blocks
+            if getattr(block, "type", None) == "text"
+        )
+    )
+
+
 def _guarded_message(response: Any, started: float) -> AIMessage:
-    """The post-egress twin of `_result_from_response`'s two controls.
+    """The post-egress twin of `_result_from_response`, control by control.
 
     `_call` returns the adapted response without applying them, because
     `_result_from_response` is `complete()`'s tail and this path does not go
-    through it. The checks are the ADR 0004 names (`:38-40`, `:57`) applied to
-    this path's response shape, with ONE deliberate difference: a `tool_use` block satisfies the
-    content check beside `text`, because a tool-only turn is the agent path's
-    valid answer. Everything else — fail closed on a malformed 200, require
-    explicit integer usage, carry only the request id on the error, emit the
-    same metadata-only `llm call` line — is identical, and
-    `test_a1_binding_guard_parity` pins the two equal.
+    through it. The twin is not "the two ADR 0004 checks": it is a stated
+    decision on EVERY control the reference applies, because a control the
+    reference has and the twin quietly lacks is a divergence on the estate's
+    only vendor-egress path. The enumeration, and the three deliberate
+    differences, are pinned by
+    `tests/test_llm_client.py::test_a1_binding_twin_control_enumeration`
+    (one body corpus through both halves) — `::test_a1_binding_guard_parity`
+    pins the per-field detail.
 
-    THREE controls, not two: the receive half reads more fields off the
-    response than `_result_from_response` does (`id` / `name` / `input` on a
-    `tool_use` block, which `_adapt` defaults to `None` when the body omits
-    them), so their shapes are checked here as well. Without that check a
-    malformed 200 leaves this function as a pydantic `ValidationError` raised
-    inside `_message_from_response` — untyped, so a caller mapping `LLMError`
-    to a fallback misses it, and payload-bearing, because pydantic embeds the
-    offending value in its message."""
+    1. **A usable answer is required** (`_has_usable_answer`). Same rule,
+       widened block set: a `tool_use` block is a usable answer here, so a
+       tool-only turn passes where `complete()` raises. DIFFERENCE
+       `tool-call-satisfies-content`. Emptiness itself is NOT a difference —
+       a text-only turn whose text is `""` fails closed exactly as the
+       reference's `if not text` does (adv review r2 f1).
+    2. **Which text is the answer.** The reference answers with the FIRST
+       `text` block and drops the rest; the agent path can interleave text
+       and `tool_use`, so the twin joins every `text` block in response
+       order. DIFFERENCE `all-text-blocks-joined`.
+    3. **Explicit integer usage.** Identical — absence signals a drifted 200,
+       and defaulting to 0 would log a clean $0 call for a real egress.
+    4. **Typed failure.** Identical: `LLMResponseError(request_id=...)`, so a
+       caller mapping `LLMError` to a fallback catches every rejection here.
+    5. **The error message carries the request id and no response bytes.**
+       Identical; the twin adds the offending FIELD name, a fixed vocabulary
+       of six literals, never the value the field carried.
+    6. **The metadata-only `llm call` line.** Identical — the same six fields
+       in the `llm_client.py:607` format, the same `estimate_cost`, latency
+       from `time.monotonic()` before `_call`; one regex pins both callers'
+       records in the parity test.
+    7. **`model` falls back to `settings.bedrock_model_id`.** Identical.
+    8. **Receive-half field shapes** (`id` / `name` str, `input` dict on a
+       `tool_use` block, `text` str on a text block). TWIN-ONLY, and stricter:
+       the reference never reads those fields, while `_adapt`'s superset
+       defaults them to `None` when the body omits them. Without this check a
+       malformed 200 leaves as a pydantic `ValidationError` — untyped, so
+       control 4 is lost, and payload-bearing, because pydantic embeds the
+       offending value in its message. DIFFERENCE `receive-half-field-shapes`
+       (impl gate r1 f1).
+
+    `LLMResult` assembly is not a control and has no twin: the `AIMessage`
+    carries no usage, because spend is `_call`'s pre-egress gate rather than
+    a post-hoc count. The same scalars reach control 6's line instead."""
     request_id = getattr(response, "id", None)
     blocks = getattr(response, "content", []) or []
-    if not any(getattr(block, "type", None) in ("text", "tool_use") for block in blocks):
-        raise llm_client.LLMResponseError(
-            "no text or tool_use block in response (request_id=%s)" % request_id,
-            request_id=request_id,
-        )
     for block in blocks:
-        # Field names only in the message — a fixed vocabulary, never the
-        # response bytes the field carries.
+        # Control 8. Field names only in the message — a fixed vocabulary,
+        # never the response bytes the field carries.
         block_type = getattr(block, "type", None)
         if block_type == "text":
             fields = (("text", str),)
@@ -248,15 +294,24 @@ def _guarded_message(response: Any, started: float) -> AIMessage:
                     % (block_type, field, request_id),
                     request_id=request_id,
                 )
+    if not _has_usable_answer(blocks):
+        # Control 1.
+        raise llm_client.LLMResponseError(
+            "no usable text or tool_use block in response (request_id=%s)"
+            % request_id,
+            request_id=request_id,
+        )
     usage = getattr(response, "usage", None)
     input_tokens = getattr(usage, "input_tokens", None)
     output_tokens = getattr(usage, "output_tokens", None)
     if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
+        # Control 3.
         raise llm_client.LLMResponseError(
             "response missing token usage (request_id=%s)" % request_id,
             request_id=request_id,
         )
-    # Metadata only — never a message, a tool argument or a completion.
+    # Control 6. Metadata only — never a message, a tool argument or a
+    # completion.
     log.info(
         "llm call model=%s in_tokens=%d out_tokens=%d cost=$%.4f latency=%.2fs request_id=%s",
         getattr(response, "model", settings.bedrock_model_id),
