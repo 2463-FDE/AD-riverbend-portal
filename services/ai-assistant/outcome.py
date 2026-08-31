@@ -198,6 +198,38 @@ def applicability_mismatch(rows, *, product: str, state: str) -> bool:
     return False
 
 
+# The outcomes that may render an EMPTY citation list (SPEC-4 / REQ-2′, the client
+# amendment 1 rule "Required citation on every non-refusal"). Every other outcome is
+# an answer, and an answer with no source is the shape the requirement forbids —
+# `_validated_selection` floors it at one of the turn's own retrieved rows.
+NO_CITATION_OUTCOMES = (
+    Outcome.refuse,
+    Outcome.refuse_definitive,
+    Outcome.stop,
+    Outcome.care_first,
+)
+
+
+def model_reachable_outcomes(verdict, rows, *, product: str, state: str) -> tuple:
+    """Every outcome ``agent_outcome`` can still conclude for this turn.
+
+    The same precedence read from BEFORE model₂ chooses, which is when the injected
+    message has to name the vocabulary it may choose from. Arm 1 is code-keyed and
+    absolute — a verdict-less turn whose retrieved set cannot support a definitive
+    answer refuses whatever the model selects — so that shape reaches model₂ as a
+    single outcome. Otherwise the model's own bounded choice keys `conflict` or
+    `reverify`, and anything else falls to the payer-derived outcome.
+
+    This is the one derivation `_build_model2_message` advertises from, so the ids
+    model₂ is shown and the ids `_validated_selection` accepts cannot drift apart
+    (adv review round 2 f1). Held equal by
+    ``tests/test_a1_agent_turn.py::test_model2_message_advertises_the_vocabulary_the_validator_accepts``.
+    """
+    if verdict is None and applicability_mismatch(rows, product=product, state=state):
+        return (Outcome.refuse_definitive,)
+    return (Outcome.conflict, Outcome.reverify, payer_outcome(verdict))
+
+
 def agent_outcome(decision, rows, verdict, *, product: str, state: str):
     """What an agent-path turn concluded (eligibility-assistant-D-38), or None
     when the selection is invalid for the outcome it keys (a `state_conflict`

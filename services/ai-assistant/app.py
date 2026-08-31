@@ -685,17 +685,31 @@ def _build_model1_prompt(req: VisitChatRequest, intent: VisitIntent, turn_count:
     )
 
 
-def _build_model2_message(status: str, rows, req: VisitChatRequest) -> str:
+def _build_model2_message(status: str, verdict, rows, req: VisitChatRequest) -> str:
     """Model₂'s injected payload: the status, the row keys, and the catalog ids.
 
     Same closure as model₁'s. The rows themselves already reached the model as the
     tool RESULT — the framework put them there — so what this adds is the eligibility
     status model₂ is entitled to see (SPEC-50/53) and the closed id vocabulary its
-    answer must come from. No clerk text, no member id, no identifier.
+    answer must come from. No clerk text, no member id, no identifier: `verdict` is
+    the payer's own result dict, read for the OUTCOMES it makes reachable and never
+    rendered into the message (`status`, the word model₂ sees, is the middleware's
+    already-normalised SPEC-53 label).
+
+    The vocabulary is derived from `outcome.model_reachable_outcomes` — the same
+    precedence `_validated_selection` re-derives after the choice — so what model₂ is
+    shown and what it may have chosen cannot drift apart (adv review round 2 f1).
     """
-    concluded = outcome.payer_outcome({"status": status} if status else None)
     allowed = sorted(
-        visit_templates.a1_allowed_selection(concluded.value, req.question_type.value)
+        visit_templates.a1_model_vocabulary(
+            [
+                concluded.value
+                for concluded in outcome.model_reachable_outcomes(
+                    verdict, rows, product=req.product.value, state=req.state.value
+                )
+            ],
+            req.question_type.value,
+        )
     )
     return (
         f"Eligibility status from the payer for this turn: {status or 'no result'}\n"
@@ -725,6 +739,12 @@ def _validated_selection(decision, rows, req: VisitChatRequest, concluded) -> tu
         alone is not enough, because a real id can be the wrong thing to say for THIS
         outcome.
 
+    And one floor, which containment alone does not give: an outcome that is not one
+    of the four refusals must cite at least ONE row (SPEC-4 / REQ-2′, "Required
+    citation on every non-refusal"). Both containments above hold vacuously for an
+    empty citation set, which is how a model₂ decision citing nothing rendered a 200
+    coverage answer with no Sources block (impl gate round 2 f1).
+
     Anything else discards the WHOLE selection — the turn takes the fallback with
     reason `validation_reject`. Log lines carry counts and indexes only: an invalid
     "id" is model free text and must never reach a log record.
@@ -735,11 +755,13 @@ def _validated_selection(decision, rows, req: VisitChatRequest, concluded) -> tu
     allowed = visit_templates.a1_allowed_selection(concluded.value, req.question_type.value)
     stray_actions = [i for i, key in enumerate(decision.action_ids) if key not in allowed]
     missing = len(required - set(decision.action_ids))
-    if stray_citations or stray_actions or missing:
+    uncited = not decision.citation_ids and concluded not in outcome.NO_CITATION_OUTCOMES
+    if stray_citations or stray_actions or missing or uncited:
         log.warning(
             "visit-chat decision gate: %d/%d citation ids outside the turn's "
             "retrieved set (indexes=%s), %d/%d action ids unjustified by the outcome "
-            "(indexes=%s), %d required ids missing; taking the deterministic fallback",
+            "(indexes=%s), %d required ids missing, uncited non-refusal=%s; taking "
+            "the deterministic fallback",
             len(stray_citations),
             len(decision.citation_ids),
             stray_citations,
@@ -747,6 +769,7 @@ def _validated_selection(decision, rows, req: VisitChatRequest, concluded) -> tu
             len(decision.action_ids),
             stray_actions,
             missing,
+            uncited,
         )
         return None
     return decision.citation_ids, decision.action_ids
@@ -1057,7 +1080,9 @@ def visit_chat(req: VisitChatRequest, request: Request):
         product=req.product.value,
         state=req.state.value,
         model1_message=_build_model1_prompt(req, intent, len(req.turns)),
-        model2_message=lambda status, rows: _build_model2_message(status, rows, req),
+        model2_message=lambda status, verdict, rows: _build_model2_message(
+            status, verdict, rows, req
+        ),
         payer_gate=payer_gate,
     )
 

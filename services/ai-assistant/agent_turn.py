@@ -142,6 +142,11 @@ class TurnMiddleware(AgentMiddleware):
         super().__init__()
         self.turn_state = turn_state
         self.payer_gate = payer_gate
+        # ``(status, verdict, rows) -> str``. The verdict rides beside the already
+        # normalised status word because the injected message derives model₂'s
+        # action-id vocabulary from the outcomes the turn can still conclude, and
+        # arm 1 of that derivation keys on the ABSENCE of a verdict, which no status
+        # string distinguishes from an empty one (adv review round 2 f1).
         self._model2_message = model2_message
 
     def before_model(self, state, runtime=None):  # noqa: ARG002 - framework signature
@@ -170,7 +175,7 @@ class TurnMiddleware(AgentMiddleware):
                 "messages": [
                     HumanMessage(
                         content=self._model2_message(
-                            self.turn_state.status, self.turn_state.rows
+                            self.turn_state.status, status_verdict, self.turn_state.rows
                         )
                     )
                 ]

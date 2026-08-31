@@ -317,3 +317,60 @@ def test_mode_health_egress_independent(monkeypatch):
     triples = set(observed.values())
     assert len({(m, a) for m, a, _ in triples if m == "fallback"}) == 2
     assert len({(a, e) for _, a, e in triples}) >= 3
+
+
+def test_a_non_refusal_selection_with_no_citation_is_rejected(monkeypatch):
+    """SPEC-4 / REQ-2′ — "Required citation on every non-refusal".
+
+    Both of `_validated_selection`'s containments are satisfied by the EMPTY citation
+    set, so a model₂ decision of `{"citation_ids": [], "action_ids":
+    ["note_coverage_result"]}` over an `active` payer verdict rendered a 200 coverage
+    answer with no Sources block at all (impl gate round 2 f1 — reproduced live
+    against this rig). Containment is not the whole rule: an outcome that is not one
+    of the four refusals must cite at least one of the turn's OWN retrieved rows, and
+    a selection that cites nothing is rejected whole like any other invalid one — the
+    turn takes the deterministic fallback, which cites `DOC-SYN-NO-INVENTION`.
+    """
+    assert_pinned()
+    case = "EVAL-001"
+    install_model(
+        monkeypatch,
+        tool_use_body("policy_lookup", {"topic": topic(case)}),
+        _decision([], ["note_coverage_result"]),
+    )
+    install_payer(monkeypatch, verdict("active", payer="Medicare"))
+
+    body = post(turn(case, facts={"insurance_id": MEMBER_ID})).json()
+
+    assert body["reason"] == outcome.Reason.validation_reject.value
+    assert body["mode"] == outcome.Mode.fallback.value
+    assert [c["document_id"] for c in body["citations"]] == ["DOC-SYN-NO-INVENTION"]
+
+
+def test_every_non_refusal_outcome_renders_a_citation(monkeypatch):
+    """SPEC-4 / REQ-2′, the invariant itself rather than one instance of it.
+
+    The four refusal outcomes are the only ones allowed an empty `citations` list.
+    Asserted over the answer arms a model₂ selection can key on a single retrieved
+    corpus — an id set of one is enough for every arm but `conflict`, which SPEC-42
+    already floors at two.
+    """
+    assert_pinned()
+    case = "EVAL-001"
+    cited = retrieved_ids(case)[0]
+    for status, actions in (
+        ("active", ["note_coverage_result"]),
+        ("inactive", ["verify_card_details", "self_pay_options"]),
+        ("pending", ["retry_shortly", "proceed_per_policy", "escalate"]),
+    ):
+        install_model(
+            monkeypatch,
+            tool_use_body("policy_lookup", {"topic": topic(case)}),
+            _decision([cited], actions),
+        )
+        install_payer(monkeypatch, verdict(status, payer="Medicare"))
+
+        body = post(turn(case, facts={"insurance_id": MEMBER_ID})).json()
+
+        assert body["outcome"] not in ("refuse", "refuse_definitive", "stop", "care_first")
+        assert body["citations"], f"{status} answered with no citation"

@@ -385,6 +385,23 @@ def a1_allowed_selection(a1_status: str, question_type: str = "") -> set:
     return required | set(OPTIONAL_IDS) | set(_A1_OPTIONAL)
 
 
+def a1_model_vocabulary(a1_statuses, question_type: str = "") -> set:
+    """The action ids model₂ may be OFFERED on a turn that can still conclude any of
+    ``a1_statuses`` (``outcome.model_reachable_outcomes``).
+
+    ``a1_allowed_selection`` is keyed on the outcome a selection CONCLUDED, which is
+    only knowable after model₂ has chosen; this is the same permission seen from
+    before the choice, and it is what the injected message advertises. Narrower and
+    an outcome is unreachable — a model obeying "only these" can never select the id
+    that keys it. Wider and the message spends the eligibility-assistant-D-64 reserve
+    describing a selection the validator will reject whatever the model does.
+    """
+    vocabulary: set = set()
+    for a1_status in a1_statuses:
+        vocabulary |= a1_allowed_selection(a1_status, question_type)
+    return vocabulary
+
+
 def a1_verdict_line(status: str, a1_status: str, verdict: dict = None) -> str:
     """The authoritative sentence for an eligibility-assistant turn.
 

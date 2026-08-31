@@ -95,7 +95,12 @@ class _Recorder(list):
 # fake is a scripted BEDROCK client, and the whole pre-egress stack (`_enforce_char
 # _cap`, `_enforce_budget`, `_require_bearer_token`) stays live in front of it. What
 # a test controls is what the model ANSWERS, exactly as before.
-A1_DEFAULT_TOPIC = "eligibility-verification"
+# The topic model₁ "chooses" for every turn in this file. `eligibility-verification`
+# retrieves NOTHING for the neutral selections below (payer `aetna`), so every
+# agent-path turn here reached model₂ with an empty citation vocabulary and answered
+# uncited — which the SPEC-4 / REQ-2′ floor now rejects. The subject is unchanged;
+# the topic is the one the corpus actually files it under for these axes.
+A1_DEFAULT_TOPIC = "verification-and-reverification"
 
 
 def _tool_use_body(topic):

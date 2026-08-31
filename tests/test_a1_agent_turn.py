@@ -10,6 +10,7 @@ framework's own run — that is what SPEC-21 asserts and what
 Every test opens with the rig's identity assertions (eligibility-assistant-D-66).
 """
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +19,7 @@ from a1_rig import (
     assert_pinned,
     install_model,
     install_payer,
+    policy_index,
     post,
     retrieved_ids,
     text_body,
@@ -317,3 +319,91 @@ def test_model2_message_names_the_retrieved_ids(monkeypatch):
     assert "(none retrieved)" not in citable
     for document_id in retrieved_ids(case):
         assert f"- {document_id}" in citable
+
+
+# The model₂ vocabulary guard (adv review round 2 f1, the injected-vocabulary class).
+# The two halves of one seam: `_build_model2_message` advertises what model₂ may
+# choose, `_validated_selection` decides what it may have chosen. Nothing but review
+# held them equal, and they had drifted in BOTH directions — `state_conflict` was
+# never advertised though the validator accepts it, and `retry_shortly` /
+# `proceed_per_policy` were advertised on verdict-less turns the applicability arm
+# forces to `refuse_definitive`, where the validator rejects them. This guard reads
+# the advertised block out of the builder and checks it against the validator's own
+# functions, so a change to either side that opens a gap reddens here.
+_VOCABULARY_SHAPES = (
+    ("active", {"status": "active", "payer": "Medicare"}),
+    ("inactive", {"status": "inactive", "payer": "Aetna"}),
+    ("pending", {"status": "pending", "payer": "Aetna"}),
+    # SPEC-53: a degraded verdict reaches model₂ as the outage word, never as a
+    # status the payer said — the shape `agent_turn.TurnMiddleware` normalises.
+    ("unavailable", {"status": "unavailable"}),
+    ("", None),
+)
+
+
+def _advertised_action_ids(message: str) -> list:
+    """The `Action ids you may choose from` block of the model₂ message, as ids."""
+    head = "Action ids you may choose from (only these):"
+    tail = "Reply with the JSON object"
+    block = message[message.index(head) + len(head) : message.index(tail)]
+    return [line[2:] for line in block.strip().splitlines() if line.startswith("- ")]
+
+
+@pytest.mark.parametrize("rows_case", ["retrieved", "empty"])
+@pytest.mark.parametrize("status,payer_verdict", _VOCABULARY_SHAPES)
+def test_model2_message_advertises_the_vocabulary_the_validator_accepts(
+    status, payer_verdict, rows_case
+):
+    """SPEC-2 / SPEC-42 — the injected action-id block is neither narrower nor wider
+    than what `_validated_selection` will accept for this turn.
+
+    Two directions, both checked over every clerk question type:
+
+      * NARROW — for every outcome model₂'s own bounded choice can still key from
+        this turn, the ids that outcome REQUIRES are in the block. An outcome whose
+        required ids were never shown is unreachable by a model obeying the prompt's
+        "taken only from the ids you were given": that is exactly how the
+        model-chosen `conflict` path of SPEC-42 became reachable through the rig
+        alone, `state_conflict` being required by `conflict` and advertised by
+        nothing.
+      * WIDE — every advertised id is accepted by at least one of those outcomes. An
+        id shown but rejectable whatever the model does spends the eligibility-
+        assistant-D-64 reserve to describe a selection that always falls back.
+    """
+    assert_pinned()
+    from a1_rig import app_mod
+
+    visit_templates = app_mod.visit_templates
+    rows = (
+        []
+        if rows_case == "empty"
+        else [SimpleNamespace(id=key) for key in retrieved_ids("EVAL-001")]
+    )
+    for question_type in policy_index.QUESTION_TYPES:
+        req = app_mod.VisitChatRequest.model_validate(
+            turn("EVAL-001", question_type=question_type)
+        )
+        reachable = app_mod.outcome.model_reachable_outcomes(
+            payer_verdict, rows, product=req.product.value, state=req.state.value
+        )
+        advertised = set(
+            _advertised_action_ids(
+                app_mod._build_model2_message(status, payer_verdict, rows, req)
+            )
+        )
+        for concluded in reachable:
+            required = set(
+                visit_templates.a1_default_selection(concluded.value, question_type)
+            )
+            assert required <= advertised, (
+                f"{concluded.value} requires {sorted(required - advertised)}, which "
+                f"model₂ was never shown ({status or 'no result'}/{question_type})"
+            )
+        for key in advertised:
+            assert any(
+                key in visit_templates.a1_allowed_selection(concluded.value, question_type)
+                for concluded in reachable
+            ), (
+                f"`{key}` is advertised but accepted by none of "
+                f"{[c.value for c in reachable]} ({status or 'no result'}/{question_type})"
+            )

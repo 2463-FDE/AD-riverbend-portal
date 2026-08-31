@@ -328,7 +328,13 @@ def test_the_prompt_is_exactly_the_deterministic_build(rig):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     rows = ai_app.agent_turn._rows_from_tool_result(block.get("content"))
-    expected_model2 = ai_app._build_model2_message("active", rows, req)
+    # The verdict the rig's payer fake produced, as `payer_outcome` reads it — the
+    # builder takes it beside the status word to derive model₂'s action vocabulary
+    # from the outcomes still reachable (adv review round 2 f1); only `status` and
+    # `payer` are read from it, and neither is rendered into the message.
+    expected_model2 = ai_app._build_model2_message(
+        "active", {"status": "active", "payer": "edi.example.com"}, rows, req
+    )
     assert expected_model2 in _texts(rig.prompts[1])
 
 
