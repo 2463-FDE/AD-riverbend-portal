@@ -247,10 +247,12 @@ checked: eligibility-assistant-SPEC-1–6, 12–23, 25–26, 33, 36–37, 39a, 4
 
 ## Delivery
 
-Status: delivery DRAFT 2026-08-31 (stage 4 complete pending the items below; `plan GATED` stands)
+Status: delivery DRAFT 2026-08-31 (stage 4 complete; owner calls ratified 2026-08-31 — eligibility-assistant-D-84/D-85; `plan GATED` stands)
 
-**Open owner calls (three, none silently resolved — each implemented to the frozen spec/Appendix
-with the divergence recorded here for ratification or reversal):**
+**Owner calls (three) — RESOLVED: all three ratified by the owner 2026-08-31 (in session),
+recorded as eligibility-assistant-D-84 (call 1) and eligibility-assistant-D-85 (calls 2–3) in the
+decision register. Each was implemented to the frozen spec/Appendix; the texts below stand as the
+record of what was ratified:**
 
 1. **A fourth retained-test move beyond eligibility-assistant-D-73's three.** The frozen
    eligibility-assistant-D-26 (owner-amended at spec review: `spend_stop` persists the payer verdict
@@ -274,11 +276,11 @@ with the divergence recorded here for ratification or reversal):**
    D-38's "valid only with ≥ 2 citation ids" makes the case unreachable. Implemented: valid with
    ≥ 2 citations, or the turn's WHOLE retrieved set when fewer than two rows exist. Same D-38 note.
 
-**One planned slice absent from the diff:** `.env.example` (the two non-secret template values
-`A1_RETRIEVAL_MAX_ROWS=5`, `A1_MODEL_FIXTURE=false`). This session's permission settings deny the
-path for read AND write (the authoring session hit the same wall; its caveat said the impl session
-would read it first — it cannot). Lands by owner hand or a granted permission; nothing else in the
-change list depended on it (`config.py` defaults carry both values).
+**The `.env.example` slice — LANDED 2026-08-31 after the owner granted access** (the tracked
+`Read(./.env*)` deny in `.claude/settings.json` stays as-is — it guards the secret env files; the
+grant was per-action, the file read via `git show HEAD:.env.example` first per the authoring
+caveat): `A1_RETRIEVAL_MAX_ROWS=5` and `A1_MODEL_FIXTURE=false` under a new ADR 0019 block after
+the visit-chat section, template only, no secret, with the fail-visible rationale in the comment.
 
 **Deviations (plan-fact unless marked; no mechanism moved beyond the three owner calls above):**
 
@@ -356,5 +358,5 @@ the ids, not a function name). SPEC-37's cmd reads **32** distinct ids (verifica
 - `make eval` not re-run: verification 19's `eval/` and `db/` legs are empty by design.
 
 **Residuals — registry IDs only:** `docs/todo.md` TODO-70, TODO-71 (filed on this PR); Landmines
-residuals (a)–(j) stand as written; D13 stays OPEN (`docs/debt-log.md`); the three owner calls and
-the `.env.example` slice above are open items of this Delivery, not residuals.
+residuals (a)–(j) stand as written; D13 stays OPEN (`docs/debt-log.md`); no open items remain — the three owner
+calls are ratified (eligibility-assistant-D-84/D-85) and the `.env.example` slice is landed.
