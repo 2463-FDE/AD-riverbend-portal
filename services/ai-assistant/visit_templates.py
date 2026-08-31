@@ -311,8 +311,11 @@ def allowed_selection(status: str) -> set[str]:
 _A1_REQUIRED: dict = {
     "active": ("note_coverage_result",),
     "inactive": ("verify_card_details", "self_pay_options"),
-    "unknown": ("escalate",),
-    "unavailable": ("escalate",),
+    # The unconfirmed advice is RETAINED beside the Appendix's `escalate`: "retry and
+    # follow policy, never uninsured" is what a failed check has always required of
+    # the clerk, and the routing the Appendix adds does not replace it.
+    "unknown": ("retry_shortly", "proceed_per_policy", "escalate"),
+    "unavailable": ("retry_shortly", "proceed_per_policy", "escalate"),
     "reverify": ("reverify",),
     "conflict": ("state_conflict", "escalate"),
     "refuse_definitive": ("escalate",),
@@ -380,3 +383,21 @@ def a1_allowed_selection(a1_status: str, question_type: str = "") -> set:
     if a1_status in _A1_NO_FREEDOM:
         return required
     return required | set(OPTIONAL_IDS) | set(_A1_OPTIONAL)
+
+
+def a1_verdict_line(status: str, a1_status: str, verdict: dict = None) -> str:
+    """The authoritative sentence for an eligibility-assistant turn.
+
+    Keyed on the PAYER STATUS wherever the turn has one, so the sentence a clerk
+    reads for an active, inactive, unknown or pending check is the one this service
+    has always produced — the ADR 0011 §5 rule and every property `verdict_line`'s
+    docstring states carry over unchanged.
+
+    The outcome only takes over when the turn has no payer status to speak from: the
+    two gates, the four fallbacks, a conflict, an insufficient-evidence refusal, and
+    the `unavailable` outage SPEC-53 names. Those are turns where "coverage is …"
+    would be a claim about a check that did not happen.
+    """
+    if a1_status in A1_OUTCOME_STATUSES:
+        return _VERDICT_LINES[a1_status]
+    return verdict_line(status, verdict)

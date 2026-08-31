@@ -73,11 +73,25 @@ class PayerGate:
     gate), never of model output or of what the free text asked for (SPEC-19).
     """
 
-    def __init__(self, insurance_id: Optional[str], eligible: bool) -> None:
+    def __init__(
+        self,
+        insurance_id: Optional[str],
+        eligible: bool,
+        remembered: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self._insurance_id = insurance_id
         self._eligible = eligible and bool(insurance_id)
         self.called = False
         self.verdict: Optional[Dict[str, Any]] = None
+        # What the VISIT already knows. A turn that does not buy a lookup is still
+        # entitled to answer from it — that is what `last_eligibility` is for — and so
+        # is model₂, which SPEC-50 says receives the payer status for the turn.
+        self.remembered = remembered
+
+    @property
+    def status_verdict(self) -> Optional[Dict[str, Any]]:
+        """The verdict this turn speaks from: the fresh one, else the visit's."""
+        return self.verdict if self.called else self.remembered
 
     def run(self) -> Optional[Dict[str, Any]]:
         """Call the payer at most once. A second call returns the first answer."""
@@ -135,8 +149,8 @@ class TurnMiddleware(AgentMiddleware):
             self.turn_state.bound_out(outcome.Reason.validation_reject.value)
             return {"jump_to": "end"}
         if self.turn_state.model_calls == 1:
-            verdict = self.payer_gate.run()
-            self.turn_state.status = (verdict or {}).get("status") or ""
+            self.payer_gate.run()
+            self.turn_state.status = (self.payer_gate.status_verdict or {}).get("status") or ""
             return {
                 "messages": [
                     HumanMessage(

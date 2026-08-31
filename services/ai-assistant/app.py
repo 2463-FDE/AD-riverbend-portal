@@ -1013,6 +1013,7 @@ def _deterministic_turn(
     degraded: bool = False,
     llm_egress: bool = False,
     model_calls: int = 0,
+    checked: bool = False,
 ) -> VisitChatResponse:
     """The reply for a turn no model output may reach (SPEC-3).
 
@@ -1039,8 +1040,15 @@ def _deterministic_turn(
     action_ids = visit_templates.a1_default_selection(
         concluded.value, req.question_type.value
     )
+    # SPEC-52: a fallback renders the payer result IF one was obtained — no LLM
+    # failure of any kind discards a coverage verdict this turn already paid for.
+    # `spend_stop` is the one exception (eligibility-assistant-D-26): the verdict is
+    # persisted in facts and deliberately not rendered, because restating a coverage
+    # answer beside a stop would claim the turn finished.
+    rendered_verdict = None if concluded is outcome.Outcome.stop else verdict
+    status = (rendered_verdict or {}).get("status") or concluded.value
     reply = "\n".join(
-        [visit_templates.verdict_line(concluded.value)]
+        [visit_templates.a1_verdict_line(status, concluded.value, rendered_verdict)]
         + [f"- {item}" for item in visit_templates.render(action_ids)]
     )
     mode = outcome.mode_of(gate_mode, reason, fixture=settings.a1_model_fixture)
@@ -1049,8 +1057,9 @@ def _deterministic_turn(
         json.dumps(
             visit_chat_log_metadata(
                 intent,
-                concluded.value,
+                status,
                 len(req.turns),
+                checked=checked,
                 mode=mode.value,
                 reason=reason.value,
                 outcome=concluded.value,
@@ -1062,9 +1071,9 @@ def _deterministic_turn(
     return VisitChatResponse(
         reply=reply,
         intent=intent,
-        status=concluded.value,
+        status=status,
         facts=facts,
-        eligibility=None,
+        eligibility=rendered_verdict,
         disclaimer=_VISIT_DISCLAIMER,
         # Spend: False on a gate, which crossed nothing; on a fallback it is whatever
         # the agent step already spent, so the gateway refunds only what it should.
@@ -1153,6 +1162,7 @@ def visit_chat(req: VisitChatRequest, request: Request):
     payer_gate = agent_turn.PayerGate(
         facts.insurance_id,
         intent in (VisitIntent.check_eligibility, VisitIntent.recheck_eligibility),
+        facts.last_eligibility,
     )
 
     step = agent_turn.run_agent_path(
@@ -1169,11 +1179,14 @@ def visit_chat(req: VisitChatRequest, request: Request):
     # would throw away work and re-charge the next turn for it (eligibility-assistant
     # -D-26). The gate makes this a no-op when the hook did run.
     payer_gate.run()
-    verdict = payer_gate.verdict
+    # The turn REPORTS the fresh verdict when one was obtained, and the visit's own
+    # memory otherwise — an `ask_status` turn is answered from `last_eligibility`
+    # with no egress, which is the whole reason that field exists (ADR 0011 §5).
+    verdict = payer_gate.status_verdict
     if payer_gate.called:
         facts.last_eligibility = _remembered_verdict(
             facts.last_eligibility if req.facts.insurance_id == facts.insurance_id else None,
-            verdict,
+            payer_gate.verdict,
         )
 
     if step.reason is not None:
@@ -1183,9 +1196,16 @@ def visit_chat(req: VisitChatRequest, request: Request):
         return _deterministic_turn(
             req, step.reason, correlation_id, facts=facts, verdict=verdict,
             intent=intent, degraded=step.degraded, llm_egress=step.llm_egress,
-            model_calls=step.model_calls,
+            model_calls=step.model_calls, checked=payer_gate.called,
         )
 
+    # `status` keeps its pre-eligibility-assistant meaning — the PAYER's status for
+    # this turn, echoed so the gateway can record a metadata-only turn. `outcome` is
+    # the new, separate field: what the turn CONCLUDED (SPEC-14). They coincide by
+    # name on the common cases and deliberately do not on the rest — a degraded payer
+    # is status `pending` and outcome `unavailable`, and a spend stop has a payer
+    # status and outcome `stop`.
+    status = (verdict or {}).get("status") or visit_templates.AWAITING_ID
     concluded = outcome.payer_outcome(verdict)
     validated = _validated_selection(step.decision, step.rows, req, concluded)
     if validated is None:
@@ -1193,6 +1213,7 @@ def visit_chat(req: VisitChatRequest, request: Request):
             req, outcome.Reason.validation_reject, correlation_id, facts=facts,
             verdict=verdict, intent=intent, degraded=False,
             llm_egress=step.llm_egress, model_calls=step.model_calls,
+            checked=payer_gate.called,
         )
 
     # Ground — every rendered citation is one of the turn's own retrieved rows, taken
@@ -1210,7 +1231,7 @@ def visit_chat(req: VisitChatRequest, request: Request):
         json.dumps(
             visit_chat_log_metadata(
                 intent,
-                concluded.value,
+                status,
                 len(req.turns),
                 checked=payer_gate.called,
                 mode=mode.value,
@@ -1225,13 +1246,13 @@ def visit_chat(req: VisitChatRequest, request: Request):
     # which pre-reviewed action ids to show; it did not author the coverage sentence
     # and cannot (ADR 0011 §5).
     reply = "\n".join(
-        [visit_templates.verdict_line(concluded.value, verdict)]
+        [visit_templates.a1_verdict_line(status, concluded.value, verdict)]
         + [f"- {item}" for item in visit_templates.render(action_ids)]
     )
     return VisitChatResponse(
         reply=reply,
         intent=intent,
-        status=concluded.value,
+        status=status,
         facts=facts,
         eligibility=verdict,
         disclaimer=_VISIT_DISCLAIMER,
