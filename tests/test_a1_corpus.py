@@ -114,7 +114,8 @@ def test_fix_neg_negative(fid):
     marker_lines = [ln.strip() for ln in text.splitlines() if len(ln.strip()) > 40][:3]
     assert marker_lines
     for category in policy_index._INDEX.categories:
-        for row in policy_index.lookup(category, "medicare", "unconfirmed", "unconfirmed"):
+        rows, _record = policy_index.lookup(category, "medicare", "unconfirmed", "unconfirmed")
+        for row in rows:
             assert row.id != fid
             for marker in marker_lines:
                 assert marker not in row.section_text
@@ -177,8 +178,8 @@ def test_load_with_root_does_not_publish_module_state(tmp_path):
     assert next(r for r in variant.rows if r.id == target).section_text == truncated
     assert policy_index._INDEX is default_index
     assert policy_index.MAX_ROW_BYTES == 2789
-    assert policy_index.fetch_by_id([target])[0].section_text == original
-    served = policy_index.lookup("no-coverage-invention", "aetna", "commercial", "other_us")
+    assert policy_index.fetch_by_id([target])[0][0].section_text == original
+    served, _record = policy_index.lookup("no-coverage-invention", "aetna", "commercial", "other_us")
     assert [r.id for r in served] == [target]
     assert served[0].section_text == original
 

@@ -336,7 +336,7 @@ Open before FROZEN: none — eligibility-assistant-D-20..24 resolved 2026-08-24 
 | turn | eligibility-assistant-SPEC-1–6, 12–23, 25–26, 33, 36–37, 39a, 41–42, 44–56 | GATED 2026-08-28 | — | — | — |
 | trace | eligibility-assistant-SPEC-27–29, 31–32, 34–35, 39b, 40 | GATED 2026-08-28 | — | — | — |
 | lifecycle | eligibility-assistant-SPEC-58–62 | GATED 2026-08-28 | — | — | — |
-| retrieval-eval | eligibility-assistant-SPEC-63–66 | GATED 2026-08-28 | — | — | — |
+| retrieval-eval | eligibility-assistant-SPEC-63–66 | GATED 2026-08-28 | 1364 passed, 19 deselected, 1 xfailed (2026-08-30, `make test-docker` at branch cut off `main` @434342a; `.venv` 3.12 agrees) | PUSHED PR #95 (2026-08-30; IMPLEMENTED 2026-08-30; codex r1: 1 major, **A**, fixed @ca6ac6c · r2: approve, 0 findings, dry, loop closed in 2) | — |
 
 ### Per-ticket delivery records
 
@@ -352,7 +352,11 @@ behind the `plan-file deletion sha` in the table above. `date` is the `delivery 
 | turn | — | — | — | — |
 | trace | — | — | — | — |
 | lifecycle | — | — | — | — |
-| retrieval-eval | — | — | — | — |
+| retrieval-eval | 2026-08-30 | `feat/noref-eligibility-retrieval-eval` off `main` @434342a · stamp @620f932 · @3e4aa0a (`policy_index.py` `LookupRecord` + two-tuple `lookup` / `fetch_by_id` + one structured log line + keyword-only `ranker=` on `rank` with `default_ranker` as its unit, `policy_tool.py` provenance binding, `tests/test_a1_retrieval_record.py` and `tests/test_a1_retrieval_eval.py` NEW, seven two-tuple call sites across `test_a1_corpus.py` / `test_a1_retriever.py` / `test_a1_conflict.py`) · @f91c396 (`adr/0019` section 6 + two Consequences bullets, `tests/README.md`, `CLAUDE.md` §6 baseline) · @ca6ac6c (codex r1 f1: the SPEC-66 membership guard inside `rank`, `test_ranking_unit_cannot_change_membership`, `adr/0019` section 6, `CLAUDE.md` §6 baseline) | 1364 → **1369 passed, 19 deselected, 1 xfailed** (`make test-docker` and `.venv` 3.12 agree; +5 = the four tests the branch plans plus codex review r1 f1's negative test; deselected and xfailed unmoved) | Test-first: `test_record_fields_and_provenance` and `test_ranking_isolated_from_filtering` ran red first. Green on first run and pinned by break-then-revert instead: `test_record_metadata_only_every_path` (the closed field set written for the first test already satisfied it; breaks (b) and (e)) and `test_recall_at_cap_per_case_min_headline` (a measurement over mechanisms that already stood, asserting no floor by design — eligibility-assistant-D-49) and codex review r1 f1's `test_ranking_unit_cannot_change_membership` (the guard was written with the disposition and the test after it; pinned by removing the guard → red, reverting → green). Verification-covered only (no behavioural seam): `adr/0019` section 6, `tests/README.md`, the `CLAUDE.md` §6 baseline line, the `docs/todo.md` TODO-69 entry. Traceability: the three `test:` cells (eligibility-assistant-SPEC-63, 64, 66) are filled with the ids the frozen spec planned, unchanged, and SPEC-65's `gate:` is the three number lines below; no pinned test moved. Deviations (7, all plan-fact, no mechanism moved — including the plan's substituted ranker, under which verification 2's fourth break ran green, and two `corpus`-pinned `test_a1_retriever.py` tests that gain one additive record assertion each, so "every assertion staying on rows" holds for the row assertions, not the whole test) and the live-run evidence (V1–V5, five break-then-revert breaks, isolation stated) are in `docs/workflow/plans/eligibility-assistant/retrieval-eval.md` `## Delivery evidence`. Residuals, registry IDs only: (a) SPEC-64 measured over 27 of the 32 acceptance cases → eligibility-assistant-SPEC-64, eligibility-assistant-D-58's dated note · (b) the argument sets rest on an `index.json` curation obligation `corpus` carries → eligibility-assistant-D-70 · (c) the record is a log line only, so `tests/test_visit_chat_phi.py::test_no_phi_reaches_any_log_record` sees it only once `turn` wires the path → eligibility-assistant-D-68 / SPEC-63 · (d) the Landmines block's stale SPEC-28 quote, owner-accepted 2026-08-28 → eligibility-assistant-D-81 · (e) NEW — the contract's Delivery-record budget is spent with three tickets to land → `docs/todo.md` TODO-69. D13 stays OPEN (`docs/debt-log.md`). |
+
+**Recall baseline (`retrieval-eval`, eligibility-assistant-SPEC-65 / D-67)** — cap in use `A1_RETRIEVAL_MAX_ROWS` = **5**, over the 27 acceptance cases naming a retrievable source (eligibility-assistant-D-12; EVAL-010/011/029/030/031 have no retrievable source and no recall).
+EVAL-001 0.50 · EVAL-002 1.00 · EVAL-003 1.00 · EVAL-004 1.00 · EVAL-005 1.00 · EVAL-006 1.00 · EVAL-007 1.00 · EVAL-008 1.00 · EVAL-009 1.00 · EVAL-012 1.00 · EVAL-013 1.00 · EVAL-014 1.00 · EVAL-015 0.50 · EVAL-016 1.00 · EVAL-017 1.00 · EVAL-018 1.00 · EVAL-019 1.00 · EVAL-020 0.50 · EVAL-021 1.00 · EVAL-022 0.50 · EVAL-023 1.00 · EVAL-024 1.00 · EVAL-025 0.50 · EVAL-026 0.50 · EVAL-027 1.00 · EVAL-028 1.00 · EVAL-032 1.00 (the six by-id deterministic turns — EVAL-012/014/016/017/018/024 — are 1.0 by construction).
+`min recall@5 = 0.50 (EVAL-001)` — no floor is asserted (eligibility-assistant-D-49); the number is what a follow-on ranking item cites.
 
 **Impl gate — `corpus`** — 2026-08-29, impl-gated fresh-context (round 2, both agents clean, no
 findings; round 1 the same day raised 3, all A, fixed @5fd9c9f / @1663f89 / @db058de, no code file
@@ -381,3 +385,13 @@ binding; closed as a class at the adapter with a `_call` envelope backstop @9cab
 re-granted eligibility-assistant-D-56 §1 approval — and r2 approve, 0 findings, dry, no re-tag.
 Final baseline `1364 passed, 19 deselected, 1 xfailed` = 1355 + 9, the two above the gate-time
 count being r1's class guards; deselected / xfailed unmoved. 16/16 CI checks green at merge.
+
+**Impl gate — `retrieval-eval`** — 2026-08-30, impl-gated fresh-context round 1 + adv review
+round 1 (adv clean; gate two minor fact-trail findings, both **A** doc-only @45effb9 — deviation 7
+recorded, TODO-69 re-measured — dispositions @f64c3d1). **Round 2 full re-run waived by owner
+2026-08-30** on the llm-seam r4 basis, the same session as the fixes; the waiver round in the
+ticket file's `## Findings` records basis and deviation. Branch `feat/noref-eligibility-retrieval-eval`
+@f64c3d1, merge-base `434342a`. Baseline observed at gate (docker + `.venv` 3.12 agree): `1368
+passed, 19 deselected, 1 xfailed` = 1364 + 4, deselected / xfailed unmoved. `gate:` SPEC-65:
+observed, matches (27 values, `min recall@5 = 0.50`). Residuals accepted here: (a)–(e) of the
+record row above, as IDs; D13 stays OPEN. Push stays human-gated.

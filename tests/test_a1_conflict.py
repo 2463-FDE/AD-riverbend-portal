@@ -85,7 +85,9 @@ def test_tier_rank_in_code():
     assert order == ["DOC-FED-EMTALA-CMS", "DOC-COVERAGE-QUESTION-CHEAT-SHEET"]
     # a lower-tier source never overrides a higher-tier one: the ordering site is `rank`
     # and `lookup` applies it before the cap
-    emergency = policy_index.lookup("emergency-care-boundary", "aetna", "commercial", "unconfirmed")
+    emergency, _record = policy_index.lookup(
+        "emergency-care-boundary", "aetna", "commercial", "unconfirmed"
+    )
     emergency_tiers = [tiers[r.id] for r in emergency]
     assert emergency_tiers == sorted(emergency_tiers)
     assert emergency_tiers[0] == 1

@@ -17,9 +17,19 @@ The retriever is in-process, read-only and makes no network call. Query values a
 closed enum members (`PAYERS`, `PRODUCTS`, `STATES`; `unconfirmed` is non-filtering on
 product and state — eligibility-assistant-D-32); `*` is an INDEX-row value that matches
 any query value and is never legal on the query side (eligibility-assistant-D-64).
-`rank(rows)` is the one ordering site — tier rank asc, `retrieval_date` desc,
-`document_id` asc (eligibility-assistant-D-62) — and `lookup` applies it before the
-`A1_RETRIEVAL_MAX_ROWS` cut.
+`rank(rows)` is the one ordering site — its unit is `default_ranker`: tier rank asc,
+`retrieval_date` desc, `document_id` asc (eligibility-assistant-D-62) — and `lookup`
+applies it before the `A1_RETRIEVAL_MAX_ROWS` cut. A caller may substitute the unit with
+`rank(rows, ranker=...)`, which changes the order of a filtered set and never its
+membership (eligibility-assistant-SPEC-66).
+
+Every lookup leaves a `LookupRecord` (eligibility-assistant-SPEC-63): the resolved value
+of each filter axis with its provenance, the pre-filter / post-filter / returned counts,
+the cap, and the `truncated` / `empty` flags. `lookup` and `fetch_by_id` return it
+alongside the rows and emit it once as one structured log line — closed fields only, and
+the log line is the record's only emitter in this item (eligibility-assistant-D-68). A
+caller that names no provenance records `application_default` on every axis, so the
+record is left for every caller, tool-bound or direct (eligibility-assistant-D-69).
 
 Module state is published by the default root only: `load()` with no `root` sets
 `_INDEX` and `MAX_ROW_BYTES`; `load(root=...)` returns the index it built and leaves
@@ -29,15 +39,21 @@ later test file (eligibility-assistant-D-57).
 import hashlib
 import json
 import os
-from dataclasses import dataclass
-from typing import Dict, Iterable, Iterator, List, Mapping, Optional, Tuple, Union
+from dataclasses import asdict, dataclass
+from typing import Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple, Union
 
 from config import settings
+from logging_config import configure
+
+log = configure(settings.service_name)
 
 __all__ = [
     "CorpusLoadError",
     "Row",
     "Index",
+    "LookupRecord",
+    "PROVENANCE_LABELS",
+    "RECORD_LOG_MESSAGE",
     "PAYERS",
     "PRODUCTS",
     "STATES",
@@ -50,6 +66,7 @@ __all__ = [
     "fetch_by_id",
     "tier",
     "rank",
+    "default_ranker",
 ]
 
 DEFAULT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "policy_corpus")
@@ -164,6 +181,65 @@ class Index:
             if row.id == doc_id:
                 return row
         return None
+
+
+# The three-value provenance set of eligibility-assistant-SPEC-63. `application_default`
+# is what an axis records when the caller names no provenance for it, so a direct module
+# call leaves a complete record without knowing the tool exists (D-69).
+PROVENANCE_LABELS: Tuple[str, ...] = ("clerk_selection", "model_topic", "application_default")
+APPLICATION_DEFAULT = "application_default"
+
+# The one structured line the record is emitted on (eligibility-assistant-D-68).
+RECORD_LOG_MESSAGE = "policy lookup record=%s"
+
+_AXES: Tuple[str, ...] = ("topic", "payer", "product", "state")
+
+
+@dataclass(frozen=True)
+class LookupRecord:
+    """One lookup's metadata — fourteen closed fields, never any document or clerk text.
+
+    Per axis the resolved value (`str | None`; `None` is the by-id path, which has no
+    filter axes) and a label from `PROVENANCE_LABELS`; the row counts before and after
+    filtering, the rows returned and the cap in force; and the two flags. There is no
+    field that can carry a section text, a title, a path, a clerk message or a member id
+    (eligibility-assistant-SPEC-63, §1 approval eligibility-assistant-D-56 as extended).
+    """
+
+    topic: Optional[str]
+    topic_provenance: str
+    payer: Optional[str]
+    payer_provenance: str
+    product: Optional[str]
+    product_provenance: str
+    state: Optional[str]
+    state_provenance: str
+    pre_filter_rows: int
+    post_filter_rows: int
+    returned_rows: int
+    cap: int
+    truncated: bool
+    empty: bool
+
+    def as_dict(self) -> Dict[str, Union[str, int, bool, None]]:
+        return asdict(self)
+
+
+def _provenance_of(provenance: Optional[Mapping[str, str]], axis: str) -> str:
+    """The axis's label, or `application_default` when the caller named none."""
+    label = (provenance or {}).get(axis, APPLICATION_DEFAULT)
+    if label not in PROVENANCE_LABELS:
+        raise ValueError("provenance label is not one of the three")
+    return label
+
+
+def _emit(record: LookupRecord) -> LookupRecord:
+    """Emit the record as one structured log line — the record's only emitter."""
+    try:
+        log.info(RECORD_LOG_MESSAGE, json.dumps(record.as_dict()))
+    except Exception as e:  # a record that cannot serialise must not break a lookup
+        log.error("policy lookup record not emitted (%s)", type(e).__name__)
+    return record
 
 
 _INDEX: Optional[Index] = None
@@ -387,8 +463,12 @@ def tier(document: Union[str, Mapping[str, str], Row]) -> int:
     return entry.tier
 
 
-def rank(rows: Iterable[Row]) -> List[Row]:
-    """The one ordering site: tier rank asc, retrieval_date desc, document_id asc."""
+def default_ranker(rows: Iterable[Row]) -> List[Row]:
+    """The ranking unit: tier rank asc, `retrieval_date` desc, `document_id` asc.
+
+    A total order on closed manifest fields — no `version_effective` parse, which is
+    prose on every row (eligibility-assistant-D-62).
+    """
     index = _current()
 
     def _key(row: Row):
@@ -397,6 +477,26 @@ def rank(rows: Iterable[Row]) -> List[Row]:
         return (row_tier, _desc(row.retrieval_date), row.id)
 
     return sorted(rows, key=_key)
+
+
+def rank(
+    rows: Iterable[Row],
+    *,
+    ranker: Optional[Callable[[Iterable[Row]], List[Row]]] = None,
+) -> List[Row]:
+    """The one ordering site, separate from filtering (eligibility-assistant-SPEC-66).
+
+    `ranker` substitutes the ranking unit without patching this function; it defaults to
+    `default_ranker`. Substitution changes the order and never the membership: the unit's
+    output is checked against its input as a multiset of document ids, so a unit that
+    drops, adds or duplicates a row raises rather than silently thinning the citations
+    the caller then caps.
+    """
+    candidates = list(rows)
+    ordered = list((ranker or default_ranker)(candidates))
+    if sorted(row.id for row in ordered) != sorted(row.id for row in candidates):
+        raise ValueError("ranking unit changed membership")
+    return ordered
 
 
 def _desc(date: str) -> Tuple[int, ...]:
@@ -408,13 +508,50 @@ def _cap() -> int:
     return max(1, int(settings.a1_retrieval_max_rows))
 
 
-def lookup(topic: str, payer: str, product: str, state: str) -> List[Row]:
-    """The retriever: filter, rank, cut at `A1_RETRIEVAL_MAX_ROWS`. In-process, read-only."""
-    return rank(list(_filter(topic, payer, product, state)))[: _cap()]
+def lookup(
+    topic: str,
+    payer: str,
+    product: str,
+    state: str,
+    *,
+    provenance: Optional[Mapping[str, str]] = None,
+) -> Tuple[List[Row], LookupRecord]:
+    """The retriever: filter, rank, cut at `A1_RETRIEVAL_MAX_ROWS`. In-process, read-only.
+
+    Returns the rows and the `LookupRecord` they left (eligibility-assistant-SPEC-63).
+    `provenance` is an optional axis → label mapping; every axis it omits records
+    `application_default`.
+    """
+    index = _current()
+    candidates = list(_filter(topic, payer, product, state, index))
+    cap = _cap()
+    rows = rank(candidates)[:cap]
+    return rows, _emit(
+        LookupRecord(
+            topic=topic,
+            topic_provenance=_provenance_of(provenance, "topic"),
+            payer=payer,
+            payer_provenance=_provenance_of(provenance, "payer"),
+            product=product,
+            product_provenance=_provenance_of(provenance, "product"),
+            state=state,
+            state_provenance=_provenance_of(provenance, "state"),
+            pre_filter_rows=len(index.rows),
+            post_filter_rows=len(candidates),
+            returned_rows=len(rows),
+            cap=cap,
+            truncated=len(candidates) > cap,
+            empty=not candidates,
+        )
+    )
 
 
-def fetch_by_id(ids: Iterable[str]) -> List[Row]:
-    """The application-side by-id entry (never a tool argument). Unknown id → ValueError."""
+def fetch_by_id(ids: Iterable[str]) -> Tuple[List[Row], LookupRecord]:
+    """The application-side by-id entry (never a tool argument). Unknown id → ValueError.
+
+    The path has no filter axes, so every axis records `None` at `application_default`
+    and the cap, while reported, is not applied (eligibility-assistant-D-69).
+    """
     index = _current()
     out: List[Row] = []
     for doc_id in ids:
@@ -422,4 +559,21 @@ def fetch_by_id(ids: Iterable[str]) -> List[Row]:
         if row is None:
             raise ValueError("unknown document id")
         out.append(row)
-    return out
+    return out, _emit(
+        LookupRecord(
+            topic=None,
+            topic_provenance=APPLICATION_DEFAULT,
+            payer=None,
+            payer_provenance=APPLICATION_DEFAULT,
+            product=None,
+            product_provenance=APPLICATION_DEFAULT,
+            state=None,
+            state_provenance=APPLICATION_DEFAULT,
+            pre_filter_rows=len(index.rows),
+            post_filter_rows=len(out),
+            returned_rows=len(out),
+            cap=_cap(),
+            truncated=False,
+            empty=not out,
+        )
+    )

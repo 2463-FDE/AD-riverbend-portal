@@ -39,6 +39,17 @@ class PolicyLookupArgs(BaseModel):
     )
 
 
+# The tool's own provenance (eligibility-assistant-SPEC-63): the model chooses the topic,
+# the application binds the other three from the clerk's selections. The record the
+# lookup leaves is never returned to the model — only the rows are.
+_PROVENANCE = {
+    "topic": "model_topic",
+    "payer": "clerk_selection",
+    "product": "clerk_selection",
+    "state": "clerk_selection",
+}
+
+
 def make_policy_lookup(payer: str, product: str, state: str) -> StructuredTool:
     """Bind the turn's clerk selections and return the one-argument `policy_lookup` tool."""
     policy_index._check_enum(payer, policy_index.PAYERS, "payer")
@@ -47,7 +58,9 @@ def make_policy_lookup(payer: str, product: str, state: str) -> StructuredTool:
 
     def policy_lookup(topic: str) -> list:
         """Look up approved policy documents for a topic."""
-        rows = policy_index.lookup(topic, payer, product, state)
+        rows, _record = policy_index.lookup(
+            topic, payer, product, state, provenance=_PROVENANCE
+        )
         return [row.as_dict() for row in rows]
 
     return StructuredTool.from_function(

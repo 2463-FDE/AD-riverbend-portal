@@ -159,11 +159,65 @@ by the ticket whose diff lands the mechanism, and a section not yet written is n
   SPEC-32's opt-in runs in `turn` / `trace`. And SPEC-30 is proven for this service — the
   gateway's own LangSmith client is `trace`'s row to state and prove.
 
-### 3–6. Bounded loop and outcome derivation · trace shape · lifecycle · retrieval record and eval
+### 3–5. Bounded loop and outcome derivation · trace shape · lifecycle
 
-Appended by `turn`, `trace`, `lifecycle` and `retrieval-eval` respectively, each as a
-change row of its own ticket plan, so that no decision a review round could reopen rests on a
-plan file that is deleted at merge (eligibility-assistant-D-42, note 2026-08-27).
+Appended by `turn`, `trace` and `lifecycle` respectively, each as a change row of its own
+ticket plan, so that no decision a review round could reopen rests on a plan file that is
+deleted at merge (eligibility-assistant-D-42, note 2026-08-27).
+
+### 6. Retrieval record and recall baseline (`retrieval-eval`)
+
+**The record is metadata by construction, not by redaction.** `policy_index.lookup` and
+`fetch_by_id` return a `LookupRecord` beside their rows: a frozen dataclass of fourteen
+closed fields — per filter axis (`topic`, `payer`, `product`, `state`) the resolved value
+and a provenance label from the three-value set `clerk_selection` · `model_topic` ·
+`application_default`, plus the integers `pre_filter_rows`, `post_filter_rows`,
+`returned_rows`, `cap` and the booleans `truncated`, `empty`. An axis value is either an
+enum member the application or the tool schema already bounded, or `None` — the by-id path
+has no filter axes, and `None` is the one non-enum value the field set admits
+(eligibility-assistant-D-69). There is no field a document's section text, title or path,
+a clerk message or a member id can occupy, so the safety argument is the field set itself
+rather than a scrubbing step (eligibility-assistant-SPEC-63; §1 approval of record
+eligibility-assistant-D-56 as extended 2026-08-25).
+
+**One emitter: the log line.** The record is emitted once per call as one structured log
+line from `policy_index`, and in this item that log line is its only emitter — no run
+payload carries it (eligibility-assistant-D-68). Attaching it to the `retrieval` span
+would need SPEC-28's allowlist to gain resolved filter values and row counts, and SPEC-29's
+`query` clause to be read as excluding them: a stage-2 amendment and an owner call, not a
+plan-stage move. `policy_tool` names the tool's provenance (`model_topic` on the topic,
+`clerk_selection` on the three the application binds) and returns rows to the model, never
+the record.
+
+**Every caller leaves a record.** A caller that names no provenance records
+`application_default` on every axis, so `SPEC-63`'s "every retriever lookup" is true for a
+direct module call as well as a tool-bound one — the record is not something the tool
+layer adds (eligibility-assistant-D-69).
+
+**Ranking is a named, substitutable unit.** `rank(rows, *, ranker=...)` is the one ordering
+site and `default_ranker` is its unit: tier rank asc, `retrieval_date` desc, `document_id`
+asc — a total order on closed manifest fields with no `version_effective` parse, that field
+being prose on all 87 rows (eligibility-assistant-D-62). Substituting the unit changes the
+order of a filtered set and never its membership (SPEC-66), and `rank` **enforces** that
+rather than trusting the substituted unit: it materialises its input, runs the unit, and
+raises `ValueError` unless the returned document ids are the input's multiset — so a unit
+that drops, duplicates or adds a row fails loudly instead of silently thinning the
+citations before the cap applies (codex review round 1). Two tests hold it: the isolation
+test substitutes a unit that orders the rows itself rather than one defined as "the
+default, reversed", so a default that dropped a row would be caught as a membership
+change, and a negative test drives four illegal units — drop, empty, duplicate, foreign
+row — through the guard.
+
+**The recall baseline is a number, not a gate.** SPEC-64 is measured over the **27** of the
+32 acceptance cases that name a *retrievable* source under eligibility-assistant-D-12: a
+manifest `DOC-*` id or a `procedures/*.md` path that is a manifest row. EVAL-010, -011,
+-029, -030 name only `policies/access-control-matrix.md` — a behaviour source — and
+EVAL-031 only `evaluations/fixtures/README.md`, the corpus gate; none of the five has a
+recall to report, and the narrowing is the whole basis of the headline. The six
+deterministic-turn cases measure `fetch_by_id` of the reason table's fixed citations, which
+is 1.0 by construction and is reported so the table is complete, not because it
+discriminates. **No floor is asserted** (eligibility-assistant-D-49): the number is what a
+follow-on ranking item cites as its starting point.
 
 ## Alternatives considered
 
@@ -208,6 +262,13 @@ plan file that is deleted at merge (eligibility-assistant-D-42, note 2026-08-27)
 - New (`llm-seam`): `services/ai-assistant/agent_binding.py` (`SeamChatModel`), the `_adapt`
   superset in `llm_client.py`, and the dark `import agent_binding` in `app.py`. Nothing on the
   request path is wired: the binding lands dark.
+- New (`retrieval-eval`): `policy_index.LookupRecord`, the two-tuple `(rows, record)` return on
+  `lookup` / `fetch_by_id`, the record's one structured log line, the keyword-only `ranker=` on
+  `rank` with `default_ranker` as its unit, and `policy_tool`'s provenance binding. Nothing on the
+  request path is wired: the record lands dark, and the seven corpus-landed call sites unpack the
+  two-tuple with their row assertions unchanged; two of them (`test_in_process_read_only_capped`,
+  `test_unconfirmed_axis_non_filtering[EVAL-023]`) add one record assertion each, on the capped
+  and the empty path (the `retrieval-eval` Delivery record, deviation 7).
 - Fixtures: `tests/fixtures/a1/` (harness jsonl verbatim, `case_selections.json`, seven
   `FIX-NEG-*` under `fix_neg/`) and the pinned module rig `tests/a1_corpus_rig.py`
   (eligibility-assistant-D-66).
@@ -215,8 +276,13 @@ plan file that is deleted at merge (eligibility-assistant-D-42, note 2026-08-27)
   negatives, approval gate, module-state non-publish, boot-fail hook), `tests/test_a1_retriever.py`
   (topic-only tool, extra-key rejection, in-process/read-only/no-network/capped, cap sizing, enum
   three-way equality, non-filtering `unconfirmed`, index coverage and row shape, case selections),
-  `tests/test_a1_conflict.py` (tier partition over all 87 rows, rank key), and — from `llm-seam` —
-  `tests/test_llm_client.py::test_a1_binding_*` plus `tests/test_a1_trace.py`.
+  `tests/test_a1_conflict.py` (tier partition over all 87 rows, rank key), from `llm-seam`
+  `tests/test_llm_client.py::test_a1_binding_*` plus `tests/test_a1_trace.py`, and — from
+  `retrieval-eval` — `tests/test_a1_retrieval_record.py` (the record's fields and provenance
+  on the tool-bound, by-id, direct, truncated and empty paths; the metadata-only negative
+  over the success, empty and truncated paths) and `tests/test_a1_retrieval_eval.py` (the
+  per-case recall table with the minimum as the headline, and the ranking unit's isolation
+  from filtering).
 - ADR 0006 and ADR 0011 carry an `Extended by ADR 0019` status note; their decisions are unchanged.
 - Harder from here: widening what the model may pass to the retriever, or adding a second
   manifest reader — both redden a pinned test and re-open the §1 approval of record
