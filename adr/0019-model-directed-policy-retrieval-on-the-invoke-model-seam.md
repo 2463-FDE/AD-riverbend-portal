@@ -260,7 +260,9 @@ follow-on ranking item cites as its starting point.
   `lookup` / `fetch_by_id`, the record's one structured log line, the keyword-only `ranker=` on
   `rank` with `default_ranker` as its unit, and `policy_tool`'s provenance binding. Nothing on the
   request path is wired: the record lands dark, and the seven corpus-landed call sites unpack the
-  two-tuple with every assertion staying on the rows.
+  two-tuple with their row assertions unchanged; two of them (`test_in_process_read_only_capped`,
+  `test_unconfirmed_axis_non_filtering[EVAL-023]`) add one record assertion each, on the capped
+  and the empty path (the `retrieval-eval` Delivery record, deviation 7).
 - Fixtures: `tests/fixtures/a1/` (harness jsonl verbatim, `case_selections.json`, seven
   `FIX-NEG-*` under `fix_neg/`) and the pinned module rig `tests/a1_corpus_rig.py`
   (eligibility-assistant-D-66).

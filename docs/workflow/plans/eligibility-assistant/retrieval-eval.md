@@ -151,6 +151,71 @@ checked: eligibility-assistant-SPEC-63, 64, 65, 66 (4 ids, the `retrieval-eval` 
 **Stamped `plan GATED 2026-08-28` under owner override** (in session, 2026-08-28): f1 accepted as a named residual and dispositioned in the same act; no fresh re-run — the `drift-gate` "never stamp with an open finding" rule set aside by explicit owner decision for this wave, recorded here and in the Status line. Writes by the gate session under the override: this cell, the residual sentence, the Status line, the contract ticket row. Plan-text hash read this round (`0f4cafcd…`) is the pre-override text; the stamped text differs from it by those sites only.
 
 
+### Impl gate — round 1, 2026-08-30
+
+Fresh-session gate (post-`/clear`; this session wrote no part of this branch). Adversarial
+read by `impl-gate-agent`, spawning prompt = item + ticket + branch name only
+(`feat/noref-eligibility-retrieval-eval` off `main` @434342a, HEAD @4496bb4, 4 commits;
+committed content only), no characterization received. **Two findings, both minor
+fact-trail, 0 red — no stamp; branch returns to stage 4.** Both re-verified in this session
+before writing: f1 by reading `git diff main...HEAD -- tests/test_a1_retriever.py` (the two
+added `record` assertions are at the `test_in_process_read_only_capped` and
+`test_unconfirmed_axis_non_filtering[EVAL-023]` sites) against `retrieval-eval.md:16` /
+`:175` and `adr/0019` `:263`; f2 by `wc -l` at @434342a, @f91c396 (383 both) and @4496bb4
+(387).
+
+| # | anchor | finding | disposition |
+|---|--------|---------|-------------|
+| 1 | eligibility-assistant-SPEC-63 · `retrieval-eval.md:16` ("every assertion staying on `rows`") · `:175` (deviation text) · `adr/0019` Consequences `:263` ("every assertion staying on the rows") · contract Delivery record row (six deviations, none of this) | **new** — the diff adds record assertions to two `corpus`-pinned tests in `tests/test_a1_retriever.py` (SPEC-10's `test:` cell, outside this gate's checked set): `test_in_process_read_only_capped` gains `assert (record.post_filter_rows, record.returned_rows) == (7, 5)`; `test_unconfirmed_axis_non_filtering[EVAL-023]` gains `assert empty_record.empty is True`. Additive and green, and the two-tuple unpack is owner-decided (D-58), but the plan row, the ADR's durable Consequences sentence and the Delivery record all state the assertions stay on rows, and the Deviations list (6) does not record it. Either record as deviation 7 and correct the ADR sentence, or drop the two assertions so the text holds. | |
+| 2 | fact trail · `docs/todo.md` TODO-69 ("339 → 364 → 383 → 389 (`retrieval-eval`), leaving 11 lines") · `retrieval-eval.md` deviation 6 | **new** (adjacent to the stage-3 fact-trail class, drift r1 f12 / r2 f1 / r4 f1 — a locator or number that does not say what the record says; that class was dispositioned in this ticket's Gate rounds, not this stage's loop, so noted rather than invoked — stage 4 weighs whether a count sweep is the right closure) — contract `docs/workflow/eligibility-assistant.md` is **387** lines at HEAD @4496bb4 (383 at the cut @434342a and still 383 at @f91c396), so this ticket grew it by 4, not 6, and **13** lines remain, not 11. TODO-69's conclusion (budget spent, the next record blocks) holds; the two numbers do not. | |
+
+`gate:` observation, eligibility-assistant-SPEC-65 ("the numbers are in the Delivery section"),
+recorded here for the re-run to carry forward: contract `## Delivery` "Recall baseline" block
+(`docs/workflow/eligibility-assistant.md:357-359`) holds cap `A1_RETRIEVAL_MAX_ROWS` = 5, the
+27 per-case values and `min recall@5 = 0.50 (EVAL-001)`; this session's own
+`.venv/bin/python -m pytest tests/test_a1_retrieval_eval.py -s` (2026-08-30, repo untouched)
+printed the same 27 values — six at 0.50 (EVAL-001/015/020/022/025/026), the rest 1.00, the
+six by-id cases 1.00 — and the same headline. Observed, matches.
+
+Mechanical half, all clean: the three `test:` cells in scope (SPEC-63 ×2 ids, SPEC-64, SPEC-66)
+filled with exactly the ids the frozen spec planned, no pinned test renamed, removed or rewritten;
+contract 387/400; no `cmd:` cell in scope (plan V3 → `2`, V4 → `ok` keyless/offline, V5 → empty
+diff, run as support); every diff file traces to a change row or a recorded deviation
+(`test_a1_conflict.py` → deviation 1, `docs/todo.md` → deviation 6) and every planned row is in
+the diff; no `str(e)`, no `Co-Authored-By` trailer on the four commits, no gateway route touched,
+`_emit`'s failure path on the class-name-only idiom; registry sweep (`landmines`, `debt-log`,
+`phi-logging-policy`, `ARCHITECTURE.md`) zero hits for `policy_index` / `lookup record` / `recall` /
+`retrieval-eval`, no planted defect in reach; §1 PHI-handling entry cites D-56 (extended
+2026-08-25), D-68 / D-69 re-close recorded in the Landmines block; delivery evidence complete
+(V1–V5 with expected outputs, five break-then-revert breaks, isolation clause, deviations and
+test-first split disclosed, residuals as IDs). Agent-verified against the branch: deviation 3's
+bucket 3 is six rows, deviation 2's plant `AETNA5501` is in the `AI_MEMBER_ID_PREFIXES` shape and
+used nowhere else, `_filter`'s enum checks run inside `list(...)` before any `LookupRecord` is
+built. Baseline observed at gate: `make test-docker` **1368 passed, 19 deselected, 1 xfailed**
+(exit 0); `.venv` 3.12 `pytest -m "not integration"` the same — 1364 + 4 = exactly the four
+added tests, deselected / xfailed unmoved.
+
+checked: eligibility-assistant-SPEC-63, 64, 65, 66 (4 ids, the `retrieval-eval` `Scope:` line) against the GATED Plan (Changes 11 rows, Gate interactions 5, Verification 1–5, Landmines, Findings r1–r4), the contract `## Spec` rows `:321-324`, reason table `:203-210`, `## Delivery` rows `:339` / `:355-359`, register D-49 / D-58 / D-62 / D-67 / D-68 / D-69 / D-70 / D-82, the ticket `## Delivery evidence` · diff `git diff main...HEAD --stat`: 13 files, +960/−39 · pinned-test diff, contract cap, `cmd:`/`gate:` cells, trailers, planted defects, idiom sweep, closure both ways, baseline re-run (docker + venv) · **2 findings** (f1 SPEC-63 record assertions in two `corpus`-pinned tests against "assertions stay on rows" at three sites, unrecorded as a deviation; f2 TODO-69's line counts 389 / 11 vs measured 387 / 13) · no stamp.
+
+### Adv review — round 1, 2026-08-30
+
+`adv-reviewer-agent`, same spawning prompt (item + ticket + branch only, no characterization
+received), frozen `## Spec` + diff only, Plan unread. **Clean — dry round.** Traced
+`LookupRecord` (14 fields), the two-tuple `lookup` / `fetch_by_id` with `application_default`
+as the omitted-axis provenance, `rank(rows, ranker=…)` with `default_ranker` as the unit, and
+`_emit` as the one log emitter against SPEC-63 / 64 / 66; `fetch_by_id`'s early `ValueError`
+on an unknown id skips emission consistently with `test_fix_neg_negative`'s expectation; no
+module in `services/` other than the updated `policy_tool.py` calls `lookup` / `fetch_by_id`
+(`app.py` calls `load()` only), so the return-shape change breaks nothing silently;
+`policy_tool.py` binds `topic → model_topic`, the clerk axes → `clerk_selection`, and discards
+the record before the model sees it; the recall table excludes exactly EVAL-010/011/029/030/031
+(D-12) and asserts no floor (D-49); the ranking-isolation test drives `_filter` / `rank`
+directly, bypassing the cap, so membership-vs-order is a real assertion; all seven sibling call
+sites unpack the two-tuple with no stale single-value assertion left. Full default suite in the
+`.venv`: 1368 / 19 / 1.
+
+checked: full frozen `## Spec` read, SPEC-63 / 64 / 66 as the rows the code bears on (SPEC-65 is the Delivery-record row, not code) · diff 13 files (plan-file and `## Delivery` content excluded from review input) · 0 findings.
+
 ## Delivery evidence
 
 Status: delivery DRAFT 2026-08-30. Branch `feat/noref-eligibility-retrieval-eval` off `main`
@@ -163,7 +228,7 @@ the deviations and the live-run detail, and dies with the file at merge.
 
 ### Deviations
 
-Six, all **plan-fact** (a stated fact was wrong or incomplete); no mechanism, seam or decision
+Seven, all **plan-fact** (a stated fact was wrong or incomplete); no mechanism, seam or decision
 moved, and no `Changes` row was dropped or added beyond the registry entry named in 6.
 
 1. **The change-list closure missed two `lookup` call sites.** The closure swept the three
@@ -204,11 +269,23 @@ moved, and no `Changes` row was dropped or added beyond the registry entry named
 6. **One registry entry the plan did not name: `docs/todo.md` TODO-69.** The contract's
    Delivery-record budget (eligibility-assistant-D-55: the six records inside the 61 lines spare
    under the blocking 400-line `workflow-doc-cap`) is spent — measured growth is 19–25 lines per
-   ticket against the ~10 assumed, leaving 11 lines for `turn`, `lifecycle` and `trace`. Flagged to
+   merged ticket against the ~10 assumed (339 → 364 → 383; this ticket's row and recall block add
+   4 at HEAD, its impl-gate paragraph still to come), leaving 13 lines for `turn`, `lifecycle` and
+   `trace` (impl gate r1 f2 — the entry first read 389 / 11, numbers never re-measured). Flagged to
    the owner at this branch's cut and deferred by owner decision to this Delivery write; filed as a
    loose end rather than carried in prose, per this stage's residuals rule. The plan's gate-interaction
    bullet anticipated the cheap check (`wc -l` before the push) but not that the budget itself would
    be exhausted.
+7. **Two `corpus`-pinned tests gain a record assertion (impl gate r1 f1).** The plan's
+   `tests/test_a1_retriever.py` row (`:16`) says the three call sites unpack the two-tuple "every
+   assertion staying on `rows`", and `adr/0019` section 6 repeated it. Two of them also assert the
+   record: `test_in_process_read_only_capped` adds
+   `assert (record.post_filter_rows, record.returned_rows) == (7, 5)` (the capped path — 7 rows
+   filtered, 5 returned) and `test_unconfirmed_axis_non_filtering[EVAL-023]` adds
+   `assert empty_record.empty is True` (the empty path). Additive, both green, no row assertion
+   changed and no pinned test renamed; kept, because they pin the record on the two paths
+   `test_a1_retrieval_record.py` reaches only through the rig. The ADR sentence and the contract
+   Delivery row now say so; the plan row stands as written (plan text is not edited post-gate).
 
 Not a deviation, recorded so the next reader does not re-derive it: the plan's residual bullet names
 `DOC-SYN-EMERGENCY` as "EVAL-024's third citation". The harness row's `expected_source_ids` for
