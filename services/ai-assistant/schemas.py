@@ -159,8 +159,11 @@ def _closed_enum(name: str, values) -> type:
     (``_check_enum``) — so a literal enum here would be a second copy of a closed
     set that has to be kept equal by review, which is precisely the shape the intake
     contract break had. Deriving makes them equal by construction; the declaration in
-    ``contracts/visit-chat-turn.json`` is what pins the portal's and the gateway's
-    copies, which cannot import this module (eligibility-assistant-D-45).
+    ``contracts/visit-chat-turn.json`` is what the portal's and the gateway's copies
+    are held to, neither being able to import this module — each asserted by its own
+    side's suite (`frontend/app/assistant/turn.contract.test.ts`,
+    `tests/test_gateway_ai_proxy.py::test_the_gateway_selection_sets_are_the_contract_sets`),
+    since a declaration nothing reads pins nothing (eligibility-assistant-D-45).
     """
     return Enum(name, {value: value for value in values}, type=str)
 

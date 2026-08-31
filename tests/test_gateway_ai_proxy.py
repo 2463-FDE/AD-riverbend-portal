@@ -9,6 +9,8 @@ exception CLASS only in logs, downstream URL never in a response or log line.
 No Redis/DB I/O: require_session is dependency-overridden and httpx.post is
 faked at the gateway module seam.
 """
+import json
+import pathlib
 import sys
 
 import httpx
@@ -327,3 +329,38 @@ def test_a1_answer_fields_degrade_and_facts_stay_fatal(monkeypatch, visit_state)
     )
     assert r2.status_code == 502
     assert len(visit_state) == 1, "the 502 must not touch visit memory"
+
+
+# --- the gateway's copy of the four closed selection sets (eligibility-assistant
+# -D-45, impl gate round 2 f2) -----------------------------------------------
+def test_the_gateway_selection_sets_are_the_contract_sets():
+    """The THIRD copy, asserted against the one declaration.
+
+    `contracts/visit-chat-turn.json` is the single declaration of the turn payload
+    because the portal, the gateway and the assistant each carry a copy of these
+    four menus, and three copies of a closed set kept equal by review alone is the
+    shape `docs/landmines.md` §1 names as the intake contract break. Two of the
+    three were asserted — `tests/test_a1_turn_contract.py` for the assistant's
+    pydantic enums, `frontend/app/assistant/turn.contract.test.ts` for the portal's
+    builder — and the gateway's literal tuples were pinned by nothing while two
+    in-code comments said they were. A value added to the contract and the assistant
+    but not to `_TURN_*` here 422s every turn carrying it, with nothing red.
+    """
+    contract = json.loads(
+        (
+            pathlib.Path(__file__).resolve().parent.parent
+            / "contracts"
+            / "visit-chat-turn.json"
+        ).read_text()
+    )
+    for axis, mirrored in (
+        ("question_type", gw._TURN_QUESTION_TYPES),
+        ("payer", gw._TURN_PAYERS),
+        ("product", gw._TURN_PRODUCTS),
+        ("state", gw._TURN_STATES),
+    ):
+        assert set(contract["enums"][axis]) == set(mirrored), (
+            f"contracts/visit-chat-turn.json declares "
+            f"{sorted(contract['enums'][axis])} for {axis}, but the gateway mirrors "
+            f"{sorted(mirrored)}"
+        )

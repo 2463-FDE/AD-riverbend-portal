@@ -767,10 +767,12 @@ def _assistant_health(value) -> str:
 
 # The four clerk-selection closed sets, MIRRORED from the one declaration in
 # contracts/visit-chat-turn.json (eligibility-assistant-D-45). The gateway cannot
-# import ai-assistant's schemas, so this literal copy is pinned equal to the
-# contract by tests/test_a1_turn_contract.py on the assistant side and by the
-# portal's turn.contract.test.ts — the same three-copies discipline the intake
-# contract carries.
+# import ai-assistant's schemas, so each of the three copies is asserted against
+# the declaration by its own side's suite: this one by
+# tests/test_gateway_ai_proxy.py::test_the_gateway_selection_sets_are_the_contract_sets,
+# the assistant's pydantic enums by tests/test_a1_turn_contract.py, the portal's
+# builder by frontend/app/assistant/turn.contract.test.ts — the same three-copies
+# discipline the intake contract carries.
 _TURN_QUESTION_TYPES = (
     "covered_today",
     "will_it_pay",
