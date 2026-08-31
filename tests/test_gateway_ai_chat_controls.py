@@ -142,8 +142,20 @@ def fanout(monkeypatch):
     return calls
 
 
+# eligibility-assistant: the four clerk menu selections are REQUIRED on every
+# turn (SPEC-54), so every body this file posts carries them. One neutral set —
+# nothing in this file is about the selections (the same idiom as
+# tests/test_ai_visit_chat.py's A1_SELECTIONS).
+A1_SELECTIONS = {
+    "question_type": "covered_today",
+    "payer": "aetna",
+    "product": "commercial",
+    "state": "unconfirmed",
+}
+
+
 def _chat(message="please check AETN1224", visit_id=None):
-    body = {"message": message}
+    body = {"message": message, **A1_SELECTIONS}
     if visit_id is not None:
         body["visit_id"] = visit_id
     return client.post("/ai/visit-chat", json=body)
