@@ -23,6 +23,10 @@ interface ProxyOptions {
   body?: unknown;
   // When false, do not forward/require Content-Type (e.g. GET).
   json?: boolean;
+  // Extra request headers for the upstream hop (eligibility-assistant SPEC-25:
+  // the visit-chat route sends X-Correlation-Id and X-Portal-Sent-At). Merged
+  // after the standard headers, so a caller cannot silently drop Authorization.
+  headers?: Record<string, string>;
 }
 
 // Generic proxy helper: forwards a request to the gateway and relays the
@@ -37,7 +41,7 @@ export async function proxy(
   try {
     const res = await fetch(`${gatewayUrl()}${path}`, {
       method,
-      headers: gatewayHeaders(req, sendJson),
+      headers: { ...(gatewayHeaders(req, sendJson) as Record<string, string>), ...(opts.headers ?? {}) },
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
       cache: "no-store",
     });

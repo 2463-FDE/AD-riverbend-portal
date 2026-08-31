@@ -5,7 +5,21 @@ import { useRouter } from "next/navigation";
 import Card from "../components/Card";
 import VerdictBadge from "../components/VerdictBadge";
 import { apiFetch, clearSession } from "../lib/session";
-import type { EligibilityVerdict, VisitChatResponse } from "../lib/types";
+import {
+  PAYERS,
+  PRODUCTS,
+  QUESTION_TYPES,
+  STATES,
+} from "../lib/types";
+import type {
+  Citation,
+  EligibilityVerdict,
+  Payer,
+  Product,
+  QuestionType,
+  UsState,
+  VisitChatResponse,
+} from "../lib/types";
 
 // Every string the surface can show on a failure is fixed, client-authored and
 // non-PHI (W3-SPEC-22). The upstream body is never read on a non-2xx path at
@@ -39,6 +53,14 @@ interface Turn {
   text: string;
   disclaimer?: string;
   eligibility?: EligibilityVerdict | null;
+  // eligibility-assistant: the turn's report fields. `mode` is WHICH PATH
+  // produced the reply (eligibility-assistant-D-33) — a different field from
+  // `assistant` below, which stays the W3-SPEC-22 health tri-state. Two fields,
+  // two meanings, both rendered.
+  citations?: Citation[];
+  mode?: string | null;
+  reason?: string | null;
+  outcome?: string | null;
   // Carried as the gateway's tri-state, not as a boolean. "unknown" is not a
   // quieter "degraded" and it is certainly not "ok": it means the gateway could
   // not recognise ai-assistant's health field at all (app.py:1180). Flattening
@@ -55,6 +77,23 @@ const BOUNDARY: Turn = { role: "boundary", text: "" };
 // purpose: the gateway adding a field must not blank the surface — only a known
 // field carrying the wrong type is a contract break.
 const VERDICT_STRINGS = ["status", "payer", "checked_at", "observed_at"] as const;
+
+// A rendered citation is exactly four bounded strings (SPEC-4). The gateway
+// degrades an unusable list to [], so anything else here is a contract break.
+const CITATION_STRINGS = ["title", "document_id", "section", "version"] as const;
+
+function isCitation(c: unknown): boolean {
+  if (!c || typeof c !== "object" || Array.isArray(c)) return false;
+  const rec = c as Record<string, unknown>;
+  return CITATION_STRINGS.every((k) => typeof rec[k] === "string");
+}
+
+// The five answer-only report fields are degraded by the gateway ([] / null)
+// rather than fatal, so null is a legal value for each of the four scalars —
+// but a present value of the wrong type is a contract break like any other.
+function isReportField(v: unknown): boolean {
+  return v === null || typeof v === "string";
+}
 
 function isVerdict(v: Record<string, unknown>): boolean {
   if (v.active !== undefined && v.active !== null && typeof v.active !== "boolean") return false;
@@ -84,6 +123,13 @@ function isVisitChat(d: Partial<VisitChatResponse> | null): d is VisitChatRespon
     // hands the render path is what the type says it is.
     if (!isVerdict(d.eligibility as Record<string, unknown>)) return false;
   }
+  // eligibility-assistant: the turn's report fields, shipped by the same PR as
+  // the gateway that relays them, so they are required keys — while their
+  // VALUES accept the gateway's degraded forms ([] / null).
+  if (!Array.isArray(d.citations) || !d.citations.every(isCitation)) return false;
+  if (!isReportField(d.mode) || !isReportField(d.reason)) return false;
+  if (!isReportField(d.outcome) || !isReportField(d.model)) return false;
+  if (typeof d.correlation_id !== "string") return false;
   return true;
 }
 
@@ -96,6 +142,14 @@ export default function AssistantPage() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [visitId, setVisitId] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  // The four closed clerk selections (SPEC-54) and the explicit emergency
+  // control (SPEC-44). Selections, never free text: these are the only turn
+  // inputs that reach the model's prompt.
+  const [questionType, setQuestionType] = useState<QuestionType>("covered_today");
+  const [payer, setPayer] = useState<Payer>("unitedhealthcare");
+  const [product, setProduct] = useState<Product>("unconfirmed");
+  const [usState, setUsState] = useState<UsState>("unconfirmed");
+  const [emergency, setEmergency] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   // A 403 is a property of the session's role, not of the message: retrying
@@ -142,7 +196,15 @@ export default function AssistantPage() {
       const res = await apiFetch("/api/ai/visit-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, ...(visitId ? { visit_id: visitId } : {}) }),
+        body: JSON.stringify({
+          message,
+          question_type: questionType,
+          payer,
+          product,
+          state: usState,
+          emergency,
+          ...(visitId ? { visit_id: visitId } : {}),
+        }),
       });
       if (!res.ok) {
         setNotice(failed(res.status));
@@ -171,6 +233,10 @@ export default function AssistantPage() {
           // ignore the surface on the days it matters most.
           assistant: data.assistant,
           stale: data.visit_memory === "stale",
+          citations: data.citations,
+          mode: data.mode,
+          reason: data.reason,
+          outcome: data.outcome,
         },
         ...(carriesOn ? [] : [BOUNDARY]),
       ]);
@@ -216,6 +282,31 @@ export default function AssistantPage() {
                   <VerdictBadge eligibility={turn.eligibility} />
                 </div>
               )}
+              {(turn.mode || turn.outcome) && (
+                <div className="rb-field__hint" style={{ marginTop: 8 }}>
+                  {turn.outcome && <span>Outcome: {turn.outcome}</span>}
+                  {turn.outcome && turn.mode && <span> · </span>}
+                  {turn.mode && <span>Mode: {turn.mode}</span>}
+                </div>
+              )}
+              {turn.mode === "fallback" && turn.reason && (
+                <div className="rb-alert rb-alert--info" style={{ marginTop: 8 }}>
+                  This is the deterministic fallback reply (reason: {turn.reason}) — the
+                  standard guidance for this outcome, not a tailored selection.
+                </div>
+              )}
+              {turn.citations && turn.citations.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div className="rb-field__hint">Sources</div>
+                  <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                    {turn.citations.map((c) => (
+                      <li key={c.document_id + c.section} style={{ fontSize: "0.85rem" }}>
+                        {c.title} — {c.section} ({c.document_id}, {c.version})
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {turn.disclaimer && (
                 <p className="rb-muted" style={{ marginTop: 8, fontSize: "0.82rem" }}>
                   {turn.disclaimer}
@@ -253,6 +344,93 @@ export default function AssistantPage() {
         )}
 
         <form onSubmit={send}>
+          <div className="rb-field">
+            <label className="rb-field__label" htmlFor="assistant-question-type">
+              Question type
+            </label>
+            <select
+              id="assistant-question-type"
+              className="rb-select"
+              value={questionType}
+              disabled={blocked}
+              onChange={(e) => setQuestionType(e.target.value as QuestionType)}
+            >
+              {QUESTION_TYPES.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="rb-field">
+            <label className="rb-field__label" htmlFor="assistant-payer">
+              Payer
+            </label>
+            <select
+              id="assistant-payer"
+              className="rb-select"
+              value={payer}
+              disabled={blocked}
+              onChange={(e) => setPayer(e.target.value as Payer)}
+            >
+              {PAYERS.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="rb-field">
+            <label className="rb-field__label" htmlFor="assistant-product">
+              Product
+            </label>
+            <select
+              id="assistant-product"
+              className="rb-select"
+              value={product}
+              disabled={blocked}
+              onChange={(e) => setProduct(e.target.value as Product)}
+            >
+              {PRODUCTS.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="rb-field">
+            <label className="rb-field__label" htmlFor="assistant-state">
+              State
+            </label>
+            <select
+              id="assistant-state"
+              className="rb-select"
+              value={usState}
+              disabled={blocked}
+              onChange={(e) => setUsState(e.target.value as UsState)}
+            >
+              {STATES.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="rb-field">
+            <label>
+              <input
+                type="checkbox"
+                checked={emergency}
+                disabled={blocked}
+                onChange={(e) => setEmergency(e.target.checked)}
+              />{" "}
+              Emergency — the patient needs screening or stabilization now
+            </label>
+            <span className="rb-field__hint">
+              An emergency turn answers care-first immediately; eligibility is completed
+              afterwards by a person.
+            </span>
+          </div>
           <div className="rb-field">
             <label className="rb-field__label" htmlFor="assistant-message">
               Message

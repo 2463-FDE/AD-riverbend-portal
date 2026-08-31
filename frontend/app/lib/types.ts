@@ -91,8 +91,97 @@ export interface EligibilityVerdict {
   observed_at?: string | null;
 }
 
+// eligibility-assistant: the four clerk menu selections, mirrored from the one
+// declaration in contracts/visit-chat-turn.json (eligibility-assistant-D-45) and
+// pinned equal to it by app/assistant/turn.contract.test.ts. These arrays are
+// what the portal's closed <select>s render — the clerk cannot type a value.
+export const QUESTION_TYPES = [
+  "covered_today",
+  "will_it_pay",
+  "in_network",
+  "referral_needed",
+  "prior_auth",
+  "who_pays_first",
+  "copay",
+  "portal_down",
+  "emergency",
+] as const;
+export const PAYERS = [
+  "unitedhealthcare",
+  "aetna",
+  "cigna",
+  "humana",
+  "anthem_blue",
+  "medicare",
+  "medicaid",
+] as const;
+export const PRODUCTS = [
+  "commercial",
+  "medicare_advantage",
+  "medicaid_mco",
+  "chip",
+  "original_medicare",
+  "unconfirmed",
+] as const;
+export const STATES = ["CA", "other_us", "unconfirmed"] as const;
+
+export type QuestionType = (typeof QUESTION_TYPES)[number];
+export type Payer = (typeof PAYERS)[number];
+export type Product = (typeof PRODUCTS)[number];
+export type UsState = (typeof STATES)[number];
+
+// The turn's mode — WHICH PATH produced the reply (eligibility-assistant-D-33).
+// A different field from `assistant` below: `assistant` is the health tri-state
+// W3-SPEC-22 landed ("did an LLM fault escape"), `mode` names the path. Two
+// fields, two meanings, both rendered.
+export const TURN_MODES = [
+  "real",
+  "fixture",
+  "fallback",
+  "care_first",
+  "refuse",
+  "no_lookup",
+] as const;
+export type TurnMode = (typeof TURN_MODES)[number];
+
+export const TURN_REASONS = [
+  "emergency",
+  "cross_patient",
+  "validation_reject",
+  "no_retrieval",
+  "spend_stop",
+  "model_failure",
+] as const;
+export type TurnReason = (typeof TURN_REASONS)[number];
+
+export const TURN_OUTCOMES = [
+  "active",
+  "inactive",
+  "unknown",
+  "unavailable",
+  "reverify",
+  "conflict",
+  "refuse_definitive",
+  "refuse",
+  "stop",
+  "care_first",
+] as const;
+export type TurnOutcome = (typeof TURN_OUTCOMES)[number];
+
+// One rendered citation: the four fields the assistant renders from the index
+// row (title, id, section, version) — never document text.
+export interface Citation {
+  title: string;
+  document_id: string;
+  section: string;
+  version: string;
+}
+
 // One turn of POST /ai/visit-chat. `visit_memory` and `assistant` are honest
-// tri-states, not errors: "degraded"/"stale" ride on a successful turn.
+// tri-states, not errors: "degraded"/"stale" ride on a successful turn. The
+// five eligibility-assistant report fields are answer-only and the gateway
+// degrades them (`citations` to [], the rest to null) rather than failing a
+// turn over them, so every one is nullable here.
 export interface VisitChatResponse {
   visit_id: string | null;
   visit_memory: "ok" | "stale" | "unavailable";
@@ -100,6 +189,12 @@ export interface VisitChatResponse {
   disclaimer: string;
   eligibility: EligibilityVerdict | null;
   assistant: "ok" | "degraded" | "unknown";
+  citations: Citation[];
+  mode: TurnMode | null;
+  reason: TurnReason | null;
+  outcome: TurnOutcome | null;
+  model: string | null;
+  correlation_id: string;
 }
 
 // One candidate-duplicate pair awaiting a human judgment
