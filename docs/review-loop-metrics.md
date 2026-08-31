@@ -1037,6 +1037,21 @@ as fixed. Loop closed in 3 rounds (5 A / 1 B / 0 C / 0 E total). Codex's one han
 `corpus` / `llm-seam` gate r4 is the stated falsification point for the origin tags and the
 `Sites changed:` basis. No re-tag: the bounded review ends at round 3.
 
+**PR #95 r1 — 2026-08-30, needs-attention.** 1 finding (0 blockers, 1 major, 0 minors),
+**1 A / 0 B / 0 C / 0 E**. RANK-MEMBERSHIP-01 (A): `policy_index.rank(rows, ranker=...)` returned
+whatever the substituted ranking unit returned, so a unit could change *membership* and not just
+order — `lambda rows: []` empties a non-empty bucket before the cap runs — while SPEC-66 states
+substitution "shall change the order of the filtered set and never its membership". Fixed at
+`ca6ac6c`: `rank` materialises its input, runs the unit, and raises unless the returned document
+ids are the input's multiset, with a negative test driving four illegal units (drop, empty,
+duplicate, foreign row) rather than one more benign ranker. Lesson: **a seam that accepts a
+caller-supplied callable proves nothing about the callables it was not given.** Both pre-push
+reads — impl gate r1 and adv review r1 — looked straight at this test and recorded
+"membership-vs-order is a real assertion"; one benign substitution had been taken as proof of a
+universally-quantified guarantee. The gate question that would have caught it is cheap and general:
+for every substitution seam, what does the *worst* legal substitute do, and what stops it?
+
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
