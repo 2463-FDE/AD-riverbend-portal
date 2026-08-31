@@ -201,6 +201,20 @@ def topic(case_id: str) -> str:
     return CASE_SELECTIONS[case_id]["topic"]
 
 
+def retrieved_ids(case_id: str) -> list:
+    """The ids the retriever actually returns for this case's argument set.
+
+    Derived, never hard-coded: a citation the model offers is legal only if the turn
+    RETRIEVED it (SPEC-5), so a test that names an id by hand is asserting against a
+    set the turn may not have, and would drift the day a curation changes.
+    """
+    row = CASE_SELECTIONS[case_id]
+    rows, _record = policy_index.lookup(
+        row["topic"], row["payer"], row["product"], row["state"]
+    )
+    return [item.id for item in rows]
+
+
 __all__ = [
     "app_mod",
     "policy_index",
@@ -224,5 +238,6 @@ __all__ = [
     "verdict",
     "selections",
     "topic",
+    "retrieved_ids",
     "CASE_SELECTIONS",
 ]
