@@ -341,10 +341,12 @@ Open before FROZEN: none — eligibility-assistant-D-20..24 resolved 2026-08-24 
 ### Per-ticket delivery records
 
 One row per ticket (eligibility-assistant-D-82, `corpus` impl-gate r1 f1). The contract carries
-the references — shas, baseline movement, the test-first split, traceability, residual IDs;
-deviations and live-run detail live in the ticket file's `## Delivery evidence` and die with it at
-merge, behind the `plan-file deletion sha` in the table above. `date` is the `delivery DRAFT`
-stamp. **Amended 2026-08-30 (eligibility-assistant-D-83, `docs/todo.md` TODO-69):** the impl-gate
+durable references and one compact `**Impl gate.**` summary — shas, baseline movement, the test-
+first split, traceability, residual IDs, the gate's rounds and the merge sha (eligibility-
+assistant-D-83; codex r1 M1: the boundary is what must outlive the ticket file, not references-
+versus-prose); deviations and live-run detail live in the ticket file's `## Delivery evidence` and
+die with it at merge, behind the `plan-file deletion sha` in the table above. `date` is the
+`delivery DRAFT` stamp. **Amended 2026-08-30 (eligibility-assistant-D-83, `docs/todo.md` TODO-69):** the impl-gate
 summary — gate and adv-review rounds, waivers and their basis, merge-base, gate-time baseline,
 `gate:` observations, residuals accepted, merge sha and codex rounds — rides the same row. It
 replaces the three wrapped `**Impl gate — <ticket>**` blocks, folded verbatim with no fact
