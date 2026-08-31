@@ -287,3 +287,28 @@ follow-on ranking item cites as its starting point.
 - Harder from here: widening what the model may pass to the retriever, or adding a second
   manifest reader — both redden a pinned test and re-open the §1 approval of record
   (eligibility-assistant-D-56).
+
+## The wired turn: bounds and outcome derivation (eligibility-assistant `turn`)
+
+The turn that consumes this retrieval is bounded structurally, not by instruction
+(eligibility-assistant-D-42's pattern — enforcement layers, never prompt requests):
+
+- **Two model calls, one tool call** (`run_limit=2` in effect): `agent_turn.TurnMiddleware`
+  ends the step on a second retrieval or a third model call (`validation_reject`), and on a
+  model₁ that answers without retrieving (`no_retrieval`).
+- **One payer call per turn, wherever asked for**: `agent_turn.PayerGate` is shared by the
+  `before_model` hook (between the two model calls) and the fallback path, so "at most once"
+  holds across a step that ended anywhere — a `spend_stop` at model₁ included, where the hook
+  never ran and the fallback path makes the call the turn is still owed. Whether to call stays
+  a function of the derived intent and the held id, never of model output.
+- **The per-request budget preflight gates each call** (`_enforce_budget` in front of the one
+  egress seam): `spend_stop` at either site ends the step with outcome `stop`, the payer
+  verdict persisted in facts and deliberately not rendered (eligibility-assistant-D-26).
+- **Outcome, required/allowed sets, conflict and applicability are computed in code from
+  closed inputs** (`services/ai-assistant/outcome.py`, eligibility-assistant-D-38): the
+  reason table for deterministic turns; the applicability check (empty set, no tier ≤ 3 row,
+  unconfirmed axes with only needs-product-confirmation rows) on a turn with no payer
+  verdict; `state_conflict` / `reverify` / `note_disputed` as model₂'s bounded *detection*
+  whose consequences are code; else the payer-derived table. The model's freedom remains a
+  bounded selection validated by `required ⊆ selection ⊆ allowed` over the extended catalog —
+  the selection gate generalised, not replaced.
