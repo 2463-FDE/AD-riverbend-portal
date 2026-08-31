@@ -539,6 +539,51 @@ def test_a_successful_model_call_is_charged_and_healthy(fake_llm, fake_eligibili
     assert body["assistant"] == "ok"
 
 
+# eligibility-assistant SPEC-56: the agent path makes TWO model calls per turn, and
+# `llm_egress` must answer for BOTH of them — "did any payload cross the vendor
+# boundary this turn", not "did the last call". A local refusal before the first
+# call spent nothing; the same refusal before the SECOND call comes after a paid
+# first call, and reporting False there would refund a request Bedrock billed.
+@pytest.mark.parametrize(
+    "failure,expected_egress",
+    [
+        ("budget-at-model1", False),
+        ("bearer-fail-closed", False),
+        ("budget-at-model2", True),
+    ],
+    ids=["stop-at-model1-False", "bearer-fail-closed-False", "stop-at-model2-True"],
+)
+def test_a1_llm_egress_covers_both_calls(
+    fake_llm, fake_eligibility, monkeypatch, failure, expected_egress
+):
+    if failure == "bearer-fail-closed":
+        # A placeholder bearer refuses egress locally (`_require_bearer_token`,
+        # fail-closed): zero calls crossed, so zero spend — and it IS a health
+        # fault, unlike the designed budget stop's healthy sibling paths.
+        monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "placeholder")
+    else:
+        stop_at = 1 if failure == "budget-at-model1" else 2
+        real_call = app_mod.llm_client._call
+        seen = {"n": 0}
+
+        def gated(*args, **kwargs):
+            seen["n"] += 1
+            if seen["n"] == stop_at:
+                raise app_mod.llm_client.LLMBudgetExceeded("per-request cap")
+            return real_call(*args, **kwargs)
+
+        monkeypatch.setattr(app_mod.llm_client, "_call", gated)
+
+    body = _post(f"check {MEMBER_ID}").json()
+
+    assert body["llm_egress"] is expected_egress
+    if failure == "bearer-fail-closed":
+        assert body["reason"] == "model_failure"
+    else:
+        assert body["reason"] == "spend_stop"
+    assert body["assistant"] == "degraded"
+
+
 # --- a turn with nothing to decide does not buy a model call ----------------
 # Codex PR #14 round 5. On the no-lookup statuses allowed_selection collapses
 # onto the required core, so the model's "choice" has exactly one legal outcome
@@ -597,8 +642,12 @@ def test_the_model_is_called_exactly_when_the_status_leaves_it_a_choice(
     body = _post(message).json()
 
     assert body["status"] == status
-    # Exact counts, not "not one": two calls for one turn is also a defect.
-    assert len(fake_llm) == (1 if expect_model_call else 0), (
+    # Exact counts, not "not any": the agent path pays exactly TWO model calls per
+    # turn (model₁ picks the topic, model₂ the selection — SPEC-22's bound), so
+    # three for one turn is a defect and so is one. Re-pinned from 1 with the seam
+    # (eligibility-assistant-D-40: the single-prompt assertions re-pin the two-call
+    # payloads).
+    assert len(fake_llm) == (2 if expect_model_call else 0), (
         f"{status}: wrong number of model calls"
     )
     assert body["llm_egress"] is expect_model_call
@@ -778,7 +827,23 @@ def test_catalog_copy_is_clinical_term_free(key):
     assert not instructions_tests._CLINICAL_TERMS.search(visit_templates.CATALOG[key])
 
 
-@pytest.mark.parametrize("status", ["active", "inactive", "unknown", "pending"])
+@pytest.mark.parametrize(
+    "status",
+    [
+        "active",
+        "inactive",
+        "unknown",
+        "pending",
+        # eligibility-assistant: the six outcome-keyed sentences the turn added
+        # (SPEC-13/15/16/42) go through the same screen as the original four.
+        "unavailable",
+        "conflict",
+        "refuse_definitive",
+        "refuse",
+        "stop",
+        "care_first",
+    ],
+)
 def test_every_verdict_line_is_clinical_term_free(status):
     instructions_tests = load_module(
         "tests/test_ai_intake_instructions.py", "instructions_tests_for_screen2"
@@ -843,21 +908,27 @@ def test_two_ids_in_one_message_are_never_guessed_between(fake_llm, fake_eligibi
     assert body["eligibility"] is None
 
 
-def test_an_id_that_contradicts_the_visits_confirmed_id_asks_first(
+def test_an_id_that_contradicts_the_visits_confirmed_id_is_refused(
     fake_llm, fake_eligibility
 ):
     # Silently switching subjects mid-visit would re-attribute every later turn.
+    # Re-pointed with its subject (eligibility-assistant-D-73, owner 2026-08-27):
+    # under eligibility-assistant-D-50 a recognised id that differs from the visit's
+    # confirmed one is a cross-patient REFUSAL decided before intent derivation, not
+    # an "ambiguous, ask" turn. Renamed because the old name stated the replaced rule.
     facts = {"insurance_id": MEMBER_ID, "last_eligibility": dict(ACTIVE_VERDICT)}
 
     r = _post("actually try BCBS4471", facts=facts)
 
     assert fake_eligibility == []
     body = r.json()
-    assert body["status"] == "ambiguous_id"
+    assert body["outcome"] == "refuse"
+    assert body["reason"] == "cross_patient"
+    assert body["mode"] == "refuse"
+    assert [c["document_id"] for c in body["citations"]] == ["DOC-SYN-PRIVACY-FD"]
     # The stored verdict describes a DIFFERENT subject and must not be restated.
     verdict_sentence = body["reply"].split("\n")[0]
     assert "ACTIVE" not in verdict_sentence.upper()
-    assert "Confirm which member ID" in body["reply"]
     assert body["eligibility"] is None, "no check ran this turn"
     assert body["facts"]["insurance_id"] == MEMBER_ID  # unchanged
 
@@ -920,11 +991,16 @@ def test_a_genuinely_different_id_still_contradicts_in_lower_case(
     fake_llm, fake_eligibility
 ):
     # Case folding must not soften the contradiction rule it runs alongside.
+    # The consequence moved with its subject (eligibility-assistant-D-73): a
+    # contradicting id now refuses (eligibility-assistant-D-50) instead of asking.
     facts = {"insurance_id": MEMBER_ID, "last_eligibility": dict(ACTIVE_VERDICT)}
 
     body = _post("actually try bcbs4471", facts=facts).json()
 
-    assert body["status"] == "ambiguous_id"
+    assert body["outcome"] == "refuse"
+    assert body["reason"] == "cross_patient"
+    assert body["mode"] == "refuse"
+    assert [c["document_id"] for c in body["citations"]] == ["DOC-SYN-PRIVACY-FD"]
     assert fake_eligibility == []
     assert body["facts"]["insurance_id"] == MEMBER_ID
 
@@ -1405,14 +1481,19 @@ def test_a_fresh_verdict_with_no_id_on_file_does_not_suppress_the_first_lookup(
 
 
 def test_freshness_does_not_soften_the_contradiction_rule(fake_llm, fake_eligibility):
-    # A DIFFERENT id is still ambiguous however fresh the stored verdict is —
-    # reuse must not become a path that answers about the wrong subject.
+    # A DIFFERENT id still contradicts however fresh the stored verdict is —
+    # reuse must not become a path that answers about the wrong subject. The
+    # consequence moved with its subject (eligibility-assistant-D-73): refusal.
     facts = {"insurance_id": MEMBER_ID, "last_eligibility": _observed(ACTIVE_VERDICT)}
 
     body = _post("actually try BCBS4471", facts=facts).json()
 
     assert fake_eligibility == []
-    assert body["status"] == "ambiguous_id"
+    assert body["outcome"] == "refuse"
+    assert body["reason"] == "cross_patient"
+    assert body["mode"] == "refuse"
+    assert [c["document_id"] for c in body["citations"]] == ["DOC-SYN-PRIVACY-FD"]
+    # The stored ACTIVE verdict is not restated in the verdict line.
     assert "ACTIVE" not in body["reply"].split("\n")[0].upper()
     assert body["eligibility"] is None
 

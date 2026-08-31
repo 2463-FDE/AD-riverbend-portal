@@ -1046,7 +1046,12 @@ def _deterministic_turn(
     # persisted in facts and deliberately not rendered, because restating a coverage
     # answer beside a stop would claim the turn finished.
     rendered_verdict = None if concluded is outcome.Outcome.stop else verdict
-    status = (rendered_verdict or {}).get("status") or concluded.value
+    # A gate turn echoes its REASON as the pseudo-status — the `awaiting_id` /
+    # `ambiguous_id` precedent (eligibility-assistant-D-73): `status` keeps meaning
+    # "what the check said or why none ran", never a duplicate of `outcome`.
+    status = (rendered_verdict or {}).get("status") or (
+        reason.value if gate_mode is not None else concluded.value
+    )
     reply = "\n".join(
         [visit_templates.a1_verdict_line(status, concluded.value, rendered_verdict)]
         + [f"- {item}" for item in visit_templates.render(action_ids)]

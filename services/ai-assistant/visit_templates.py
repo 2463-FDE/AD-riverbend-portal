@@ -214,7 +214,7 @@ def verdict_line(status: str, verdict: dict[str, Any] | None = None) -> str:
     on an ambiguous-id turn the stored `last_eligibility` describes a DIFFERENT
     subject, and keying the sentence off the dict's own status would restate
     "Coverage is ACTIVE" in answer to a question about another member id. Caught
-    by test_an_id_that_contradicts_the_visits_confirmed_id_asks_first.
+    by test_an_id_that_contradicts_the_visits_confirmed_id_is_refused.
 
     `active` is deliberately NOT consulted: it is a tri-state where None is falsy
     but is not False, and a truthiness test on it is exactly the defect PR #11
