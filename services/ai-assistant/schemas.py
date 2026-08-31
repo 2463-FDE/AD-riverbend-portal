@@ -36,6 +36,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+import policy_index
 from config import settings
 
 
@@ -150,6 +151,66 @@ class VisitIntent(str, Enum):
     other = "other"                           # unrecognised; ask a clarifying question
 
 
+def _closed_enum(name: str, values) -> type:
+    """One clerk-selection enum, DERIVED from the retriever's own axis tuple.
+
+    Never a hand-typed second copy. ``policy_index`` already owns these four closed
+    sets — it filters the index on them and rejects an off-enum value
+    (``_check_enum``) — so a literal enum here would be a second copy of a closed
+    set that has to be kept equal by review, which is precisely the shape the intake
+    contract break had. Deriving makes them equal by construction; the declaration in
+    ``contracts/visit-chat-turn.json`` is what pins the portal's and the gateway's
+    copies, which cannot import this module (eligibility-assistant-D-45).
+    """
+    return Enum(name, {value: value for value in values}, type=str)
+
+
+# The four closed menus the clerk selects from (eligibility-assistant-D-36, REQ-17′).
+QuestionType = _closed_enum("QuestionType", policy_index.QUESTION_TYPES)
+Payer = _closed_enum("Payer", policy_index.PAYERS)
+Product = _closed_enum("Product", policy_index.PRODUCTS)
+State = _closed_enum("State", policy_index.STATES)
+
+
+class RenderedCitation(BaseModel):
+    """One citation as the clerk sees it — four fields, all from the index row.
+
+    ``section`` is the manifest's ``section_labels`` string VERBATIM, as the index
+    row carries it (eligibility-assistant-D-61). It is rendered from that string and
+    never split, parsed or re-derived: the (document, section) identity SPEC-4 / 12 /
+    64 cite is the document id with the label string riding it, so no second copy of
+    a manifest field exists anywhere in this service.
+
+    Both paths render through this shape — an agent-path citation comes from the
+    turn's retrieved rows, a deterministic turn's from the reason table fetched by id
+    through the same index (SPEC-6) — which is what makes the assertion the same on
+    both.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    document_id: str
+    section: str
+    version: str
+
+
+class Citation(BaseModel):
+    """Citation PROVENANCE as it is persisted — ids and version only.
+
+    Deliberately NOT ``RenderedCitation``: what the gateway writes into Redis is
+    visit memory, and a title or a section label is document text at rest with no
+    consumer (the same argument ``VisitTurn`` makes about the clerk's prose). A
+    citation is re-rendered from the index by id on the turn that needs it, never
+    stored as prose (SPEC-20).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    document_id: str
+    version: str
+
+
 class VisitTurn(BaseModel):
     """One stored conversation turn — METADATA ONLY, never the text.
 
@@ -187,6 +248,10 @@ class VisitFacts(BaseModel):
 
     insurance_id: str | None = None
     last_eligibility: dict[str, Any] | None = None
+    # Citation PROVENANCE for the visit — ids and version only, never document text
+    # (SPEC-20). ``Citation`` is itself ``extra="forbid"``, so the closed shape holds
+    # one level down as well: a smuggled `text` key is rejected, not stored.
+    last_citations: list[Citation] | None = None
 
     @field_validator("insurance_id")
     @classmethod
@@ -231,6 +296,18 @@ class VisitChatRequest(BaseModel):
         default_factory=list, max_length=settings.ai_visit_max_turns
     )
     facts: VisitFacts = Field(default_factory=VisitFacts)
+    # The clerk's four closed menu selections (SPEC-54/55). REQUIRED: they are what
+    # reaches the prompt and binds the retriever, and a defaulted selection would be
+    # this service inventing a clerk's answer. The free text keeps its
+    # deterministic-only role and reaches neither.
+    question_type: QuestionType
+    payer: Payer
+    product: Product
+    state: State
+    # The clerk's explicit emergency control (SPEC-44). Defaulted false because a
+    # caller that omits it is not asserting an emergency; the care-first
+    # short-circuit is opt-in, never inferred from the message.
+    emergency: bool = False
 
 
 class VisitReplyPlan(BaseModel):
@@ -283,10 +360,56 @@ class VisitChatResponse(BaseModel):
     # dead-service shape this repo has already been bitten by. The gateway
     # forwards it, exactly as it forwards `visit_memory`.
     assistant: str = "ok"
+    # The turn's rendered sources — four fields each, the same shape on both paths
+    # (SPEC-4/6). Empty only on a turn that refuses; every non-refused coverage
+    # answer renders at least one.
+    citations: list[RenderedCitation] = Field(default_factory=list)
+    # Which path produced the reply (SPEC-33, the six-value eligibility-assistant-D-33
+    # set). A THIRD axis beside `assistant` (health) and `llm_egress` (spend): the
+    # three are independent predicates and no two are derivable from each other
+    # (eligibility-assistant-D-71), which is why this is a field and not an inference.
+    mode: str
+    # Why the turn was deterministic or fell back (the six-value
+    # eligibility-assistant-D-19 enum). None on a turn that completed the agent path.
+    reason: str | None = None
+    # What the turn concluded — one of the ten Appendix values (SPEC-14).
+    outcome: str
+    # The turn's request identity: a UUIDv4 minted by the portal, forwarded by the
+    # gateway, echoed here (SPEC-26). It identifies a REQUEST, is not derived from
+    # any patient or member identity, and travels as a header, never a body field, on
+    # the way in (eligibility-assistant-D-46).
+    correlation_id: str
+    # The model/profile identifier the turn ran against — structural, not content.
+    model: str
+
+
+class AgentDecision(BaseModel):
+    """Model₂'s decision: which sources to cite and what to do about them.
+
+    Deliberately the LOOSEST possible shape, for the same two reasons
+    ``VisitReplyPlan`` documents — Bedrock's structured-output schema subset, and a
+    local validator surfacing as ``LLMResponseError`` would bypass the deterministic
+    fallback instead of landing in the gate. Every rule (catalog membership, the
+    retrieved-set containment of SPEC-5/13, the required/allowed derivation) is
+    enforced in application code, where a violation becomes `validation_reject` and a
+    fallback rather than an error.
+    """
+
+    citation_ids: list[str]
+    action_ids: list[str]
 
 
 def visit_chat_log_metadata(
-    intent: VisitIntent, status: str, turn_count: int, checked: bool = False
+    intent: VisitIntent,
+    status: str,
+    turn_count: int,
+    checked: bool = False,
+    *,
+    mode: str | None = None,
+    reason: str | None = None,
+    outcome: str | None = None,
+    model_calls: int | None = None,
+    correlation_id: str | None = None,
 ) -> dict[str, Any]:
     """Loggable projection of a chat turn.
 
@@ -303,9 +426,30 @@ def visit_chat_log_metadata(
     otherwise log identically, and neither the reply text nor the response shape
     distinguishes them either.
     """
-    return {
+    line = {
         "intent": intent.value if isinstance(intent, VisitIntent) else str(intent),
         "eligibility_status": status,
         "turn_count": turn_count,
         "checked": bool(checked),
     }
+    # eligibility-assistant: five more CLOSED values — the six-value mode set
+    # (eligibility-assistant-D-33), the six-value reason enum (D-19), the ten-value
+    # outcome enum (D-15), an integer, and a UUIDv4. Every one is closed or
+    # structural, so the line stays inside phi-logging-policy rules 1/2/4/5 by
+    # construction: no body, no identifier, no prompt, no free text. They are added
+    # here ON PURPOSE, the same way `checked` was — the D1 lesson is that a log
+    # projection grows by an explicit allowlist entry, never by a `model_dump`.
+    #
+    # Omitted rather than None-filled when a caller has no value: the pre-eligibility
+    # -assistant `/visit-chat` line is a different event and must not grow five null
+    # columns that read as "we measured this and it was nothing".
+    for key, value in (
+        ("mode", mode),
+        ("reason", reason),
+        ("outcome", outcome),
+        ("model_calls", model_calls),
+        ("correlation_id", correlation_id),
+    ):
+        if value is not None:
+            line[key] = value
+    return line

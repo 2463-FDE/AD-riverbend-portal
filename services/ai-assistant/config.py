@@ -85,6 +85,20 @@ class Settings:
     # reddens it, by design. Clamped >= 1: 0 would return nothing on every turn.
     a1_retrieval_max_rows = max(1, int(os.getenv("A1_RETRIEVAL_MAX_ROWS", "5")))
 
+    # eligibility-assistant (SPEC-33, eligibility-assistant-D-39 as narrowed by
+    # eligibility-assistant-D-71): whether the turn reports its mode as `fixture`
+    # rather than `real`. It LABELS the mode; it does not script a model and does not
+    # gate egress — those are the rig's job and `_require_bearer_token`'s
+    # respectively. Deliberately fail-VISIBLE rather than fail-silent: a flag left on
+    # renders `fixture` on every model-produced reply, so a demo that quietly ran
+    # against a fixture cannot be mistaken for a live one.
+    a1_model_fixture = os.getenv("A1_MODEL_FIXTURE", "false").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
     # --- visit-chat: the eligibility dependency (ADR 0011) -------------------
     # ai-assistant's own hop to eligibility-service. Bounded and breakered from
     # the start: the D4 lesson (RIV-088/RIV-141) is about the CALLER's worker

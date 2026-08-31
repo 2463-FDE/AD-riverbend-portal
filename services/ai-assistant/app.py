@@ -20,6 +20,7 @@ docstring for the full argument and the obligations it created.
 import json
 import re
 import secrets
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, NamedTuple
@@ -31,13 +32,17 @@ from fastapi.responses import JSONResponse
 from config import settings
 from logging_config import configure
 import agent_binding  # noqa: F401  (dark import — see the seam note below)
+import agent_turn
 import eligibility_client
 import llm_client
+import outcome
 import policy_index
 import policy_tool  # noqa: F401  (dark import — see the lifespan note below)
 import templates
 import visit_templates
 from schemas import (
+    AgentDecision,
+    Citation,  # noqa: F401  (the agent path's decision shape — see agent_turn)
     InstructionsChecklist,
     InstructionsRequest,
     InstructionsResponse,
@@ -733,6 +738,77 @@ def _select_reply_items(status: str, selection: list[str]) -> list[str]:
     return items
 
 
+# eligibility-assistant (SPEC-26, eligibility-assistant-D-46): the turn's request
+# identity travels as a HEADER, never a body field, so `VisitChatRequest` keeps
+# `extra="forbid"` and the gateway body is unchanged. Read the way `x-internal-auth`
+# is read (`_require_internal_auth`). It identifies a REQUEST — it carries no patient
+# or member identity and is not derived from one.
+_UUID4_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def _correlation_id(request: Request) -> str:
+    """The turn's correlation id: the caller's, validated, or a fresh one.
+
+    Shape-validated rather than trusted: the value is echoed in the response and
+    logged, so an unvalidated header would be a free-text field on a service whose
+    whole design is that it has none. A malformed value is REPLACED, not rejected —
+    a bad trace handle must not cost the clerk a coverage answer.
+    """
+    provided = request.headers.get("x-correlation-id", "")
+    if _UUID4_RE.match(provided):
+        return provided.lower()
+    return str(uuid.uuid4())
+
+
+# eligibility-assistant-D-44 rule (b): the closed cross-patient phrase list, matched
+# case-insensitively on the free text. Closed on purpose — a NAME detector is the
+# pattern filter the transcript design already rejected (`schemas.VisitTurn`), and it
+# would be the third thing in this service reading the clerk's prose for meaning.
+_CROSS_PATIENT_PHRASES = (
+    "another patient",
+    "other patient",
+    "different patient",
+    "someone else",
+    "also check",
+    "and also",
+    "next patient",
+    "for my other",
+)
+
+
+def _is_cross_patient(message: str, facts: VisitFacts) -> bool:
+    """SPEC-49 — is this turn asking about a second patient?
+
+    Two closed forms, both deterministic (eligibility-assistant-D-44 as amended by
+    eligibility-assistant-D-50):
+
+      (a) the visit holds a confirmed `insurance_id` and the message carries ONE OR
+          MORE recognised member ids that differ from it. One is the commonest form
+          and refuses here rather than asking, which is the eligibility-assistant-D-50
+          decision: SPEC-49 names "a second member id" as a refusal, and a correction
+          prompt for it would leave the frozen spec and this code disagreeing on the
+          commonest case. Cost accepted: a mistyped id gets a refusal.
+      (b) a phrase from the closed list above.
+
+    Two ids with NO confirmed id are not this gate: nothing establishes which one is
+    the visit's subject, so that stays `clarify_member_id` (`_derive_intent`).
+
+    Residual, filed rather than papered over: a second patient named in prose alone —
+    no member id, no closed phrase — is not detectable by pattern
+    (eligibility-assistant-D-44; `docs/todo.md`).
+    """
+    lowered = (message or "").lower()
+    if any(phrase in lowered for phrase in _CROSS_PATIENT_PHRASES):
+        return True
+    stored = facts.insurance_id
+    if not stored:
+        return False
+    return any(candidate != stored for candidate in _extract_insurance_ids(message))
+
+
 class _ReplyPlan(NamedTuple):
     """What the action-selection step produced, plus the two facts about HOW.
 
@@ -844,12 +920,87 @@ def _reply_items(intent: VisitIntent, status: str, turn_count: int) -> _ReplyPla
     return _ReplyPlan(_select_reply_items(status, result.parsed.template_ids), True, False)
 
 
+def _deterministic_turn(
+    req: VisitChatRequest,
+    reason,
+    correlation_id: str,
+    *,
+    facts: VisitFacts | None = None,
+    verdict: dict[str, Any] | None = None,
+) -> VisitChatResponse:
+    """The reply for a turn no model output may reach (SPEC-3).
+
+    One builder for every deterministic turn — the two gates and the four
+    agent-step fallbacks — because the property SPEC-3 states is about all of them
+    at once: the citations are EXACTLY the reason's fixed set, fetched by id through
+    the same index an agent-path citation comes from (SPEC-6), and the action comes
+    from the reason table's outcome, never from a model. Building the gate replies
+    somewhere else would be two code paths for one rule.
+
+    `verdict` is the payer result if this turn obtained one. On `spend_stop` it is
+    deliberately persisted (in `facts`) and NOT rendered — the turn concluded `stop`,
+    and restating a coverage answer beside a stop would claim the turn finished
+    (eligibility-assistant-D-26).
+    """
+    reason = outcome.Reason(reason)
+    gate_mode = outcome.GATE_MODE.get(reason)
+    concluded = outcome.GATE_OUTCOME.get(reason) or outcome.fallback_outcome(reason, verdict)
+    facts = facts if facts is not None else req.facts.model_copy(deep=True)
+    citations = outcome.reason_citations(reason, question_type=req.question_type.value)
+    facts.last_citations = [
+        Citation(document_id=c.document_id, version=c.version) for c in citations
+    ]
+    action_ids = visit_templates.a1_default_selection(
+        concluded.value, req.question_type.value
+    )
+    reply = "\n".join(
+        [visit_templates.verdict_line(concluded.value)]
+        + [f"- {item}" for item in visit_templates.render(action_ids)]
+    )
+    log.info(
+        "POST /visit-chat meta=%s",
+        json.dumps(
+            visit_chat_log_metadata(
+                VisitIntent.other,
+                concluded.value,
+                len(req.turns),
+                mode=outcome.mode_of(gate_mode, reason, fixture=settings.a1_model_fixture).value,
+                reason=reason.value,
+                outcome=concluded.value,
+                model_calls=0,
+                correlation_id=correlation_id,
+            )
+        ),
+    )
+    return VisitChatResponse(
+        reply=reply,
+        intent=VisitIntent.other,
+        status=concluded.value,
+        facts=facts,
+        eligibility=None,
+        disclaimer=_VISIT_DISCLAIMER,
+        # Nothing crossed the vendor boundary on a deterministic turn, so the gateway
+        # refunds the admission slot it reserved before the fan-out.
+        llm_egress=False,
+        # A gate is the DESIGNED path for these turns, not a fallback from a fault,
+        # so health stays "ok" — the eligibility-assistant-D-71 rule that mode and
+        # health are different predicates.
+        assistant="ok",
+        citations=citations,
+        mode=outcome.mode_of(gate_mode, reason, fixture=settings.a1_model_fixture).value,
+        reason=reason.value,
+        outcome=concluded.value,
+        correlation_id=correlation_id,
+        model=settings.bedrock_model_id,
+    )
+
+
 @app.post(
     "/visit-chat",
     response_model=VisitChatResponse,
     dependencies=[Depends(_require_internal_auth), Depends(_require_member_id_catalog)],
 )
-def visit_chat(req: VisitChatRequest):
+def visit_chat(req: VisitChatRequest, request: Request):
     """One turn of the front-desk eligibility conversation.
 
     Stateless: the caller (the gateway) owns visit memory and passes the visit's
@@ -857,10 +1008,34 @@ def visit_chat(req: VisitChatRequest):
     this boundary, so the key that addresses a patient's visit memory cannot
     appear in an ai-assistant log line.
 
-    Order is understand -> act -> ground -> phrase, and the first three steps are
-    deterministic. The model is consulted last, about follow-up actions only, and
-    never about whether the patient has coverage.
+    Order is SPEC-50's, and the first two steps are gates that run BEFORE the turn
+    is understood at all:
+
+        emergency gate -> cross-patient gate -> understand -> agent path
+        -> validate -> ground -> phrase
+
+    Emergency takes precedence over every other gate (SPEC-45) and the cross-patient
+    gate over the understand step (SPEC-49), because both are refusals to proceed and
+    a refusal that runs after the id checks has already done the thing it refuses. Both
+    are deterministic: no model call, no retrieval decision, no payer call.
+
+    The model is never consulted about whether the patient has coverage. What it
+    decides on the agent path is which approved sources to cite and which pre-reviewed
+    action ids to show — and the server re-derives the required/allowed sets and
+    discards the whole selection if it does not fit (SPEC-13).
     """
+    correlation_id = _correlation_id(request)
+
+    # Gate 1 — emergency (SPEC-45/46). Before the understand step's id checks, so the
+    # reply is identical whatever the member id, insurance state or payer status of
+    # the turn: none of them is read on this path.
+    if req.emergency:
+        return _deterministic_turn(req, outcome.Reason.emergency, correlation_id)
+
+    # Gate 2 — cross-patient (SPEC-49). Before any retrieval, model or payer call.
+    if _is_cross_patient(req.message, req.facts):
+        return _deterministic_turn(req, outcome.Reason.cross_patient, correlation_id)
+
     intent, found_id = _derive_intent(req.message, req.facts)
 
     facts = req.facts.model_copy(deep=True)

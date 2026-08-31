@@ -72,6 +72,59 @@ CATALOG: dict[str, str] = {
         "Record the coverage result in the visit notes so billing does not have "
         "to repeat the check."
     ),
+    # eligibility-assistant (REQ-4′ / eligibility-assistant-D-15): the seven action
+    # ids the closed catalog is EXTENDED by, plus the four boundary templates the
+    # Appendix's qualified outcomes require. Same contract as every id above — the
+    # model selects by id, the server renders the fixed string, and an id outside
+    # this dict cannot render.
+    "care_first": (
+        "Send the patient to be seen now. Do not delay or redirect them over an "
+        "insurance question — screening comes first, and the coverage question is "
+        "settled afterwards."
+    ),
+    "refuse": (
+        "Do not answer this coverage question here. Nothing about it has been "
+        "established, and answering anyway would put a made-up answer in front of "
+        "the patient."
+    ),
+    "escalate": (
+        "Hand this to a person: a supervisor, or the payer's own verification line. "
+        "It needs a decision the front desk cannot make from what is on file."
+    ),
+    "state_conflict": (
+        "Tell the patient plainly that the approved sources disagree on this point, "
+        "and that the answer is being confirmed rather than guessed at. Do not pick "
+        "one source over the other at the desk."
+    ),
+    "reverify": (
+        "Run the check again against the payer before the visit is closed out — the "
+        "answer on file is not the one to bill against."
+    ),
+    "note_disputed": (
+        "Record that the patient disputes what the payer returned, with what they "
+        "said, so the follow-up starts from their account and not from the file."
+    ),
+    "stop": (
+        "The assistant stopped short of a full answer for this turn because it hit "
+        "its own spending limit. Nothing about the patient's coverage changed; run "
+        "the check again or ask a supervisor."
+    ),
+    "no_guarantee": (
+        "Say that active coverage is not a promise of payment: what the plan pays "
+        "for this visit is settled when the claim is processed, not now."
+    ),
+    "auth_unknown": (
+        "Note that coverage being active answers a different question from whether "
+        "prior approval is needed. That approval has not been checked here."
+    ),
+    "network_unknown": (
+        "Note that whether this clinic is in the patient's network has not been "
+        "confirmed — active coverage does not settle it."
+    ),
+    "referral_required": (
+        "Check whether the plan wants a referral on file before the visit, and get "
+        "one started if it does."
+    ),
 }
 
 # Neutral extras: the only ids the model may add beyond the required selection.
@@ -108,7 +161,49 @@ _VERDICT_LINES: dict[str, str] = {
         "More than one possible member ID is in play, so NO check has run — "
         "this is not a coverage result of any kind."
     ),
+    # eligibility-assistant: the six OUTCOME-keyed lines. `verdict_line` is keyed on
+    # whatever the caller calls the turn's status, and on these turns that is the
+    # outcome, because no payer status describes them. None carries a `{payer}`
+    # placeholder and every one is rendered with `verdict=None`, so no payer name and
+    # no timestamp can attach to a turn that has no result to stamp.
+    "unavailable": (
+        "The payer could not be reached, so NO coverage answer was obtained. This "
+        "is an outage on our side of the check, not a denial."
+    ),
+    "conflict": (
+        "The approved sources DISAGREE on this point, so no definitive coverage "
+        "answer is being given. Both sources are cited below."
+    ),
+    "refuse_definitive": (
+        "There is not enough in the approved sources to answer this definitively, "
+        "so no coverage answer is being given."
+    ),
+    "refuse": (
+        "This request is NOT being answered here. No check has run and no coverage "
+        "answer of any kind is implied."
+    ),
+    "stop": (
+        "The assistant reached its own spending limit for this turn, so it stopped "
+        "before completing the answer. This says nothing about the coverage."
+    ),
+    "care_first": (
+        "EMERGENCY: the patient is to be seen now. The coverage question does not "
+        "gate that and is settled afterwards."
+    ),
 }
+
+# The six outcome-keyed lines above (eligibility-assistant-D-15 / D-19). Separate
+# from NO_LOOKUP_STATUSES on purpose: that tuple decides what `app.py` reports as the
+# turn's verdict and is pinned by retained tests, so widening it would move behaviour
+# these turns do not touch.
+A1_OUTCOME_STATUSES = (
+    "unavailable",
+    "conflict",
+    "refuse_definitive",
+    "refuse",
+    "stop",
+    "care_first",
+)
 
 
 def verdict_line(status: str, verdict: dict[str, Any] | None = None) -> str:
@@ -205,3 +300,83 @@ def allowed_selection(status: str) -> set[str]:
         # No result exists yet, so the "neutral" extras are not justified either.
         return set(default_selection(status))
     return set(default_selection(status)) | set(OPTIONAL_IDS)
+
+
+# --------------------------------------------------------------------------- #
+# eligibility-assistant: selection over the OUTCOME, not the payer status
+# --------------------------------------------------------------------------- #
+# The required core per outcome (contract Appendix). Same contract as
+# `default_selection`: every id here is justified by the outcome, so a model
+# selection that omits one is wrong for this situation and is discarded whole.
+_A1_REQUIRED: dict = {
+    "active": ("note_coverage_result",),
+    "inactive": ("verify_card_details", "self_pay_options"),
+    "unknown": ("escalate",),
+    "unavailable": ("escalate",),
+    "reverify": ("reverify",),
+    "conflict": ("state_conflict", "escalate"),
+    "refuse_definitive": ("escalate",),
+    "refuse": ("refuse",),
+    "stop": ("stop",),
+    "care_first": ("care_first",),
+}
+
+# The boundary template a question type REQUIRES beside an active answer — the
+# Appendix's qualified outcomes (`active-with-boundary`, `elig-active-auth-unknown`,
+# `active-network-unknown`, `active-referral-missing`, `cob-both-recorded`). Only on
+# `active`: a boundary on a refusal would qualify an answer that was not given.
+_A1_QUESTION_TYPE_TEMPLATE: dict = {
+    "will_it_pay": "no_guarantee",
+    "prior_auth": "auth_unknown",
+    "in_network": "network_unknown",
+    "referral_needed": "referral_required",
+    "who_pays_first": "collect_secondary",
+}
+
+# Outcomes a deterministic gate concluded. The model is not consulted on these
+# turns at all, so its freedom is empty by construction rather than by policy.
+_A1_NO_FREEDOM = ("refuse", "care_first", "stop")
+
+# What the model may ADD on a turn that left it freedom. Neutral or
+# route-to-a-person ids only — never one that asserts a coverage fact.
+_A1_OPTIONAL = (
+    "escalate",
+    "reverify",
+    "note_disputed",
+    "confirm_which_member_id",
+    "no_guarantee",
+    "auth_unknown",
+    "network_unknown",
+    "referral_required",
+)
+
+
+def a1_default_selection(a1_status: str, question_type: str = "") -> list:
+    """The deterministic action ids for an OUTCOME (eligibility-assistant-D-15).
+
+    Keyed on the outcome rather than the payer status because most outcomes have no
+    payer status behind them — a refusal, a conflict and a spend stop are all turns
+    where no coverage answer exists to select advice for. An unrecognised outcome
+    falls through to the unconfirmed advice, the same safe default
+    ``default_selection`` takes.
+    """
+    required = list(_A1_REQUIRED.get(a1_status, ("retry_shortly", "proceed_per_policy")))
+    if a1_status == "active":
+        extra = _A1_QUESTION_TYPE_TEMPLATE.get(question_type)
+        if extra and extra not in required:
+            required.append(extra)
+    return required
+
+
+def a1_allowed_selection(a1_status: str, question_type: str = "") -> set:
+    """Every action id justified by this outcome.
+
+    A valid model selection must satisfy
+    ``set(a1_default_selection(...)) <= selection <= a1_allowed_selection(...)``.
+    For the three gate outcomes the two sets are EQUAL, which is what the no-freedom
+    short-circuit reads: a model call could change the reply by exactly zero.
+    """
+    required = set(a1_default_selection(a1_status, question_type))
+    if a1_status in _A1_NO_FREEDOM:
+        return required
+    return required | set(OPTIONAL_IDS) | set(_A1_OPTIONAL)
