@@ -1,6 +1,6 @@
 # eligibility-assistant / turn — ticket plan file (deleted at its merge; contract: docs/workflow/eligibility-assistant.md)
 
-Status: plan GATED 2026-08-28 (**owner override 2026-08-28, in session: stamped in the gate session without a fresh re-run; the drift-gate rule "never stamp with an open finding" set aside by explicit owner decision for this wave; gate r5's one finding accepted under the round-3 rule as named residual (j) and dispositioned A in the same act**) (**gate round 4 dispositioned 2026-08-28, stage 3** — the one finding `pre-existing`, **A**: the eligibility-assistant-D-72 `citations` degrade's one SPEC-4 / SPEC-41-forbidden shape (a non-refused answer with `[]`) named as residual (i) — a gateway/assistant version-skew path only — and flagged on the gateway row (`:19`); dated note on D-72; no mechanism, test or count moves, no owner call open) (**gate round 3 dispositioned 2026-08-27 under the round-3 rule** — owner adjudicated all four findings 2026-08-27 as accepted → stage 3, all **A**: f1 the rig's patch targets (`app_mod.llm_client.client`, `app_mod.eligibility_client.check_coverage`) and three identity assertions named, eligibility-assistant-D-66 note 2, verification 14 break; f2 residual (g) rewritten to the executed eligibility-assistant-D-74 state, the amendment-propagation sweep enumerated and `:49`'s TODO-9 claim corrected to D-79; f3 the Secrets bullet's D-39 clause narrowed to model-produced replies; f4 verification 9's N stated as **+ 119** from named tests, `test_prompt_fits_reserve` on its row, `test_payer_at_most_once` pinned at 35 ids, the contract file at four tests; the gate's implementer note on `docs/phi-logging-policy.md` tokens handled — no item token in this ticket's four edits, verification 20b; no new decision, no owner call open) (**gate rounds 1 and 2 dispositioned 2026-08-27, stage 3** — all nine open r1 findings and all twelve r2 findings, every one **A**; NEW eligibility-assistant-D-71 (mode / health / egress, three predicates; amends D-39), D-72 (the turn's new downstream fields are answer-only, never fatal), D-73 (three retained characterization tests re-pointed under D-50; amends D-40) — **all three confirmed by the owner 2026-08-27 (in session)** — plus **eligibility-assistant-D-74, the spec-tagged owner call** on SPEC-48's falsified parenthetical: **decided 2026-08-27 — amend SPEC-48 at stage 2** (the eligibility-assistant-D-65 precedent); **the amendment was executed 2026-08-27** — SPEC-48's parenthetical and REQ-15″'s Notes cite corrected in place, the `## Spec` Status line dated, wording only, still 66 rows, contract still 339 lines; dated notes on D-39, D-40 and D-59) (**D-59..D-65 propagation sweep 2026-08-27, stage 3** — eligibility-assistant-D-61 propagated into the `schemas.py` and `outcome.py` change rows, closing gate r1 f4; enumerated site lists in the eligibility-assistant-D-61 / D-62 / D-63 sweep notes in the decision register) (`adr/0019-*.md` change row added 2026-08-27 by `llm-seam` gate r6 f1's cross-ticket sweep; `tests/a1_rig.py` row rewritten 2026-08-27 by `corpus` gate r7 f1, eligibility-assistant-D-66; re-sliced 2026-08-25 from the item plan; gate rounds 1–2 on the monolithic plan are in plans/eligibility-assistant.md — carried f1 / f6 dispositioned 2026-08-26)
+Status: plan GATED 2026-08-28 · delivery DRAFT 2026-08-31 (see `## Delivery`) (**owner override 2026-08-28, in session: stamped in the gate session without a fresh re-run; the drift-gate rule "never stamp with an open finding" set aside by explicit owner decision for this wave; gate r5's one finding accepted under the round-3 rule as named residual (j) and dispositioned A in the same act**) (**gate round 4 dispositioned 2026-08-28, stage 3** — the one finding `pre-existing`, **A**: the eligibility-assistant-D-72 `citations` degrade's one SPEC-4 / SPEC-41-forbidden shape (a non-refused answer with `[]`) named as residual (i) — a gateway/assistant version-skew path only — and flagged on the gateway row (`:19`); dated note on D-72; no mechanism, test or count moves, no owner call open) (**gate round 3 dispositioned 2026-08-27 under the round-3 rule** — owner adjudicated all four findings 2026-08-27 as accepted → stage 3, all **A**: f1 the rig's patch targets (`app_mod.llm_client.client`, `app_mod.eligibility_client.check_coverage`) and three identity assertions named, eligibility-assistant-D-66 note 2, verification 14 break; f2 residual (g) rewritten to the executed eligibility-assistant-D-74 state, the amendment-propagation sweep enumerated and `:49`'s TODO-9 claim corrected to D-79; f3 the Secrets bullet's D-39 clause narrowed to model-produced replies; f4 verification 9's N stated as **+ 119** from named tests, `test_prompt_fits_reserve` on its row, `test_payer_at_most_once` pinned at 35 ids, the contract file at four tests; the gate's implementer note on `docs/phi-logging-policy.md` tokens handled — no item token in this ticket's four edits, verification 20b; no new decision, no owner call open) (**gate rounds 1 and 2 dispositioned 2026-08-27, stage 3** — all nine open r1 findings and all twelve r2 findings, every one **A**; NEW eligibility-assistant-D-71 (mode / health / egress, three predicates; amends D-39), D-72 (the turn's new downstream fields are answer-only, never fatal), D-73 (three retained characterization tests re-pointed under D-50; amends D-40) — **all three confirmed by the owner 2026-08-27 (in session)** — plus **eligibility-assistant-D-74, the spec-tagged owner call** on SPEC-48's falsified parenthetical: **decided 2026-08-27 — amend SPEC-48 at stage 2** (the eligibility-assistant-D-65 precedent); **the amendment was executed 2026-08-27** — SPEC-48's parenthetical and REQ-15″'s Notes cite corrected in place, the `## Spec` Status line dated, wording only, still 66 rows, contract still 339 lines; dated notes on D-39, D-40 and D-59) (**D-59..D-65 propagation sweep 2026-08-27, stage 3** — eligibility-assistant-D-61 propagated into the `schemas.py` and `outcome.py` change rows, closing gate r1 f4; enumerated site lists in the eligibility-assistant-D-61 / D-62 / D-63 sweep notes in the decision register) (`adr/0019-*.md` change row added 2026-08-27 by `llm-seam` gate r6 f1's cross-ticket sweep; `tests/a1_rig.py` row rewritten 2026-08-27 by `corpus` gate r7 f1, eligibility-assistant-D-66; re-sliced 2026-08-25 from the item plan; gate rounds 1–2 on the monolithic plan are in plans/eligibility-assistant.md — carried f1 / f6 dispositioned 2026-08-26)
 Scope: SPEC rows eligibility-assistant-SPEC-1–6, 12–23, 25–26, 33, 36–37, 39a, 41–42, 44–56 (eligibility-assistant-D-34 as read through eligibility-assistant-D-55, PR-1c — the wired turn: backend, gateway, portal, harness; 39b is `trace`'s)
 Depends on: corpus, llm-seam, retrieval-eval (`policy_index.fetch_by_id`'s `(rows, record)` return — eligibility-assistant-D-58; the reason path calls it for the section label under eligibility-assistant-D-61, and the eligibility-assistant-D-59 landing order corpus → llm-seam → retrieval-eval → turn → {lifecycle, trace} puts `retrieval-eval` ahead of this ticket, so the two-tuple is the form that exists when this ticket lands)
 
@@ -244,3 +244,117 @@ Per-SPEC verdicts: satisfied — SPEC-1, 2, 3, 4, 5, 6, 12, 13, 14, 15, 16, 18, 
 checked: eligibility-assistant-SPEC-1–6, 12–23, 25–26, 33, 36–37, 39a, 41–42, 44–56 (39 ids, the `turn` `Scope:` line) against Decisions eligibility-assistant-D-1..81, Evidence E-1..7, `turn.md` Changes (36 rows + the sweep bullet) / Gate interactions (10) / Landmines / Verification 5, 8–20, 20b / Findings r1–r4, the four sibling `Scope:` + `Depends on:` lines, the item ticket table (`plans/eligibility-assistant.md:105-112`) and the contract `## Delivery` table · **plan-text hash read: `b155e0674b77776a28dc348ee284847c48b797f2`** (round 4 recorded `726cbd6bbaf5521e13d8abe09f207bbc1d2a00b7`; r4 f1 carries its list; no cross-ticket edit since — `lifecycle` r3 / `corpus` r9 / `retrieval-eval` r3 lists checked) — tag settled from the record · **origin: 0 new · 0 pre-existing · 1 class-repeat** (same-ticket text-record fallback: pre-existing) · check map 66/66 single-mechanism (turn 39/39: 35 `test:`, 3 `cmd:` SPEC-36/37/39a, 1 existing-test pin SPEC-18) · ⚠ rows 12, 18, 19, 20, 47, 48, 49 (7) — PHI-handling entered on 12/20 with D-56 cited by id and date (owner 2026-08-25, registered 2026-08-26), re-open clause checked against D-71/72/73; Inline-eligibility values not touched, call-site move stated; Auth tests only (`authz.py:4-8`, `:49-56`; `config/roles.yaml` `ai.use` at `:22` / `:54` / `:74`); IDOR not touched, residual on this ticket's `docs/todo.md` row · freeze scope: 0 `DEFERRED`, no row on a superseded REQ · ownership 66/66 once (turn 39 · corpus 7 · llm-seam 2 · trace 9 · lifecycle 5 · retrieval-eval 4; SPEC-57 unallocated), no orphan / double owner; every SPEC cite in plan text in scope or explicitly registry-upkeep · cites: every SPEC / decision / E-n id resolves (D-81 present, executed; contract `:286` amended, `:253` dated, 66 rows, `wc -l` 339); `turn.md:5` and the item table agree · change lists close both ways · tree facts verified: `services/ai-assistant/app.py` :14-18, :30-36 (no `tracing` / `policy_tool` / `lifespan` today), :187, :564-571, :607-608, :610-611, :638, :709-725 (`degraded` :722, `_reply_items` :725), :757-759, :781-783, :796, :812-816, :833-835, :845, :850, :859-863 (`clarify_member_id` → `AMBIGUOUS_ID`), :901 · `schemas.py:143-150`, :169 / :186 / :224 `extra="forbid"`, :252-285, :288-290 · `visit_templates.py:42`, :86, :114 · `llm_client.py:336-337`, :368-375, :458-461, :618-640, :723-732 · `config.py:64`, :75 · `eligibility_client.py:98` · `services/gateway/app.py:641`, :646, :957-1015, :1059, :1150-1156, :1192; `gateway/config.py:101`; `authz.py`; `security.py:275-279`; `services/gateway/requirements.txt` 7 pins, no `langsmith` · `tests/test_ai_visit_chat.py` :25-26, :41-73, :384-386, :392, :463, :475, :478, :481-482, :529, :549, :590, :600, :714-729, :789 / :799 / :803, :862 / :870, :1350 / :1357-1360 · `tests/test_visit_chat_phi.py:34-43`, :71-85, :209-210, :239-242 · `tests/test_intake_payload_contract.py:45` / :62 / :66 / :72 · `tests/test_gateway_ai_rate_limit.py:167`, :225, :236, :273 · `test_gateway_ai_chat_controls.py:332` / :338 · `test_gateway_authz.py:31`, :105 · `tests/test_redaction.py:12-14`, :99, :153 · `tests/conftest.py:16-26` · `frontend/app/lib/types.ts:102`, `gateway.ts:13-18` + `proxy()` :30, `page.tsx:71`, `route.ts` exists, no `lib/*.test.*` · `.env.example` (via `git show HEAD:`) :214, :224, :229, no `A1_*` · `ci.yml:58`, :72-76, :120-129, :135-155, :207 · `Makefile:34-35`, :43, :46-47, :76-77 · `docker-compose.yml:10`, :79-82, :267, 0 `restart:` · `db/seed/generate_seed.py:56`, :80-93; `AETN1224` in `seed.sql` · `docs/runbook.md:94-97` · `CLAUDE.md:51`, :141 · `tests/README.md:32`, :36 · `docs/onboarding-seam-map.md:14` · `docs/landmines.md:63`, :77-81, :87 · `docs/debt-log.md:289`, :290 · `docs/phi-logging-policy.md:46-47`, :51-52, :58-59, :92, :96 · `docs/todo.md:11-22`, :29, :52-53, :81-83, :89, highest TODO-68 · `docs/workflow/README.md:46-49`, :215, :236-241; `w4.md:189`, :213; `w7.md:52`; `w8.md:34` · `adr/0006:129-133`, :158; `0007:16`; `0009:60`, :125-131; `0011:70` / :83 / :294 / :310 / :372-373 / :421 / :783 / :1026; `0017:61`; `adr/0019` absent · `tests/a1_rig.py`, `tests/a1_corpus_rig.py`, `tests/test_a1_*.py`, `contracts/visit-chat-turn.json` absent (NEW true) · `.venv` langsmith 0.10.5; `services/ai-assistant/requirements.txt:9`, `requirements-dev.txt:13` · sibling cites `corpus.md:24-28`, :181-182, :234; `llm-seam.md:16`, :35, :51, :66 (GATED); `retrieval-eval.md:13`, :21, :35, :41, :74; `lifecycle.md:28`; `trace.md:26` / :38 / :45 resolve · counts re-summed: 119 (8·12·3·3·13·44·4·12·4·+1·+4·+2·+9), 32 distinct collect ids · wrong facts: 0 on this ticket · 1 finding (minor, class-repeat).
 
 **Stamped `plan GATED 2026-08-28` under owner override** (in session, 2026-08-28): f1 accepted as named residual (j) and dispositioned in the same act; no fresh re-run — the `drift-gate` "never stamp with an open finding" rule set aside by explicit owner decision for this wave, recorded here and in the Status line. Writes by the gate session under the override: this cell, residual (j), the Status line, the contract ticket row. Plan-text hash read this round (`b155e067…`) is the pre-override text; the stamped text differs from it by those sites only.
+
+## Delivery
+
+Status: delivery DRAFT 2026-08-31 (stage 4 complete pending the items below; `plan GATED` stands)
+
+**Open owner calls (three, none silently resolved — each implemented to the frozen spec/Appendix
+with the divergence recorded here for ratification or reversal):**
+
+1. **A fourth retained-test move beyond eligibility-assistant-D-73's three.** The frozen
+   eligibility-assistant-D-26 (owner-amended at spec review: `spend_stop` persists the payer verdict
+   in facts and does NOT render it) falsifies the `LLMBudgetExceeded` leg of the retained
+   `tests/test_ai_visit_chat.py::test_no_llm_failure_discards_a_completed_eligibility_result`, which
+   asserted the verdict rendered in `eligibility` and in the reply line. Neither gate round walked
+   this test against D-26 (r2 f2 walked only the `degraded` pins). Implemented to D-26: that leg now
+   asserts facts-persisted + not-rendered + outcome `stop`; every other leg and the one-payer-call
+   assertion are verbatim. Needs the owner's D-73-class ratification (amends D-40/D-73's "no other
+   retained test moves").
+2. **eligibility-assistant-D-38's applicability-check ordering, conditioned to fit the frozen
+   Appendix.** D-38-literal ("applicability check first") would conclude `refuse_definitive` on every
+   tier-4-only retrieval — EVAL-002/032 (`inactive`), EVAL-004/005/025 (`reverify`), EVAL-003/021
+   (`unknown`), EVAL-015 (`unavailable`), EVAL-028 (`active`) all retrieve tier-4-only sets and the
+   Appendix assigns them payer/selection outcomes. Implemented: the check fires only on a turn that
+   obtained NO payer verdict (EVAL-006/013/023, exactly D-38's cited cases), else selection-keyed,
+   else payer-derived — `outcome.agent_outcome`'s docstring carries the argument. Needs the owner's
+   ratification as a D-38 note (spec outranks plan; the Appendix outcomes are frozen).
+3. **The `state_conflict` ≥ 2-citation validity rule vs EVAL-007.** EVAL-007's retrieval is ONE row
+   (source-recency / anthem_blue / CA); its conflict is against a source outside the corpus, so
+   D-38's "valid only with ≥ 2 citation ids" makes the case unreachable. Implemented: valid with
+   ≥ 2 citations, or the turn's WHOLE retrieved set when fewer than two rows exist. Same D-38 note.
+
+**One planned slice absent from the diff:** `.env.example` (the two non-secret template values
+`A1_RETRIEVAL_MAX_ROWS=5`, `A1_MODEL_FIXTURE=false`). This session's permission settings deny the
+path for read AND write (the authoring session hit the same wall; its caveat said the impl session
+would read it first — it cannot). Lands by owner hand or a granted permission; nothing else in the
+change list depended on it (`config.py` defaults carry both values).
+
+**Deviations (plan-fact unless marked; no mechanism moved beyond the three owner calls above):**
+
+4. Gate turns echo their REASON as the pseudo-status (`emergency`, `cross_patient`) per D-73's own
+   clause — the plan's `_deterministic_turn` sketch implied the outcome value; aligned to the
+   decision text (`app.py`, one line).
+5. Verification 18's remedy sentence is unusable as written: the turn's own messages measured
+   ~5.0 KB at zero rows + ~150 B/row, so no legal `A1_RETRIEVAL_MAX_ROWS` fits the 5,000 B reserve.
+   The fit came from the plan's own enumeration instead — model₂'s injected message carries action
+   IDS only (the catalog template copy egressed nothing the model needed and is rendered
+   server-side after validation). Cap stays 5; `PROMPT_RESERVE_BYTES` and `LLM_MAX_INPUT_TOKENS`
+   untouched; `test_prompt_fits_reserve` ran red before the change and green after — the one
+   verification that found a real defect.
+6. Verification 9's `N` measured **+130**, not + 119 (final: **1499 passed, 19 deselected,
+   1 xfailed, 1 skipped**; deselected and xfailed unmoved; the `1 skipped` is `test_a1_live.py`).
+   The 11 uncounted are `test_catalog_copy_is_clinical_term_free`'s automatic parametrisation over
+   the eleven new catalog ids — the "screened by construction" the plan's gate-interactions bullet
+   itself states; enumerated by a main-vs-branch collect diff, every extra id accounted.
+7. `a1_verdict_line` needed one more rule than the plan's row stated: only the `unavailable`
+   outcome reached through a REAL payer answer (a `pending` check) keeps the payer's stamped
+   sentence (retained stamp test); the refusal-class outcomes never restate one (SPEC-42's
+   no-blending — two conflict tests ran red against the naive rule and green after).
+8. A degraded payer verdict reaches model₂ as the word `unavailable`, never a status the payer said
+   (SPEC-53's own clause; the middleware maps it — the plan's `agent_turn.py` row did not enumerate
+   it).
+9. The re-pin of `test_the_model_is_called_exactly_when_the_status_leaves_it_a_choice` from one to
+   two model calls is taken under D-40's "assertions that pinned the single-prompt shape re-pin the
+   two-call payloads" — stated here so the gate reads it as the re-seam, not a stealth move.
+   Likewise `tests/test_gateway_ai_chat_controls.py::_chat` and `tests/test_visit_chat_phi.py::_chat`
+   carry the now-required selections (the `A1_SELECTIONS` helper idiom; no assertion moved), and the
+   frontend retained `page.test.tsx` helpers (`okTurn`, new `turnBody`) carry the new required
+   response/request fields with three exact-body assertions re-pointed through `turnBody` (SPEC-54;
+   frontend retained tests sit outside D-40's enumeration — same class, disclosed).
+10. The gateway correlation-mint case is folded into `test_a1_correlation_header_forwarded` rather
+    than a third test, keeping the file's planned +2; `_VisitChatCitation`/`_RelayedCitation`
+    version bounds are 200 B (manifest versions run to 83 B — a 64 B bound 502'd real fallbacks).
+11. The prior session's re-seam commit (@282b397) recorded three app fixes of its own in its
+    message (status vs outcome; ask_status answered from memory; fallback renders the payer
+    result); they stand and are covered by the retained suite.
+
+**Slices test-first vs not.** Test-first this session: the gateway turn tests (both red before the
+gateway code), `test_prompt_fits_reserve` (red → the deviation-5 fix), the two conflict-blend legs
+(red → deviation 7), and the re-seam re-points (red by definition). Green-on-first-run and pinned
+by the verification breaks instead: `test_a1_turn_order.py` (breaks V14a/e/f red 10, 6-of-8 and 1
+respectively), `test_a1_harness.py`, `test_a1_deterministic_turn.py`'s additions, `test_a1_citations.py`'s
+additions, `test_mode_*` (breaks V14c red 2) — the assistant-side code predates them on this branch
+(the branch's first three code commits landed before this session resumed). Verification-covered
+only (no behavioural seam): the six registry/doc rows, `adr/0019`'s paragraph, `CLAUDE.md` §6.
+
+**Traceability.** Every `test:` cell in the frozen spec scope is filled with the planned id;
+`test_a1_harness.py`'s per-case test is `test_appendix_turn_case[EVAL-nnn]` (the plan's row named
+the ids, not a function name). SPEC-37's cmd reads **32** distinct ids (verification 8 ✓).
+
+**Live-run evidence (all local, no live service, no key egress; scripted seams only):**
+- V5 keyless offline import of the whole module set → `ok` (env -i, no bearer, no network).
+- V8 → 32 · V9 → `1499 passed, 1 skipped, 19 deselected, 1 xfailed` (~31 s, .venv 3.12).
+- V10 gitleaks v8.18.4 `--no-git` → exit 0 over a `git archive HEAD` copy in the session
+  scratchpad (isolation: archive copy, not the working tree; the working tree's own run flags only
+  untracked `.venv`/`node_modules` noise CI never sees).
+- V13 message-interpolation break → `test_egress_excludes_clerk_text_and_ids` red; revert green.
+- V14 breaks: once-guard dropped → 10 red in `test_a1_turn_order.py`; health-from-mode → both named
+  tests red; rig patched onto fresh `load_module` copies → red with the scripted queue never
+  consumed and the fail-closed bearer guard in front of the real client (nothing egressed); all
+  reverted green.
+- V15 breaks (working tree only, never committed): `authz.py` grant → EVAL-010 + parity red;
+  yaml-only grant → parity red while EVAL-010 stays green (yaml alone gates nothing); header
+  dropped → forwarded-test red; degrade validator dropped → degrade-half red; all reverted green.
+- V16 frontend: `npm test` 127 passed (13 files), `typecheck`/`lint`/`build` green.
+- V17 fifth-product break → python contract test red; revert green. V18 system-prompt pad → reserve
+  test red; revert green. V19 exclusion diff empty. V20 green in-suite. V20b grep-count 0.
+- V11 docker (python:3.12 image, `--network none`, `AWS_BEARER_TOKEN_BEDROCK=` empty,
+  `LANGSMITH_TRACING=` empty) → `1499 passed, 1 skipped, 19 deselected, 1 xfailed` — the whole
+  default suite offline and keyless, agreeing with V9 (isolation: no network namespace, no key).
+  V12's opt-in live leg needs the owner's `.env` (not loadable by this session): recorded not-run.
+- `make eval` not re-run: verification 19's `eval/` and `db/` legs are empty by design.
+
+**Residuals — registry IDs only:** `docs/todo.md` TODO-70, TODO-71 (filed on this PR); Landmines
+residuals (a)–(j) stand as written; D13 stays OPEN (`docs/debt-log.md`); the three owner calls and
+the `.env.example` slice above are open items of this Delivery, not residuals.
