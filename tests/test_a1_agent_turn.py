@@ -276,3 +276,44 @@ def test_budget_gate_each_call_spend_stop(case_id, site, monkeypatch):
     assert payer.calls == [MEMBER_ID]
     assert body["facts"]["last_eligibility"]["status"] == "active"
     assert "ACTIVE" not in body["reply"]
+
+
+def _citable_block(call: dict) -> str:
+    """The `Document ids you may cite` block of the message injected before model₂.
+
+    Read out of the CAPTURED call rather than by calling `_build_model2_message`
+    directly: what this asserts is what left the process, and the defect this test
+    was written for lived in the wiring between the two — the builder was correct
+    and the rows it was handed were not.
+    """
+    body = json.dumps(call)
+    head = "Document ids you may cite (only these):"
+    start = body.index(head) + len(head)
+    return body[start : body.index("Action ids you may choose from", start)]
+
+
+def test_model2_message_names_the_retrieved_ids(monkeypatch):
+    """SPEC-2 — the injected model₂ message states the closed citation vocabulary
+    itself.
+
+    The retrieved rows also reach the model as the framework's own tool result, so a
+    test that scans the whole call body cannot tell an empty vocabulary from a full
+    one. This one reads the injected block alone: a turn that retrieved four rows and
+    tells model₂ it may cite `(none retrieved)` misstates SPEC-2's "only these" as
+    empty, which on a live model suppresses the citations SPEC-4/41 require.
+    """
+    assert_pinned()
+    case = "EVAL-001"
+    scripted = install_model(
+        monkeypatch,
+        tool_use_body("policy_lookup", {"topic": topic(case)}),
+        decision_body([retrieved_ids(case)[0]], ["note_coverage_result", "escalate"]),
+    )
+    install_payer(monkeypatch, verdict("active", payer="Medicare"))
+
+    assert post(turn(case, facts={"insurance_id": MEMBER_ID})).status_code == 200
+
+    citable = _citable_block(scripted.calls[1])
+    assert "(none retrieved)" not in citable
+    for document_id in retrieved_ids(case):
+        assert f"- {document_id}" in citable

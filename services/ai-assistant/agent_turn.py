@@ -149,6 +149,12 @@ class TurnMiddleware(AgentMiddleware):
             self.turn_state.bound_out(outcome.Reason.validation_reject.value)
             return {"jump_to": "end"}
         if self.turn_state.model_calls == 1:
+            # The retrieved set is rebuilt HERE, off the framework's own tool result,
+            # because this message is where model₂ is told which ids it may cite.
+            # `run_agent_path`'s post-invoke scan runs strictly after every
+            # `before_model`, so reading the rows from there left the injected
+            # message declaring the citation vocabulary EMPTY on every turn.
+            self.turn_state.rows = _rows_from_messages(state["messages"])
             self.payer_gate.run()
             status_verdict = self.payer_gate.status_verdict
             status = (status_verdict or {}).get("status") or ""
@@ -222,6 +228,19 @@ def _rows_from_tool_result(content: Any) -> List[Any]:
         except KeyError:
             continue
     return rows
+
+
+def _rows_from_messages(messages) -> List[Any]:
+    """The turn's retrieved rows, rebuilt from the first tool result in the thread.
+
+    One reader for both call sites — the middleware's injection point and the
+    post-invoke read — so the rows model₂ is told it may cite and the rows the
+    citation gate validates against cannot come apart.
+    """
+    for message in messages:
+        if getattr(message, "type", "") == "tool":
+            return _rows_from_tool_result(message.content)
+    return []
 
 
 def build_graph(*, payer: str, product: str, state: str, middleware=()):
@@ -313,10 +332,7 @@ def run_agent_path(
         )
 
     messages = result.get("messages", [])
-    for message in messages:
-        if getattr(message, "type", "") == "tool":
-            turn_state.rows = _rows_from_tool_result(message.content)
-            break
+    turn_state.rows = _rows_from_messages(messages)
 
     if turn_state.reason is not None:
         return AgentResult(
