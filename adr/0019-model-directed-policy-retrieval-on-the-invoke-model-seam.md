@@ -198,9 +198,15 @@ layer adds (eligibility-assistant-D-69).
 site and `default_ranker` is its unit: tier rank asc, `retrieval_date` desc, `document_id`
 asc — a total order on closed manifest fields with no `version_effective` parse, that field
 being prose on all 87 rows (eligibility-assistant-D-62). Substituting the unit changes the
-order of a filtered set and never its membership (SPEC-66); the test substitutes a unit
-that orders the rows itself rather than one defined as "the default, reversed", so a
-default that dropped a row would be caught as a membership change.
+order of a filtered set and never its membership (SPEC-66), and `rank` **enforces** that
+rather than trusting the substituted unit: it materialises its input, runs the unit, and
+raises `ValueError` unless the returned document ids are the input's multiset — so a unit
+that drops, duplicates or adds a row fails loudly instead of silently thinning the
+citations before the cap applies (codex review round 1). Two tests hold it: the isolation
+test substitutes a unit that orders the rows itself rather than one defined as "the
+default, reversed", so a default that dropped a row would be caught as a membership
+change, and a negative test drives four illegal units — drop, empty, duplicate, foreign
+row — through the guard.
 
 **The recall baseline is a number, not a gate.** SPEC-64 is measured over the **27** of the
 32 acceptance cases that name a *retrievable* source under eligibility-assistant-D-12: a

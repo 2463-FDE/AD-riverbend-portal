@@ -487,9 +487,16 @@ def rank(
     """The one ordering site, separate from filtering (eligibility-assistant-SPEC-66).
 
     `ranker` substitutes the ranking unit without patching this function; it defaults to
-    `default_ranker`.
+    `default_ranker`. Substitution changes the order and never the membership: the unit's
+    output is checked against its input as a multiset of document ids, so a unit that
+    drops, adds or duplicates a row raises rather than silently thinning the citations
+    the caller then caps.
     """
-    return (ranker or default_ranker)(rows)
+    candidates = list(rows)
+    ordered = list((ranker or default_ranker)(candidates))
+    if sorted(row.id for row in ordered) != sorted(row.id for row in candidates):
+        raise ValueError("ranking unit changed membership")
+    return ordered
 
 
 def _desc(date: str) -> Tuple[int, ...]:

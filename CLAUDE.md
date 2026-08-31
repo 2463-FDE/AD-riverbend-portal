@@ -138,7 +138,7 @@ reddens on an unconverted new route, and a structural scan with a positive contr
 - `tests/`, pytest, one marker (`integration`). No shared package, so tests load modules by file
   path via `tests/conftest.py::load_module`. Bare sibling names (`config`) collide across services
   — pin `sys.modules` first.
-- **Baseline, measured 2026-08-30 under `make test-docker`: `1368 passed, 19 deselected, 1 xfailed`.**
+- **Baseline, measured 2026-08-30 under `make test-docker`: `1369 passed, 19 deselected, 1 xfailed`.**
   The xfail is the HL7 AL1/RXA gap; the deselected 19 are the integration tests (`tests/integration/`),
   which need a live Postgres and run in CI's `migrations` job / `make test-migrations`, not the
   default run — e6 added 14 of them with the migration runner. These counts are

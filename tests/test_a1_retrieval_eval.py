@@ -16,6 +16,8 @@ Every test opens with the rig's identity assertions (eligibility-assistant-D-66)
 import json
 import os
 
+import pytest
+
 from a1_corpus_rig import assert_pinned, policy_index, settings
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -182,3 +184,34 @@ def test_ranking_isolated_from_filtering():
         ]
         assert default_order == expected_order, bucket
         assert default_order == [row.id for row in policy_index.rank(rows, ranker=None)], bucket
+
+
+def test_ranking_unit_cannot_change_membership():
+    """SPEC-66's invariant is enforced by `rank` itself (codex review round 1, f1).
+
+    `rank` returned whatever the substituted unit returned, so a unit that dropped rows
+    thinned the filtered set before the cap — the one benign ranker above happened to
+    preserve membership, and nothing else held the guarantee.
+    """
+    assert_pinned()
+    bucket = RANKING_BUCKETS[0]
+    rows = list(policy_index._filter(*bucket))
+    assert len(rows) >= 2, bucket
+    ids = {row.id for row in rows}
+    foreign = [row for row in policy_index._filter(*RANKING_BUCKETS[1]) if row.id not in ids]
+    assert foreign, "bucket 2 shares every id with bucket 1"
+
+    # drops a row · drops every row · duplicates a row · adds a row from another bucket
+    for ranker in (
+        lambda candidates: list(candidates)[:-1],
+        lambda candidates: [],
+        lambda candidates: list(candidates) + [list(candidates)[0]],
+        lambda candidates: list(candidates) + [foreign[0]],
+    ):
+        with pytest.raises(ValueError, match="ranking unit changed membership"):
+            policy_index.rank(rows, ranker=ranker)
+
+    # a unit that only reorders is untouched, and the input is materialised once, so a
+    # one-shot iterable is ranked whole rather than compared against an exhausted source
+    reordered = policy_index.rank(iter(rows), ranker=lambda candidates: list(candidates)[::-1])
+    assert [row.id for row in reordered] == [row.id for row in rows][::-1]
