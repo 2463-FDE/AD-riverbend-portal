@@ -336,7 +336,7 @@ Open before FROZEN: none — eligibility-assistant-D-20..24 resolved 2026-08-24 
 | turn | eligibility-assistant-SPEC-1–6, 12–23, 25–26, 33, 36–37, 39a, 41–42, 44–56 | GATED 2026-08-28 | — | — | — |
 | trace | eligibility-assistant-SPEC-27–29, 31–32, 34–35, 39b, 40 | GATED 2026-08-28 | — | — | — |
 | lifecycle | eligibility-assistant-SPEC-58–62 | GATED 2026-08-28 | — | — | — |
-| retrieval-eval | eligibility-assistant-SPEC-63–66 | GATED 2026-08-28 | 1364 passed, 19 deselected, 1 xfailed (2026-08-30, `make test-docker` at branch cut off `main` @434342a; `.venv` 3.12 agrees) | PUSHED PR #95 (2026-08-30; IMPLEMENTED 2026-08-30; codex r1: 1 major, **A**, fixed @ca6ac6c · r2: approve, 0 findings, dry, loop closed in 2) | — |
+| retrieval-eval | eligibility-assistant-SPEC-63–66 | GATED 2026-08-28 | 1364 passed, 19 deselected, 1 xfailed (2026-08-30, `make test-docker` at branch cut off `main` @434342a; `.venv` 3.12 agrees) | MERGED a5b4b7f (PR #95, 2026-08-30; IMPLEMENTED 2026-08-30; codex r1: 1 major, **A**, fixed @ca6ac6c · r2: approve, 0 findings, dry, loop closed in 2) | 0a9f133 |
 
 ### Per-ticket delivery records
 
@@ -394,4 +394,7 @@ ticket file's `## Findings` records basis and deviation. Branch `feat/noref-elig
 @f64c3d1, merge-base `434342a`. Baseline observed at gate (docker + `.venv` 3.12 agree): `1368
 passed, 19 deselected, 1 xfailed` = 1364 + 4, deselected / xfailed unmoved. `gate:` SPEC-65:
 observed, matches (27 values, `min recall@5 = 0.50`). Residuals accepted here: (a)–(e) of the
-record row above, as IDs; D13 stays OPEN. Push stays human-gated.
+record row above, as IDs; D13 stays OPEN. Push was human-gated. **Merged 2026-08-30, squash
+`a5b4b7f`**; codex r1 one major, **A** (`rank` returned a substituted unit's output unchecked
+— membership, not just order, SPEC-66) fixed @ca6ac6c, r2 approve dry. Final baseline `1369
+passed, 19 deselected, 1 xfailed` = 1364 + 5; 16/16 CI green; ticket file deleted @0a9f133.
