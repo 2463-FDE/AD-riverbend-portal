@@ -126,7 +126,6 @@ def _decision_body(citation_ids, action_ids):
 
 
 _OFFERED_DOC_RE = re.compile(r"^- (DOC-[A-Z0-9-]+)$", re.MULTILINE)
-_OFFERED_ACTION_RE = re.compile(r"^- ([a-z_]+): ", re.MULTILINE)
 _STATUS_RE = re.compile(r"Eligibility status from the payer for this turn: (\S+)")
 
 

@@ -398,14 +398,21 @@ def a1_verdict_line(status: str, a1_status: str, verdict: dict = None) -> str:
     the `unavailable` outage SPEC-53 names. Those are turns where "coverage is …"
     would be a claim about a check that did not happen.
 
-    "Has a payer status to speak from" is read off the verdict itself: a real
-    payer ANSWER (the dict carries a payer name) keeps its own sentence — a
-    reused `pending` renders as the stamped past observation it has always been,
-    even though its OUTCOME is `unavailable` (eligibility-assistant-D-38) — while
-    a degraded verdict (no payer reached) has nothing to restate and takes the
-    outcome sentence.
+    One outcome bends the other way: `unavailable` reached through a real payer
+    ANSWER (the dict carries a payer name — a `pending` check, concluded
+    unavailable by eligibility-assistant-D-38) keeps the payer's own stamped
+    sentence, because there IS a past observation to restate and the pending
+    wording is the one this service has always produced. The refusal-class
+    outcomes (`conflict`, `refuse_definitive`, `refuse`, `stop`, `care_first`)
+    never restate a payer line — that would be exactly the definitive answer
+    they exist to withhold.
     """
-    if verdict and verdict.get("payer") and status in _VERDICT_LINES:
+    if (
+        a1_status == "unavailable"
+        and verdict
+        and verdict.get("payer")
+        and status in _VERDICT_LINES
+    ):
         return verdict_line(status, verdict)
     if a1_status in A1_OUTCOME_STATUSES:
         return _VERDICT_LINES[a1_status]

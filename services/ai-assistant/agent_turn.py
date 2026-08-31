@@ -150,7 +150,14 @@ class TurnMiddleware(AgentMiddleware):
             return {"jump_to": "end"}
         if self.turn_state.model_calls == 1:
             self.payer_gate.run()
-            self.turn_state.status = (self.payer_gate.status_verdict or {}).get("status") or ""
+            status_verdict = self.payer_gate.status_verdict
+            status = (status_verdict or {}).get("status") or ""
+            # SPEC-53: a degraded verdict — eligibility_client never reached the
+            # payer, recognisable by the missing payer name — reaches model₂ as
+            # `unavailable`, the outage word, never as a status the payer said.
+            if status_verdict is not None and status_verdict.get("payer") is None:
+                status = "unavailable"
+            self.turn_state.status = status
             return {
                 "messages": [
                     HumanMessage(

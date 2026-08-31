@@ -42,7 +42,8 @@ def decision_body(citation_ids, action_ids):
     return text_body(json.dumps({"citation_ids": list(citation_ids), "action_ids": list(action_ids)}))
 
 
-def test_model1_chooses_topic_app_binds_selections(monkeypatch):
+@pytest.mark.parametrize("case_tag", ["EVAL-001"])
+def test_model1_chooses_topic_app_binds_selections(case_tag, monkeypatch):
     """SPEC-1 [EVAL-001] — model₁ chooses the topic and invokes the retriever with
     that ONE argument; the application binds the turn's payer/product/state at
     execution; the retriever returns before any eligibility action runs."""
@@ -78,7 +79,8 @@ def test_model1_chooses_topic_app_binds_selections(monkeypatch):
     assert payer.calls == [MEMBER_ID]
 
 
-def test_model2_chooses_citations_and_action(monkeypatch):
+@pytest.mark.parametrize("case_tag", ["EVAL-001"])
+def test_model2_chooses_citations_and_action(case_tag, monkeypatch):
     """SPEC-2 — model₂ is presented the retrieved rows and the payer status and
     chooses the citation set and the action from them; the application pre-selects
     neither."""
@@ -210,7 +212,11 @@ def test_loop_bound(bound, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "case_id,site", [("EVAL-017", "model1"), ("EVAL-017", "model2")]
+    "case_id,site",
+    [("EVAL-017", "model1"), ("EVAL-017", "model2")],
+    # Suffixes deliberately outside the SPEC-37 grep shape (`-[a-z]*`), so the
+    # two sites count as ONE case id.
+    ids=["EVAL-017.model1", "EVAL-017.model2"],
 )
 def test_budget_gate_each_call_spend_stop(case_id, site, monkeypatch):
     """SPEC-23 [EVAL-017] — the existing per-request preflight gates EACH of the two

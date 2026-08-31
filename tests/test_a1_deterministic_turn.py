@@ -54,7 +54,8 @@ def test_eval_016_024_emergency(case_id, monkeypatch):
     assert body["assistant"] == "ok"
 
 
-def test_cross_patient_refused(monkeypatch):
+@pytest.mark.parametrize("case_tag", ["EVAL-012"])
+def test_cross_patient_refused(case_tag, monkeypatch):
     """SPEC-49 [EVAL-012] — a recognised member id other than the held one refuses,
     for every role, BEFORE any retrieval, model or payer call."""
     assert_pinned()
@@ -81,29 +82,31 @@ def test_cross_patient_refused(monkeypatch):
     assert body["facts"]["insurance_id"] == "AETN1224"
 
 
-def test_zero_model_calls_emergency_cross_patient(monkeypatch):
+@pytest.mark.parametrize(
+    "case_id,body_kwargs",
+    [
+        ("EVAL-016", {"emergency": True}),
+        (
+            "EVAL-012",
+            {"message": "and also CIGN9087", "facts": {"insurance_id": "AETN1224"}},
+        ),
+    ],
+    ids=["emergency", "cross_patient"],
+)
+def test_zero_model_calls_emergency_cross_patient(case_id, body_kwargs, monkeypatch):
     """SPEC-3's stronger half — for `emergency` and `cross_patient` the assistant
     makes zero MODEL CALLS, not merely no model output reaching the reply."""
     assert_pinned()
-    for body_kwargs in (
-        {"case_id": "EVAL-016", "emergency": True},
-        {
-            "case_id": "EVAL-012",
-            "message": "and also CIGN9087",
-            "facts": {"insurance_id": "AETN1224"},
-        },
-    ):
-        case_id = body_kwargs.pop("case_id")
-        scripted = install_model(monkeypatch)
-        payer = install_payer(monkeypatch, verdict("active"))
-        response = post(turn(case_id, **body_kwargs))
-        assert response.status_code == 200, case_id
-        # The scripted queue is untouched: not one create reached it, and none of the
-        # bodies it would have served was consumed.
-        assert scripted.calls == [], case_id
-        assert scripted.remaining == 0, case_id
-        assert payer.calls == [], case_id
-        assert response.json()["llm_egress"] is False, case_id
+    scripted = install_model(monkeypatch)
+    payer = install_payer(monkeypatch, verdict("active"))
+    response = post(turn(case_id, **body_kwargs))
+    assert response.status_code == 200, case_id
+    # The scripted queue is untouched: not one create reached it, and none of the
+    # bodies it would have served was consumed.
+    assert scripted.calls == [], case_id
+    assert scripted.remaining == 0, case_id
+    assert payer.calls == [], case_id
+    assert response.json()["llm_egress"] is False, case_id
 
 
 def test_emergency_ignores_eligibility_state(monkeypatch):
@@ -124,3 +127,79 @@ def test_emergency_ignores_eligibility_state(monkeypatch):
         body = response.json()
         replies.append((body["reply"], body["outcome"], body["mode"], body["reason"]))
     assert len(set(replies)) == 1, replies
+
+
+# One marker per channel a model could write through. If any of these strings
+# reaches a deterministic turn's reply, model output crossed REQ-1⁗'s line.
+_MARKER = "MODEL-OUTPUT-SENTINEL-7431"
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "emergency",
+        "cross_patient",
+        "validation_reject",
+        "no_retrieval",
+        "spend_stop",
+        "model_failure",
+    ],
+)
+def test_no_model_output_reaches_reply(reason, monkeypatch):
+    """SPEC-3 — on every eligibility-assistant-D-19 reason, no model output
+    reaches the reply: the citations are exactly the reason's fixed set and the
+    marker the model was scripted to emit is nowhere in the response."""
+    import json as _json
+
+    from a1_rig import app_mod, settings, text_body, tool_use_body
+
+    assert_pinned()
+    case = "EVAL-001"
+    payer = install_payer(monkeypatch, verdict("active", payer="Medicare"))
+    body_kwargs = {"facts": {"insurance_id": "AETN1224"}}
+    expected_citations = list(
+        outcome.REASON_CITATION_IDS[outcome.Reason(reason)]
+    )
+
+    if reason == "emergency":
+        install_model(monkeypatch, text_body(_MARKER))
+        body_kwargs = {"emergency": True}
+        expected_citations.append("DOC-COVERAGE-QUESTION-CHEAT-SHEET")
+        case = "EVAL-016"  # question type `emergency` adds the cheat sheet
+    elif reason == "cross_patient":
+        install_model(monkeypatch, text_body(_MARKER))
+        body_kwargs = {
+            "message": f"try CIGN9087 {_MARKER}",
+            "facts": {"insurance_id": "AETN1224"},
+        }
+    elif reason == "validation_reject":
+        # The model's whole output is the marker, offered as an "action id".
+        install_model(
+            monkeypatch,
+            tool_use_body("policy_lookup", {"topic": "eligibility-verification"}),
+            text_body(_json.dumps({"citation_ids": [], "action_ids": [_MARKER]})),
+        )
+    elif reason == "no_retrieval":
+        install_model(monkeypatch, text_body(_MARKER))
+    elif reason == "spend_stop":
+        install_model(monkeypatch, text_body(_MARKER))
+        monkeypatch.setattr(settings, "llm_max_cost_per_request_usd", 0.000001)
+    else:  # model_failure — the marker is the exception MESSAGE
+        def _raise(*a, **k):
+            raise app_mod.llm_client.LLMUnavailable(_MARKER)
+
+        monkeypatch.setattr(app_mod.llm_client, "_call", _raise)
+        install_payer(monkeypatch, verdict("active", payer="Medicare"))
+
+    response = post(turn(case, **body_kwargs))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert _MARKER not in response.text or reason == "cross_patient", (
+        "model output reached the response"
+    )
+    if reason == "cross_patient":
+        # The marker rode the clerk's own message there; the REPLY is still clean.
+        assert _MARKER not in body["reply"]
+    assert body["reason"] == reason
+    assert [c["document_id"] for c in body["citations"]] == expected_citations

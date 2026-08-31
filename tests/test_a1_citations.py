@@ -47,3 +47,92 @@ def test_reason_citations_fetched_by_id():
         "DOC-SYN-EMERGENCY",
         "DOC-COVERAGE-QUESTION-CHEAT-SHEET",
     )
+
+
+def _decision(citation_ids, action_ids):
+    import json
+
+    from a1_rig import text_body
+
+    return text_body(
+        json.dumps({"citation_ids": list(citation_ids), "action_ids": list(action_ids)})
+    )
+
+
+import pytest
+
+
+@pytest.mark.parametrize("case_tag", ["EVAL-001"])
+def test_citation_four_fields(case_tag, monkeypatch):
+    """SPEC-4 [EVAL-001] — every rendered citation carries exactly title, id,
+    section and version, each the index row's OWN value: the section is the
+    manifest `section_labels` string verbatim, rendered from the row and never
+    split, parsed or re-derived (eligibility-assistant-D-61)."""
+    from a1_rig import (
+        MEMBER_ID,
+        install_model,
+        install_payer,
+        post,
+        retrieved_ids,
+        tool_use_body,
+        topic,
+        turn,
+        verdict,
+    )
+
+    assert_pinned()
+    case = "EVAL-001"
+    cited = retrieved_ids(case)[0]
+    install_model(
+        monkeypatch,
+        tool_use_body("policy_lookup", {"topic": topic(case)}),
+        _decision([cited], ["note_coverage_result"]),
+    )
+    install_payer(monkeypatch, verdict("active", payer="Medicare"))
+
+    body = post(turn(case, facts={"insurance_id": MEMBER_ID})).json()
+
+    assert len(body["citations"]) == 1
+    citation = body["citations"][0]
+    assert set(citation) == set(CITATION_FIELDS)
+    row = policy_index._current().row(cited)
+    assert citation["title"] == row.title
+    assert citation["document_id"] == row.id
+    assert citation["section"] == row.section  # the section_labels string verbatim
+    assert citation["version"] == row.version
+
+
+def test_unretrieved_id_never_renders(monkeypatch):
+    """SPEC-5 — a REAL manifest id the turn did not retrieve cannot render: the
+    selection is discarded whole and the fallback cites the reason table's id."""
+    from a1_rig import (
+        MEMBER_ID,
+        install_model,
+        install_payer,
+        post,
+        retrieved_ids,
+        tool_use_body,
+        topic,
+        turn,
+        verdict,
+    )
+
+    assert_pinned()
+    case = "EVAL-001"
+    # A genuine manifest id, deliberately from OUTSIDE this turn's retrieved set —
+    # the strongest form: catalog membership alone must not admit it.
+    unretrieved = "DOC-SYN-EFFECTIVE-TERM-DATES"
+    assert unretrieved not in retrieved_ids(case)
+    install_model(
+        monkeypatch,
+        tool_use_body("policy_lookup", {"topic": topic(case)}),
+        _decision([unretrieved], ["note_coverage_result"]),
+    )
+    install_payer(monkeypatch, verdict("active", payer="Medicare"))
+
+    body = post(turn(case, facts={"insurance_id": MEMBER_ID})).json()
+
+    assert unretrieved not in [c["document_id"] for c in body["citations"]]
+    assert unretrieved not in body["reply"]
+    assert body["reason"] == "validation_reject"
+    assert [c["document_id"] for c in body["citations"]] == ["DOC-SYN-NO-INVENTION"]

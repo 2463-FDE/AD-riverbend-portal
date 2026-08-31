@@ -713,7 +713,11 @@ def _build_model2_message(status: str, rows, req: VisitChatRequest) -> str:
         "\nDocument ids you may cite (only these):\n"
         + ("\n".join(f"- {row.id}" for row in rows) if rows else "- (none retrieved)")
         + "\n\nAction ids you may choose from (only these):\n"
-        + "\n".join(f"- {key}: {visit_templates.CATALOG[key]}" for key in allowed)
+        # IDS only, never the template copy (the plan's enumeration and the
+        # eligibility-assistant-D-64 reserve both size this message on ids): the
+        # pre-reviewed sentences are rendered server-side after validation, so
+        # egressing them buys the model nothing and spends the reserve.
+        + "\n".join(f"- {key}" for key in allowed)
         + "\n\nReply with the JSON object described in your instructions."
     )
 
