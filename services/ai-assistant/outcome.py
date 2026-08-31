@@ -145,13 +145,15 @@ GATE_OUTCOME: dict = {
 
 
 def payer_outcome(verdict) -> "Outcome":
-    """The outcome a payer verdict alone concludes (SPEC-15).
+    """The outcome a payer verdict alone concludes (SPEC-15, eligibility-assistant-D-38).
 
     Never a denial from anything but a payer result: an absent verdict is
-    ``unknown``, and a DEGRADED verdict — one ``eligibility_client`` built without
+    ``unknown``; a DEGRADED verdict — one ``eligibility_client`` built without
     reaching the payer, recognisable because it carries no payer name — is
-    ``unavailable``, the outage outcome SPEC-53 routes to a person. Only a real
-    ``inactive`` from the payer renders as ``inactive``.
+    ``unavailable``, the outage outcome SPEC-53 routes to a person, and so is a
+    ``pending`` one (a check that has not completed is not an answer a clerk can
+    act on either — eligibility-assistant-D-38's payer-derived table). Only a
+    real ``inactive`` from the payer renders as ``inactive``.
     """
     if not verdict:
         return Outcome.unknown
@@ -160,9 +162,82 @@ def payer_outcome(verdict) -> "Outcome":
         return Outcome.active
     if status == "inactive":
         return Outcome.inactive
-    if verdict.get("payer") is None:
+    if verdict.get("payer") is None or status == "pending":
         return Outcome.unavailable
     return Outcome.unknown
+
+
+# Action ids that KEY an outcome when model₂ selects them (eligibility-assistant-
+# D-38): detection is the model's bounded choice, every consequence is code.
+_CONFLICT_ACTION = "state_conflict"
+_REVERIFY_ACTIONS = ("reverify", "note_disputed")
+
+# The applicability tier bound: a definitive documentary basis is a row of tier
+# 1–3 (regulation, current official source, citation-only payer record); tiers
+# 4–5 are the clinic's own synthetic material (eligibility-assistant-D-38).
+_APPLICABLE_TIER = 3
+
+
+def applicability_mismatch(rows, *, product: str, state: str) -> bool:
+    """The in-code applicability check (SPEC-42 / eligibility-assistant-D-32/D-38).
+
+    True when the retrieved set cannot support a definitive answer: nothing was
+    retrieved, no retrieved row is of tier ≤ 3, or the turn's product/state is
+    `unconfirmed` and every retrieved row needs product confirmation (EVAL-023's
+    citation-only payer pages). Computed from the rows returned, never inferred
+    from an empty result's absence (eligibility-assistant-D-32).
+    """
+    if not rows:
+        return True
+    if not any(policy_index.tier(row.id) <= _APPLICABLE_TIER for row in rows):
+        return True
+    if product == "unconfirmed" or state == "unconfirmed":
+        entries = policy_index._current().entries
+        if all(entries[row.id].needs_product_confirmation for row in rows):
+            return True
+    return False
+
+
+def agent_outcome(decision, rows, verdict, *, product: str, state: str):
+    """What an agent-path turn concluded (eligibility-assistant-D-38), or None
+    when the selection is invalid for the outcome it keys (a `state_conflict`
+    with nothing to conflict — the caller takes `validation_reject`).
+
+    Precedence, reconciled against the contract Appendix (the frozen harness
+    outcomes outrank eligibility-assistant-D-38's summary where they disagree —
+    recorded as a `turn` Delivery deviation):
+
+      1. the applicability check — fired only when the turn obtained NO payer
+         verdict, because a coverage answer the payer gave is not withdrawn over
+         document tiers (EVAL-002 `inactive` and EVAL-004 `reverify` retrieve
+         tier-4-only sets and keep their outcomes; EVAL-006/013/023 are
+         verdict-less turns and refuse) → ``refuse_definitive``;
+      2. model₂ selected `state_conflict` → ``conflict``, valid only when it
+         cites at least two sources — or the turn's WHOLE retrieved set when
+         fewer than two rows were retrieved (EVAL-007's conflict is against a
+         source outside the corpus; one row is all there is to cite) — else the
+         caller rejects the selection;
+      3. model₂ selected `reverify` / `note_disputed` → ``reverify`` (a payer
+         `inactive` beside a disputed card is EVAL-025's reverify, so this
+         outranks the payer);
+      4. otherwise the payer-derived outcome.
+
+    Detection (which ids the model chose) is the model's bounded freedom; every
+    consequence here is code, and nothing below ever authors a verdict.
+    """
+    actions = set(decision.action_ids)
+    if verdict is None and applicability_mismatch(rows, product=product, state=state):
+        return Outcome.refuse_definitive
+    if _CONFLICT_ACTION in actions:
+        enough = len(decision.citation_ids) >= 2 or (
+            len(rows) < 2 and len(decision.citation_ids) == len(rows)
+        )
+        if not enough:
+            return None
+        return Outcome.conflict
+    if actions & set(_REVERIFY_ACTIONS):
+        return Outcome.reverify
+    return payer_outcome(verdict)
 
 
 def fallback_outcome(reason: "Reason", verdict) -> "Outcome":

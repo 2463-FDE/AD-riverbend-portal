@@ -323,3 +323,42 @@ def test_the_lock_fault_carries_no_value(redis):
 
 def test_releasing_without_a_token_is_a_noop(redis):
     security.visit_lock_release(security.new_visit_id(), None)
+
+
+# --------------------------------------------------------------------------- #
+# eligibility-assistant SPEC-20: citation provenance at rest
+# --------------------------------------------------------------------------- #
+def test_a1_provenance_fields_no_text(redis):
+    """The visit's citation provenance round-trips as document ids + versions
+    ONLY — no document text, section text, title or path is persisted (the
+    phi-logging-policy rule-6 controls the register's amended row grants) — a
+    `text` key is rejected by the shape that owns the field, and the write's
+    TTL discipline is unchanged."""
+    visit_id = security.new_visit_id()
+    facts = {
+        "insurance_id": MEMBER_ID,
+        "last_eligibility": {"active": True, "status": "active"},
+        "last_citations": [
+            {"document_id": "DOC-PAYER-AETNA-ELIG", "version": "2026-07"}
+        ],
+    }
+    security.visit_memory_save(visit_id, OWNER, facts, [], 1800, 12)
+
+    record = security.visit_memory_get(visit_id, OWNER)
+
+    assert record["facts"]["last_citations"] == facts["last_citations"]
+    assert '"text"' not in json.dumps(record)
+    # The TTL is the retention policy for this state, and the new field rides
+    # the SAME write: no second key, no different expiry.
+    assert redis.ttls[f"visit:{visit_id}"] == 1800
+
+    # A citation with prose in it cannot even be BUILT: the owning shape
+    # (ai-assistant schemas.Citation, extra="forbid") rejects a text key, so no
+    # code path can hand the store one. Imported from the rig's pinned module
+    # set — the copy the wired turn actually uses.
+    from a1_rig import schemas as a1_schemas
+
+    with pytest.raises(Exception):
+        a1_schemas.Citation(
+            document_id="DOC-PAYER-AETNA-ELIG", version="2026-07", text="prose"
+        )

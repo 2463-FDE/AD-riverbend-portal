@@ -487,13 +487,25 @@ def test_no_llm_failure_discards_a_completed_eligibility_result(
 
     assert r.status_code == 200, f"{error_name} must not fail a turn that already checked"
     body = r.json()
-    # The verdict the payer gave us survives, in all three places the caller
-    # reads it: the turn's result, the reply text, and the facts to persist.
-    assert body["eligibility"]["status"] == "active"
-    assert body["facts"]["last_eligibility"]["status"] == "active"
-    assert "ACTIVE" in body["reply"].split("\n")[0].upper()
-    for item in visit_templates.render(visit_templates.default_selection("active")):
-        assert item in body["reply"]
+    if error_name == "LLMBudgetExceeded":
+        # eligibility-assistant-D-26 (owner-amended at spec review): the budget
+        # preflight concludes `stop`. The verdict the payer call paid for still
+        # survives — persisted in FACTS for the next turn — but is deliberately
+        # NOT rendered beside a stop, because restating a coverage answer there
+        # would claim the turn finished. The invariant this test was written for
+        # (no LLM fault destroys a paid verdict) holds through the facts.
+        assert body["facts"]["last_eligibility"]["status"] == "active"
+        assert body["eligibility"] is None
+        assert "ACTIVE" not in body["reply"].split("\n")[0].upper()
+        assert body["outcome"] == "stop"
+    else:
+        # The verdict the payer gave us survives, in all three places the caller
+        # reads it: the turn's result, the reply text, and the facts to persist.
+        assert body["eligibility"]["status"] == "active"
+        assert body["facts"]["last_eligibility"]["status"] == "active"
+        assert "ACTIVE" in body["reply"].split("\n")[0].upper()
+        for item in visit_templates.render(visit_templates.default_selection("active")):
+            assert item in body["reply"]
     # ...and exactly one payer call was spent to get it.
     assert fake_eligibility == [MEMBER_ID]
 

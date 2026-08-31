@@ -1211,8 +1211,20 @@ def visit_chat(req: VisitChatRequest, request: Request):
     # is status `pending` and outcome `unavailable`, and a spend stop has a payer
     # status and outcome `stop`.
     status = (verdict or {}).get("status") or visit_templates.AWAITING_ID
-    concluded = outcome.payer_outcome(verdict)
-    validated = _validated_selection(step.decision, step.rows, req, concluded)
+    # The outcome derivation (eligibility-assistant-D-38): the applicability
+    # check, the two selection-keyed outcomes (conflict, reverify) and the
+    # payer-derived table, in `outcome.agent_outcome`'s stated precedence. None
+    # means the selection keyed an outcome it cannot support (a `state_conflict`
+    # with nothing to conflict) — rejected like any other invalid selection.
+    concluded = outcome.agent_outcome(
+        step.decision, step.rows, verdict,
+        product=req.product.value, state=req.state.value,
+    )
+    validated = (
+        None
+        if concluded is None
+        else _validated_selection(step.decision, step.rows, req, concluded)
+    )
     if validated is None:
         return _deterministic_turn(
             req, outcome.Reason.validation_reject, correlation_id, facts=facts,
