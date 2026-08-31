@@ -113,8 +113,14 @@ def test_eval_007_020_013_023(case_id, monkeypatch):
     axes) can answer refuses definitively. Conflicting sources are never
     blended: the reply's coverage line is a catalog template, not a synthesis.
     """
+    # `assert_pinned` is re-imported here deliberately: the module-level one is
+    # `a1_corpus_rig`'s, which checks the corpus module set only. The turn half of
+    # this file patches through `a1_rig`, so it is `a1_rig`'s three extra identity
+    # assertions — `agent_binding.llm_client`, `agent_turn.llm_client`,
+    # `agent_turn.eligibility_client` — that have to hold before a turn runs here.
     from a1_rig import (
         MEMBER_ID,
+        assert_pinned,
         install_model,
         install_payer,
         post,
