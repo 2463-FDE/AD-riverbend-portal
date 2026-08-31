@@ -1063,6 +1063,22 @@ a universally-quantified spec clause against a singly-instantiated test; that is
 copying into the gates, not a reason to weight its verdict as verification.
 
 
+**PR #96 r1 — 2026-08-30, needs-attention.** 2 findings (1 blocker, 1 major), **2 A / 0 B / 0 C /
+0 E**. Docs-only PR: the eligibility-assistant contract hit 400/400 under `workflow-doc-cap`, closed
+by folding the three wrapped impl-gate blocks into the per-ticket record rows (eligibility-assistant-D-83,
+TODO-69). B1 (A, fixed `9b59e38`): the register entry and the TODO closure both claimed the fold was
+verbatim and that "the pre-fold sha is the check" — while naming no sha; it lived in the PR body,
+which the squash does not keep. Both entries now carry
+`git show b24179c:docs/workflow/eligibility-assistant.md` and the line range. M1 (A, fixed `b8f4b89`):
+the README's `## Delivery` row and the contract's record-table intro still read "references only"
+against a decision that had just put a narrative summary in the same cell — two live sentences, opposite
+answers, in the PR that moved the line. Restated at both sites to the boundary that actually holds:
+what must outlive the ticket file. Lesson: **a self-verifying claim has to name the object that verifies
+it** — "the diff is the check" degrades to nothing the moment the history it points at is unnamed; and a
+shape change is not landed until every sentence that states the old shape moves with it, which is the
+same class as PR #91's r2 finding about a rule described in two docs.
+
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
