@@ -41,18 +41,20 @@ the module under test by file path (see `conftest.py::load_module`).
   (`test_a1_retrieval_eval.py`); all five share the pinned module rig `a1_corpus_rig.py`. The agent
   binding on the `invoke_model` seam — fail-closed guards on the tool payload, the send/receive
   round trip, the SystemMessage rules, the post-egress guard/telemetry parity with
-  `complete()` and the control-by-control enumeration of that twin — is in `test_llm_client.py`. The wired
-  eligibility-assistant turn (shared rig `a1_rig.py`, seamed over `a1_corpus_rig.py`): the agent
-  path and its loop bounds (`test_a1_agent_turn.py`), the deterministic turns
-  (`test_a1_deterministic_turn.py`), citation shape and provenance (`test_a1_citations.py`), the
-  vendor-boundary scan and prompt byte budget (`test_a1_prompt_boundary.py`), the validation gate
-  and the three report fields (`test_a1_validation.py`), call order and the payer once-guard
-  (`test_a1_turn_order.py`), the Appendix acceptance harness (`test_a1_harness.py`), the payload
-  contract (`test_a1_turn_contract.py`), and the opt-in live-Bedrock leg (`test_a1_live.py`)
+  `complete()` and the control-by-control enumeration of that twin — is in `test_llm_client.py`
   (`test_a1_binding_*`), and the never-stream guarantee
   in `test_a1_trace.py`, which the `trace` ticket extends. The adapter that feeds both halves is
   pinned total over a drifted 200 body in the same file
   (`test_a1_adapt_total_over_non_dict_bodies`, `test_a1_call_types_shape_errors_outside_adapt`).
+  The wired eligibility-assistant turn (shared rig `a1_rig.py`, seamed over `a1_corpus_rig.py`):
+  the agent path and its loop bounds (`test_a1_agent_turn.py`), the deterministic turns
+  (`test_a1_deterministic_turn.py`), citation shape and provenance (`test_a1_citations.py`), the
+  vendor-boundary scan and prompt byte budget (`test_a1_prompt_boundary.py`), the validation gate
+  and the three report fields (`test_a1_validation.py`), call order and the payer once-guard
+  (`test_a1_turn_order.py`), the Appendix acceptance harness (`test_a1_harness.py`), the payload
+  contract (`test_a1_turn_contract.py`), and the opt-in live-Bedrock leg (`test_a1_live.py`).
+  The guard that keeps these descriptions honest — every backticked symbol a Python comment or
+  docstring names must exist — is `test_symbol_claims.py`.
 - **Intake and HL7** — payload validation (`test_intake_schemas.py`), the route itself
   end to end (`test_intake_endpoint.py`), the two-sided payload declaration
   (`test_intake_payload_contract.py`, whose portal twin is

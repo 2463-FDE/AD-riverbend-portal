@@ -662,8 +662,8 @@ def _build_model1_prompt(req: VisitChatRequest, intent: VisitIntent, turn_count:
     Every interpolated value is closed vocabulary — the derived intent enum, the four
     clerk menu selections, an integer, and the retriever's own topic list. The
     clerk's MESSAGE is deliberately absent, and so is the member id and every other
-    identifier: `_build_visit_prompt` was split into exactly this builder and
-    `_build_model2_message` so that no free-text field survives anywhere in either
+    identifier: the single pre-agent visit prompt builder was split into exactly this
+    builder and `_build_model2_message` so that no free-text field survives in either
     payload, on either call (SPEC-12, eligibility-assistant-D-14). The free text keeps
     its deterministic-only role, in `_derive_intent`, which runs in this process.
 

@@ -25,7 +25,9 @@ interface ProxyOptions {
   json?: boolean;
   // Extra request headers for the upstream hop (eligibility-assistant SPEC-25:
   // the visit-chat route sends X-Correlation-Id and X-Portal-Sent-At). Merged
-  // after the standard headers, so a caller cannot silently drop Authorization.
+  // after the standard headers, so a caller cannot drop Authorization by omitting
+  // it — a caller that names the header explicitly does still win, and no caller
+  // does.
   headers?: Record<string, string>;
 }
 
