@@ -8,8 +8,10 @@ Three closed sets, none of them model-authored:
     (REQ-4′) are what the reply does about the outcome, and they live in
     ``visit_templates.CATALOG``.
   * ``Reason`` — why a turn was deterministic, six values
-    (eligibility-assistant-D-19). Present in the response and the trace on every
-    deterministic turn and on every fallback, absent otherwise.
+    (eligibility-assistant-D-19). Carries a value on every deterministic turn and
+    every fallback; on a completed agent path it is `null` in the response (the
+    field is always present — SPEC-4's shape does not change per turn) and OMITTED
+    from the log line, which grows by allowlist and never None-fills.
   * ``Mode`` — which path produced the reply, six values
     (eligibility-assistant-D-33). Distinct from health (``assistant``) and from
     spend (``llm_egress``): three fields, three predicates, no two derivable from
@@ -184,8 +186,14 @@ def applicability_mismatch(rows, *, product: str, state: str) -> bool:
     True when the retrieved set cannot support a definitive answer: nothing was
     retrieved, no retrieved row is of tier ≤ 3, or the turn's product/state is
     `unconfirmed` and every retrieved row needs product confirmation (EVAL-023's
-    citation-only payer pages). Computed from the rows returned, never inferred
-    from an empty result's absence (eligibility-assistant-D-32).
+    citation-only payer pages).
+
+    All three are read off the rows the retriever RETURNED, which is what
+    eligibility-assistant-D-32 buys: `unconfirmed` does not filter the index on its
+    axis, so an empty result reports that the corpus holds nothing for this turn
+    rather than that a filter removed it. That is what makes `not rows` a
+    meaningful mismatch here — D-32 forbids inferring mismatch from a
+    filter-induced absence, not from an honest one.
     """
     if not rows:
         return True
