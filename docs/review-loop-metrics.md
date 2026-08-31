@@ -1052,6 +1052,17 @@ universally-quantified guarantee. The gate question that would have caught it is
 for every substitution seam, what does the *worst* legal substitute do, and what stops it?
 
 
+**PR #95 r2 — 2026-08-30, approve.** 0 findings; RANK-MEMBERSHIP-01 confirmed fixed at `ca6ac6c`
+and the declined key/comparator leg accepted with its stated reason. Loop closed in 2 rounds
+(1 A / 0 B / 0 C / 0 E total). No re-tag: the bounded review ends at a clean round. Worth keeping:
+the round disclosed that codex could not execute pytest in its environment, so both its rounds read
+the diff and took the suite numbers as reported — the same limit that has held for every round in
+this item, and the reason the local `make test-docker` run, not the reviewer's verdict, is the
+baseline evidence. A reviewer that cannot run the suite still found the one defect here by reading
+a universally-quantified spec clause against a singly-instantiated test; that is the read worth
+copying into the gates, not a reason to weight its verdict as verification.
+
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
