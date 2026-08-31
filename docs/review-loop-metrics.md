@@ -1079,6 +1079,14 @@ shape change is not landed until every sentence that states the old shape moves 
 same class as PR #91's r2 finding about a rule described in two docs.
 
 
+**PR #96 r2 — 2026-08-30, approve.** 0 findings; B1 confirmed fixed at `9b59e38` and M1 at `b8f4b89`.
+Loop closed in 2 rounds (2 A / 0 B / 0 C / 0 E total). No re-tag: the bounded review ends at a clean
+round. Worth keeping: the reviewer did not take the named sha on trust — it resolved `git show
+b24179c:docs/workflow/eligibility-assistant.md` and checked that the line range returns the three
+pre-fold blocks. That is the difference between a citation and a check, and it is the standard the
+B1 fix was written to meet.
+
+
 ## 5. How to reproduce
 
 1. `gh pr view <N> --json comments --jq '[.comments[] | select(.author.login=="JesterCharles") | .body]'`
