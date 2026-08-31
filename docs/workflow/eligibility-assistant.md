@@ -336,7 +336,7 @@ Open before FROZEN: none — eligibility-assistant-D-20..24 resolved 2026-08-24 
 | turn | eligibility-assistant-SPEC-1–6, 12–23, 25–26, 33, 36–37, 39a, 41–42, 44–56 | GATED 2026-08-28 | — | — | — |
 | trace | eligibility-assistant-SPEC-27–29, 31–32, 34–35, 39b, 40 | GATED 2026-08-28 | — | — | — |
 | lifecycle | eligibility-assistant-SPEC-58–62 | GATED 2026-08-28 | — | — | — |
-| retrieval-eval | eligibility-assistant-SPEC-63–66 | GATED 2026-08-28 | 1364 passed, 19 deselected, 1 xfailed (2026-08-30, `make test-docker` at branch cut off `main` @434342a; `.venv` 3.12 agrees) | DRAFT 2026-08-30 | — |
+| retrieval-eval | eligibility-assistant-SPEC-63–66 | GATED 2026-08-28 | 1364 passed, 19 deselected, 1 xfailed (2026-08-30, `make test-docker` at branch cut off `main` @434342a; `.venv` 3.12 agrees) | IMPLEMENTED 2026-08-30 | — |
 
 ### Per-ticket delivery records
 
@@ -385,3 +385,13 @@ binding; closed as a class at the adapter with a `_call` envelope backstop @9cab
 re-granted eligibility-assistant-D-56 §1 approval — and r2 approve, 0 findings, dry, no re-tag.
 Final baseline `1364 passed, 19 deselected, 1 xfailed` = 1355 + 9, the two above the gate-time
 count being r1's class guards; deselected / xfailed unmoved. 16/16 CI checks green at merge.
+
+**Impl gate — `retrieval-eval`** — 2026-08-30, impl-gated fresh-context round 1 + adv review
+round 1 (adv clean; gate two minor fact-trail findings, both **A** doc-only @45effb9 — deviation 7
+recorded, TODO-69 re-measured — dispositions @f64c3d1). **Round 2 full re-run waived by owner
+2026-08-30** on the llm-seam r4 basis, the same session as the fixes; the waiver round in the
+ticket file's `## Findings` records basis and deviation. Branch `feat/noref-eligibility-retrieval-eval`
+@f64c3d1, merge-base `434342a`. Baseline observed at gate (docker + `.venv` 3.12 agree): `1368
+passed, 19 deselected, 1 xfailed` = 1364 + 4, deselected / xfailed unmoved. `gate:` SPEC-65:
+observed, matches (27 values, `min recall@5 = 0.50`). Residuals accepted here: (a)–(e) of the
+record row above, as IDs; D13 stays OPEN. Push stays human-gated.
