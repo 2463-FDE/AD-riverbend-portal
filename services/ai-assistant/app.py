@@ -23,7 +23,7 @@ import secrets
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, NamedTuple
+from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -50,7 +50,6 @@ from schemas import (
     VisitChatResponse,
     VisitFacts,
     VisitIntent,
-    VisitReplyPlan,
     log_metadata,
     visit_chat_log_metadata,
 )
@@ -322,16 +321,6 @@ def intake_instructions(req: InstructionsRequest):
 # --------------------------------------------------------------------------- #
 # visit-chat — the front-desk eligibility assistant (ADR 0011)
 # --------------------------------------------------------------------------- #
-_VISIT_SYSTEM_PROMPT = (
-    "You choose which follow-up actions a front-desk clerk should see alongside "
-    "an insurance eligibility result that has ALREADY been decided. You are given "
-    "the situation as fixed labels, the required action ids for that situation, "
-    "and optional extra ids. Respond with the chosen ids. Rules: include every "
-    "required id; add an optional id only when it is genuinely useful; use only "
-    "ids you were given; never write action text yourself; never state or revise "
-    "the coverage result."
-)
-
 _VISIT_DISCLAIMER = (
     "Coverage information comes from the payer's eligibility response and can be "
     "out of date or incomplete. It is not a guarantee of payment, and it is not "
@@ -832,117 +821,6 @@ def _is_cross_patient(message: str, facts: VisitFacts) -> bool:
     if not stored:
         return False
     return any(candidate != stored for candidate in _extract_insurance_ids(message))
-
-
-class _ReplyPlan(NamedTuple):
-    """What the action-selection step produced, plus the two facts about HOW.
-
-    ``llm_egress`` is spend accounting (did a request cross the vendor
-    boundary). ``degraded`` is service health (did the clerk get the model's
-    selection or the deterministic fallback). They are genuinely independent —
-    a post-egress failure is billable and degraded; a local refusal is neither
-    — so one boolean cannot carry both, and collapsing them is how a
-    misconfiguration becomes invisible.
-    """
-
-    items: list[str]
-    llm_egress: bool
-    degraded: bool
-
-
-def _reply_items(intent: VisitIntent, status: str, turn_count: int) -> _ReplyPlan:
-    """Ask the model to choose follow-up actions; degrade deterministically.
-
-    **No LLM failure of any kind fails this
-    turn** (Codex PR #14 round 3): action selection is the LAST and least
-    important step, and by the time it runs the payer lookup has already
-    happened and mutated the visit's facts. Raising here threw that work away —
-    the clerk lost a coverage verdict that had been computed and paid for, the
-    gateway never persisted the visit, and each retry re-ran a PHI-bearing payer
-    call for no user-visible value. Every branch below now renders the
-    deterministic default selection instead, so the only thing an LLM fault can
-    cost is the *quality* of the follow-up list.
-
-    What the branches still differ on is SPEND, which is why the flag exists.
-    The old mapping encoded that in the HTTP status because the gateway's refund
-    rule keys on it (ADR 0007); a turn that succeeds without egress cannot say
-    that with a status code, so it says it with ``llm_egress`` and the gateway
-    refunds on the boolean (ADR 0011 §7).
-
-    ONE catch, and the spend answer is read off the exception rather than
-    inferred from its type. Splitting by type here was wrong and shipped briefly
-    in this PR: `LLMConfigError` is raised both by the local pricing/token gates
-    AND by Bedrock's own `ClientError` rejection, so "config error" says nothing
-    about whether a request crossed the boundary. `llm_client.LLMError.egressed`
-    is set at each raise site, defaulting to True, so an unclassified or future
-    failure keeps the charge. `getattr` rather than attribute access because a
-    caller must not be broken by an exception raised from somewhere that predates
-    the attribute.
-
-    The model is also not consulted when the status leaves it nothing to decide
-    — see the short-circuit below.
-    """
-    required = visit_templates.default_selection(status)
-    allowed = visit_templates.allowed_selection(status)
-    if not allowed - set(required):
-        # Nothing to decide, so nothing to buy (Codex PR #14 round 5). For the
-        # no-lookup statuses `allowed_selection` collapses onto the required
-        # core, so the ONLY selection the gate downstream would accept is the one
-        # rendered here: a model call could change this reply by exactly zero
-        # while costing a real Bedrock request. Those are also the cheapest turns
-        # to provoke — a message with no member id in it, repeatable by anyone
-        # holding a never-expiring session (CLAUDE.md §6) — so the waste is
-        # drainable by one clerk.
-        #
-        # What this does NOT save is the gateway's ADR 0007 admission slot: the
-        # reservation is taken before the fan-out, and the gateway cannot know
-        # the turn is free until this function has answered. The slot is
-        # reserved and refunded, so a no-lookup turn still consumes admission
-        # while it is in flight and is still refused once the ceiling is
-        # exhausted (ADR 0011, round 5 gap).
-        #
-        # Derived from the two sets rather than tested against
-        # NO_LOOKUP_STATUSES: the property that matters is "the model has no
-        # freedom", and a future status whose optional ids are narrowed away
-        # then inherits the short-circuit instead of quietly paying for it.
-        #
-        # Not `degraded`: this is the designed path for these statuses, not a
-        # fallback from a fault, and health must keep meaning health (ADR 0011
-        # §7). `llm_egress=False` is what makes the gateway refund the slot it
-        # reserved before the call it turns out we never made.
-        #
-        # Logged, because this is now the most common reason the shared counter
-        # is charged and immediately credited back, and an accounting path with
-        # no signal is one a double-refund can quietly drift through: nothing
-        # else in either service records that a 200 skipped the vendor. Both
-        # values are closed vocabulary, same allowlist discipline as the request
-        # line above.
-        log.info(
-            "visit-chat answered with no model call: %s",
-            json.dumps({"eligibility_status": status, "model_consulted": False}),
-        )
-        return _ReplyPlan(visit_templates.render(required), False, False)
-    try:
-        result = llm_client.complete_structured(
-            prompt=_build_visit_prompt(intent, status, turn_count, required, allowed),
-            output_model=VisitReplyPlan,
-            system=_VISIT_SYSTEM_PROMPT,
-        )
-    except llm_client.LLMError as e:
-        egressed = getattr(e, "egressed", True)
-        # request_id read the same defensive way as egressed — an attribute set
-        # by the raiser, None on every branch that has no provider response to
-        # name. Structured, so the class-name-only rule (W1-SPEC-13) costs the
-        # operator no correlation handle on a response-format incident.
-        # Codex PR #69 round 1.
-        log.error(
-            "visit-chat degrading to deterministic reply (%s, egressed=%s, request_id=%s)",
-            type(e).__name__,
-            egressed,
-            getattr(e, "request_id", None),
-        )
-        return _ReplyPlan(visit_templates.render(required), egressed, True)
-    return _ReplyPlan(_select_reply_items(status, result.parsed.template_ids), True, False)
 
 
 def _no_lookup_turn(

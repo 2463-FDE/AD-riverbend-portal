@@ -30,7 +30,9 @@ none is derivable from another (eligibility-assistant-D-71):
   * ``rows`` — the turn's retrieved set, which SPEC-5/13 validate citations against;
   * ``degraded`` — HEALTH: did an ``llm_client.LLMError`` escape the agent step.
     Exactly the predicate of the pre-eligibility-assistant ``except LLMError`` branch,
-    carried here because `_reply_items` is retired. It is not the egress flag and it
+    carried here because the visit-chat action-selection step that held it is gone
+    (this diff deleted it, with its output model and system prompt). It is not the
+    egress flag and it
     is not ``mode == "fallback"``: a rejected model selection is a fallback on a
     HEALTHY assistant that DID egress, and a `spend_stop` at model₁ is a fallback on a
     degraded one that did not.

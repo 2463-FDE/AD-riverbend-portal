@@ -310,22 +310,6 @@ class VisitChatRequest(BaseModel):
     emergency: bool = False
 
 
-class VisitReplyPlan(BaseModel):
-    """Structured output contract for the LLM (via complete_structured).
-
-    ``template_ids`` carries ids from visit_templates.CATALOG, never reply prose.
-    Deliberately the LOOSEST possible shape, for the same two reasons
-    InstructionsChecklist documents: Bedrock's structured-output schema subset
-    rejects ``minItems`` values other than 0/1, and a local count/membership
-    validator would surface as ``LLMResponseError`` — which would bypass the
-    deterministic fallback instead of landing in the selection gate. Every rule
-    (catalog membership, status-justification, item count) is enforced in
-    ``app._select_reply_items``.
-    """
-
-    template_ids: list[str]
-
-
 class VisitChatResponse(BaseModel):
     """The turn's answer, plus the state the gateway persists.
 
@@ -387,9 +371,9 @@ class AgentDecision(BaseModel):
     """Model₂'s decision: which sources to cite and what to do about them.
 
     Deliberately the LOOSEST possible shape, for the same two reasons
-    ``VisitReplyPlan`` documents — Bedrock's structured-output schema subset, and a
-    local validator surfacing as ``LLMResponseError`` would bypass the deterministic
-    fallback instead of landing in the gate. Every rule (catalog membership, the
+    ``InstructionsChecklist`` documents — Bedrock's structured-output schema subset,
+    and a local validator surfacing as ``LLMResponseError`` would bypass the
+    deterministic fallback instead of landing in the gate. Every rule (catalog membership, the
     retrieved-set containment of SPEC-5/13, the required/allowed derivation) is
     enforced in application code, where a violation becomes `validation_reject` and a
     fallback rather than an error.
