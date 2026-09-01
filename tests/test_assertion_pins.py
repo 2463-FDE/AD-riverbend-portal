@@ -3,7 +3,7 @@
 The guard the `turn` impl gate's round-3 class recurrence asked for. The class:
 a diff renames something or changes a shape, a RETAINED test's assertion is
 edited to match, and nothing reddens — the suite stays green while a control
-that used to be pinned closed is pinned open. Seven instances landed on the
+that used to be pinned closed is pinned open. Eight instances landed on the
 eligibility-assistant branch. Five were disclosed and owner-ratified
 (eligibility-assistant-D-73 x3, D-84, D-87); the pattern those five establish is
 *disclose, then move*. Three more were found undisclosed at impl-gate round 3 —
@@ -26,7 +26,7 @@ meant to: a weakening that is disclosed and ratified is the workflow working.
 It stops the edit from being SILENT.
 
 **What it does not cover.** Python only, and only the tests named below — the
-PHI, log-closure and prompt-purity controls of `docs/landmines.md` 3. It says
+PHI, log-closure and prompt-purity controls of `docs/landmines.md` §3. It says
 nothing about whether an assertion is *correct*, only whether it changed. It
 cannot see TypeScript, so the frontend retained tests stay a reviewer's job.
 """
