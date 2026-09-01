@@ -414,11 +414,11 @@ Independent read over the frozen `## Spec` (SPEC-1–66 in full, this ticket's r
 
 Two sites traced and recorded as **not** findings, so a shallower read does not mistake them: (1) `outcome.agent_outcome`'s conflict-arm check (`len(rows) < 2 and len(decision.citation_ids) == len(rows)`) is nominally true at `rows == 0`, `citation_ids == 0`, but `_validated_selection`'s uncited floor (`not decision.citation_ids and concluded not in NO_CITATION_OUTCOMES`) rejects it downstream, so the turn falls to `validation_reject` and no output diverges from SPEC-4/42; (2) `agent_turn._A1_NO_FREEDOM` (`refuse`, `care_first`, `stop`) omits `refuse_definitive`, so a model turn concluding it is offered the full optional-id vocabulary — consistent with `refuse_definitive` being a model-reachable outcome, and no SPEC row constrains its allowed-action set more tightly.
 
-Scope: eligibility-assistant-SPEC-1–66 and REQ-1⁗–REQ-19 read against `git diff main...HEAD` (47 files, +6500/-468); in-depth on the ticket's owned rows (SPEC-1–6, 9, 10, 12–16, 19–23, 25, 26, 33, 41–56), spot checks on the rest; `## Delivery` and ticket-plan content not used as review criteria. **Round 4 clean — third consecutive clean adv round.**
+Scope: eligibility-assistant-SPEC-1–66 and REQ-1⁗–REQ-19 read against `git diff main...HEAD` (47 files, +6500/-468); in-depth on the ticket's owned rows (SPEC-1–6, 9, 10, 12–16, 19–23, 25, 26, 33, 41–56), spot checks on the rest; `## Delivery` and ticket-plan content not used as review criteria. **Round 4 clean — ~~third~~ *second* consecutive clean adv round** (corrected 2026-09-01 in session while filling the contract ledger row: adv review round 2 carried one finding, f1, the model₂-vocabulary class recurrence fixed @4870855; the clean rounds are 3 and 4).
 
 ## Delivery
 
-Status: delivery IMPLEMENTED 2026-09-01 (stage 4 complete; owner calls ratified 2026-08-31 — eligibility-assistant-D-84/D-85; impl-gate rounds 1–3 dispositioned, r3 closed under the round-3 rule with eligibility-assistant-D-89; **round 4 dispositioned 2026-09-01 — three documentary findings, all A, all fixed; adv review r4 clean, the third consecutive; round 5 WAIVED by the owner 2026-09-01 in session, which is what carries this stamp**; suite `1515 passed, 1 skipped, 19 deselected, 1 xfailed`; `plan GATED` stands, untouched)
+Status: delivery IMPLEMENTED 2026-09-01 (stage 4 complete; owner calls ratified 2026-08-31 — eligibility-assistant-D-84/D-85; impl-gate rounds 1–3 dispositioned, r3 closed under the round-3 rule with eligibility-assistant-D-89; **round 4 dispositioned 2026-09-01 — three documentary findings, all A, all fixed; adv review r4 clean, the second consecutive (the round-4 agent's "third" corrected in session); round 5 WAIVED by the owner 2026-09-01 in session, which is what carries this stamp**; suite `1515 passed, 1 skipped, 19 deselected, 1 xfailed`; `plan GATED` stands, untouched)
 
 **Owner calls (three) — RESOLVED: all three ratified by the owner 2026-08-31 (in session),
 recorded as eligibility-assistant-D-84 (call 1) and eligibility-assistant-D-85 (calls 2–3) in the
@@ -531,8 +531,8 @@ the ids, not a function name). SPEC-37's cmd reads **32** distinct ids (verifica
   V12's opt-in live leg needs the owner's `.env` (not loadable by this session): recorded not-run.
 - `make eval` not re-run: verification 19's `eval/` and `db/` legs are empty by design.
 
-**Residuals — registry IDs only:** `docs/todo.md` TODO-70, TODO-71, **TODO-72**, **TODO-73** (all filed on this
-PR); Landmines residuals (a)–(j) stand as written **except (i), whose basis was falsified and is
+**Residuals — registry IDs only:** `docs/todo.md` TODO-70, TODO-71, **TODO-72**, **TODO-73**, **TODO-74**
+(all filed on this PR; TODO-74 at impl-gate round 4); Landmines residuals (a)–(j) stand as written **except (i), whose basis was falsified and is
 corrected in place** (impl-gate r2 f1); D13 stays OPEN (`docs/debt-log.md`); no open items remain —
 the three stage-4 owner calls are ratified (eligibility-assistant-D-84/D-85), the two impl-gate
 round-2 calls are ruled (D-87 the fifth retained-test move, D-88 the SPEC-42 in-place amendment),
@@ -698,8 +698,7 @@ route the traceability check accepts.
 
 Three findings, all documentary, all owner-dispositioned 2026-09-01 in session under the
 round-3 rule: **A** ×3, one commit per disposition, nothing declined. Adv review round 4 was
-**clean — the third consecutive clean adversarial round**, and no gate finding this round
-touched a `Scope:` SPEC row's mechanism. No behaviour, no test id and no count moved: the
+**clean — the second consecutive clean adversarial round** (the round-4 agent wrote "third"; corrected here — adv r2 carried f1), and no gate finding this round touched a `Scope:` SPEC row's mechanism. No behaviour, no test id and no count moved: the
 suite reads `1515 passed, 1 skipped, 19 deselected, 1 xfailed` before and after
 (`make test-docker`, 109.2s, exit 0), identical to the number the gate observed. `make eval`
 not re-run — nothing under `eval/rag/` or the retrieval path is in these three commits.
@@ -730,7 +729,6 @@ sentence-openings returned two hits, both `# ---` separator rules, neither a cla
 
 **Round 5: WAIVED by the owner 2026-09-01 (in session).** Precedent on this item:
 `llm-seam` r4 and `retrieval-eval` r2, both waived the same way. The grounds recorded here so
-the next session does not re-derive them: adv review clean three rounds running, round 4's
-three findings documentary with no `Scope:` row's mechanism touched, and the three fixes are a
+the next session does not re-derive them: adv review clean at rounds 3 and 4 (two consecutive, not the three the round-4 agent claimed — see the correction in that round's record), round 4's three findings documentary with no `Scope:` row's mechanism touched, and the three fixes are a
 number, a deleted comment block and two words — no surface a fifth adversarial read would have
 new material on. The delivery axis advances to `IMPLEMENTED`; **`plan GATED` is untouched**.
