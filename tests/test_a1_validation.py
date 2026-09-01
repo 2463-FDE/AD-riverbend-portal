@@ -322,14 +322,10 @@ def test_mode_health_egress_independent(monkeypatch):
 def test_a_non_refusal_selection_with_no_citation_is_rejected(monkeypatch):
     """SPEC-4 / REQ-2′ — "Required citation on every non-refusal".
 
-    Both of `_validated_selection`'s containments are satisfied by the EMPTY citation
-    set, so a model₂ decision of `{"citation_ids": [], "action_ids":
-    ["note_coverage_result"]}` over an `active` payer verdict rendered a 200 coverage
-    answer with no Sources block at all (impl gate round 2 f1 — reproduced live
-    against this rig). Containment is not the whole rule: an outcome that is not one
-    of the four refusals must cite at least one of the turn's OWN retrieved rows, and
-    a selection that cites nothing is rejected whole like any other invalid one — the
-    turn takes the deterministic fallback, which cites `DOC-SYN-NO-INVENTION`.
+    Both of `_validated_selection`'s containments hold vacuously for an EMPTY citation
+    set. A non-refusal outcome must cite at least one of the turn's OWN retrieved
+    rows; a selection that cites nothing is rejected whole and the turn takes the
+    deterministic fallback, which cites `DOC-SYN-NO-INVENTION`.
     """
     assert_pinned()
     case = "EVAL-001"

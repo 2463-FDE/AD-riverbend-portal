@@ -1,12 +1,8 @@
 """Every backticked symbol a Python comment or docstring names must exist.
 
-The guard the `turn` impl gate asked for. Prose that cites a symbol by name is a
-claim, and a diff that deletes, renames or retires that symbol falsifies the claim
-silently: nothing imports a docstring, so the suite stays green while the file tells
-the next reader something untrue. This has been the repeat failure on the
-eligibility-assistant branch — swept once for eligibility-assistant-D-40, corrected
-again in two gate rounds, and found a third time by the impl gate — so the class is
-closed here with a check rather than another sweep.
+Prose that cites a symbol by name is a claim, and a diff that deletes or renames
+that symbol falsifies it silently: nothing imports a docstring. This recurred on
+the eligibility-assistant branch, so the class is closed with a check.
 
 **What this covers, and what it does not.** It resolves *symbol existence* only:
 backticked identifiers that look like code — underscore-prefixed, or CamelCase —

@@ -332,7 +332,7 @@ def test_a1_answer_fields_degrade_and_facts_stay_fatal(monkeypatch, visit_state)
 
 
 # --- the gateway's copy of the four closed selection sets (eligibility-assistant
-# -D-45, impl gate round 2 f2) -----------------------------------------------
+# -D-45) --------------------------------------------------------------------
 def test_the_gateway_selection_sets_are_the_contract_sets():
     """The THIRD copy, asserted against the one declaration.
 

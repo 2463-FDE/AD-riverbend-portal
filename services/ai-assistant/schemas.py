@@ -152,18 +152,11 @@ class VisitIntent(str, Enum):
 
 
 def _closed_enum(name: str, values) -> type:
-    """One clerk-selection enum, DERIVED from the retriever's own axis tuple.
+    """One clerk-selection enum, DERIVED from ``policy_index``'s own axis tuple.
 
-    Never a hand-typed second copy. ``policy_index`` already owns these four closed
-    sets — it filters the index on them and rejects an off-enum value
-    (``_check_enum``) — so a literal enum here would be a second copy of a closed
-    set that has to be kept equal by review, which is precisely the shape the intake
-    contract break had. Deriving makes them equal by construction; the declaration in
-    ``contracts/visit-chat-turn.json`` is what the portal's and the gateway's copies
-    are held to, neither being able to import this module — each asserted by its own
-    side's suite (`frontend/app/assistant/turn.contract.test.ts`,
-    `tests/test_gateway_ai_proxy.py::test_the_gateway_selection_sets_are_the_contract_sets`),
-    since a declaration nothing reads pins nothing (eligibility-assistant-D-45).
+    Never a hand-typed second copy: derived sets are equal by construction. The
+    portal's and gateway's copies are held to ``contracts/visit-chat-turn.json`` by
+    their own suites (eligibility-assistant-D-45).
     """
     return Enum(name, {value: value for value in values}, type=str)
 
@@ -178,16 +171,8 @@ State = _closed_enum("State", policy_index.STATES)
 class RenderedCitation(BaseModel):
     """One citation as the clerk sees it — four fields, all from the index row.
 
-    ``section`` is the manifest's ``section_labels`` string VERBATIM, as the index
-    row carries it (eligibility-assistant-D-61). It is rendered from that string and
-    never split, parsed or re-derived: the (document, section) identity SPEC-4 / 12 /
-    64 cite is the document id with the label string riding it, so no second copy of
-    a manifest field exists anywhere in this service.
-
-    Both paths render through this shape — an agent-path citation comes from the
-    turn's retrieved rows, a deterministic turn's from the reason table fetched by id
-    through the same index (SPEC-6) — which is what makes the assertion the same on
-    both.
+    ``section`` is the manifest's label string VERBATIM, never split or re-derived
+    (eligibility-assistant-D-61). Both paths render through this shape (SPEC-4/6).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -199,13 +184,10 @@ class RenderedCitation(BaseModel):
 
 
 class Citation(BaseModel):
-    """Citation PROVENANCE as it is persisted — ids and version only.
+    """Citation PROVENANCE as it is persisted — ids and version only (SPEC-20).
 
-    Deliberately NOT ``RenderedCitation``: what the gateway writes into Redis is
-    visit memory, and a title or a section label is document text at rest with no
-    consumer (the same argument ``VisitTurn`` makes about the clerk's prose). A
-    citation is re-rendered from the index by id on the turn that needs it, never
-    stored as prose (SPEC-20).
+    Not ``RenderedCitation``: a title or section label in Redis is document text at
+    rest with no consumer. A citation is re-rendered from the index by id.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -251,9 +233,8 @@ class VisitFacts(BaseModel):
 
     insurance_id: str | None = None
     last_eligibility: dict[str, Any] | None = None
-    # Citation PROVENANCE for the visit — ids and version only, never document text
-    # (SPEC-20). ``Citation`` is itself ``extra="forbid"``, so the closed shape holds
-    # one level down as well: a smuggled `text` key is rejected, not stored.
+    # Citation PROVENANCE, ids and version only (SPEC-20). ``Citation`` is
+    # ``extra="forbid"``, so a smuggled `text` key is rejected, not stored.
     last_citations: list[Citation] | None = None
 
     @field_validator("insurance_id")
@@ -299,17 +280,13 @@ class VisitChatRequest(BaseModel):
         default_factory=list, max_length=settings.ai_visit_max_turns
     )
     facts: VisitFacts = Field(default_factory=VisitFacts)
-    # The clerk's four closed menu selections (SPEC-54/55). REQUIRED: they are what
-    # reaches the prompt and binds the retriever, and a defaulted selection would be
-    # this service inventing a clerk's answer. The free text keeps its
-    # deterministic-only role and reaches neither.
+    # The clerk's four closed menu selections (SPEC-54/55). REQUIRED: a defaulted
+    # selection would be this service inventing a clerk's answer.
     question_type: QuestionType
     payer: Payer
     product: Product
     state: State
-    # The clerk's explicit emergency control (SPEC-44). Defaulted false because a
-    # caller that omits it is not asserting an emergency; the care-first
-    # short-circuit is opt-in, never inferred from the message.
+    # The clerk's explicit emergency control (SPEC-44): opt-in, never inferred.
     emergency: bool = False
 
 
@@ -347,24 +324,18 @@ class VisitChatResponse(BaseModel):
     # dead-service shape this repo has already been bitten by. The gateway
     # forwards it, exactly as it forwards `visit_memory`.
     assistant: str = "ok"
-    # The turn's rendered sources — four fields each, the same shape on both paths
-    # (SPEC-4/6). Empty only on a turn that refuses; every non-refused coverage
-    # answer renders at least one.
+    # Rendered sources, same shape on both paths (SPEC-4/6). Empty only on a refusal.
     citations: list[RenderedCitation] = Field(default_factory=list)
-    # Which path produced the reply (SPEC-33, the six-value eligibility-assistant-D-33
-    # set). A THIRD axis beside `assistant` (health) and `llm_egress` (spend): the
-    # three are independent predicates and no two are derivable from each other
-    # (eligibility-assistant-D-71), which is why this is a field and not an inference.
+    # Which path produced the reply (SPEC-33, eligibility-assistant-D-33). A third
+    # axis beside `assistant` (health) and `llm_egress` (spend) (D-71).
     mode: str
-    # Why the turn was deterministic or fell back (the six-value
-    # eligibility-assistant-D-19 enum). None on a turn that completed the agent path.
+    # Why the turn was deterministic (eligibility-assistant-D-19); None on a
+    # completed agent path.
     reason: str | None = None
     # What the turn concluded — one of the ten Appendix values (SPEC-14).
     outcome: str
-    # The turn's request identity: a UUIDv4 minted by the portal, forwarded by the
-    # gateway, echoed here (SPEC-26). It identifies a REQUEST, is not derived from
-    # any patient or member identity, and travels as a header, never a body field, on
-    # the way in (eligibility-assistant-D-46).
+    # Request identity (SPEC-26): a UUIDv4 minted by the portal, carried in as a
+    # header, never derived from patient or member identity (D-46).
     correlation_id: str
     # The model/profile identifier the turn ran against — structural, not content.
     model: str
@@ -373,13 +344,9 @@ class VisitChatResponse(BaseModel):
 class AgentDecision(BaseModel):
     """Model₂'s decision: which sources to cite and what to do about them.
 
-    Deliberately the LOOSEST possible shape, for the same two reasons
-    ``InstructionsChecklist`` documents — Bedrock's structured-output schema subset,
-    and a local validator surfacing as ``LLMResponseError`` would bypass the
-    deterministic fallback instead of landing in the gate. Every rule (catalog membership, the
-    retrieved-set containment of SPEC-5/13, the required/allowed derivation) is
-    enforced in application code, where a violation becomes `validation_reject` and a
-    fallback rather than an error.
+    Deliberately the LOOSEST possible shape, for the reasons ``InstructionsChecklist``
+    documents. Every rule (SPEC-5/13) is enforced in application code, where a
+    violation becomes `validation_reject` rather than an error.
     """
 
     citation_ids: list[str]
@@ -419,17 +386,10 @@ def visit_chat_log_metadata(
         "turn_count": turn_count,
         "checked": bool(checked),
     }
-    # eligibility-assistant: five more CLOSED values — the six-value mode set
-    # (eligibility-assistant-D-33), the six-value reason enum (D-19), the ten-value
-    # outcome enum (D-15), an integer, and a UUIDv4. Every one is closed or
-    # structural, so the line stays inside phi-logging-policy rules 1/2/4/5 by
-    # construction: no body, no identifier, no prompt, no free text. They are added
-    # here ON PURPOSE, the same way `checked` was — the D1 lesson is that a log
-    # projection grows by an explicit allowlist entry, never by a `model_dump`.
-    #
-    # Omitted rather than None-filled when a caller has no value: the pre-eligibility
-    # -assistant `/visit-chat` line is a different event and must not grow five null
-    # columns that read as "we measured this and it was nothing".
+    # Five more CLOSED or structural values (eligibility-assistant-D-33/D-19/D-15, an
+    # int, a UUIDv4), inside phi-logging-policy rules 1/2/4/5 by construction. Added
+    # by explicit allowlist, never `model_dump` (the D1 lesson). Omitted rather than
+    # None-filled: the older `/visit-chat` line is a different event.
     for key, value in (
         ("mode", mode),
         ("reason", reason),

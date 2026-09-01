@@ -72,11 +72,8 @@ CATALOG: dict[str, str] = {
         "Record the coverage result in the visit notes so billing does not have "
         "to repeat the check."
     ),
-    # eligibility-assistant (REQ-4′ / eligibility-assistant-D-15): the seven action
-    # ids the closed catalog is EXTENDED by, plus the four boundary templates the
-    # Appendix's qualified outcomes require. Same contract as every id above — the
-    # model selects by id, the server renders the fixed string, and an id outside
-    # this dict cannot render.
+    # REQ-4′ / eligibility-assistant-D-15: seven action ids plus four boundary
+    # templates. Same contract as every id above.
     "care_first": (
         "Send the patient to be seen now. Do not delay or redirect them over an "
         "insurance question — screening comes first, and the coverage question is "
@@ -161,11 +158,8 @@ _VERDICT_LINES: dict[str, str] = {
         "More than one possible member ID is in play, so NO check has run — "
         "this is not a coverage result of any kind."
     ),
-    # eligibility-assistant: the six OUTCOME-keyed lines. `verdict_line` is keyed on
-    # whatever the caller calls the turn's status, and on these turns that is the
-    # outcome, because no payer status describes them. None carries a `{payer}`
-    # placeholder and every one is rendered with `verdict=None`, so no payer name and
-    # no timestamp can attach to a turn that has no result to stamp.
+    # The six OUTCOME-keyed lines, for turns no payer status describes. None carries
+    # a `{payer}` placeholder: no payer name or timestamp can attach to them.
     "unavailable": (
         "The payer could not be reached, so NO coverage answer was obtained. This "
         "is an outage on our side of the check, not a denial."
@@ -193,9 +187,7 @@ _VERDICT_LINES: dict[str, str] = {
 }
 
 # The six outcome-keyed lines above (eligibility-assistant-D-15 / D-19). Separate
-# from NO_LOOKUP_STATUSES on purpose: that tuple decides what `app.py` reports as the
-# turn's verdict and is pinned by retained tests, so widening it would move behaviour
-# these turns do not touch.
+# from NO_LOOKUP_STATUSES, which is pinned by retained tests.
 A1_OUTCOME_STATUSES = (
     "unavailable",
     "conflict",
@@ -306,14 +298,11 @@ def allowed_selection(status: str) -> set[str]:
 # eligibility-assistant: selection over the OUTCOME, not the payer status
 # --------------------------------------------------------------------------- #
 # The required core per outcome (contract Appendix). Same contract as
-# `default_selection`: every id here is justified by the outcome, so a model
-# selection that omits one is wrong for this situation and is discarded whole.
+# `default_selection`: a model selection that omits one is discarded whole.
 _A1_REQUIRED: dict = {
     "active": ("note_coverage_result",),
     "inactive": ("verify_card_details", "self_pay_options"),
-    # The unconfirmed advice is RETAINED beside the Appendix's `escalate`: "retry and
-    # follow policy, never uninsured" is what a failed check has always required of
-    # the clerk, and the routing the Appendix adds does not replace it.
+    # The unconfirmed advice is RETAINED beside the Appendix's `escalate`.
     "unknown": ("retry_shortly", "proceed_per_policy", "escalate"),
     "unavailable": ("retry_shortly", "proceed_per_policy", "escalate"),
     "reverify": ("reverify",),
@@ -324,10 +313,8 @@ _A1_REQUIRED: dict = {
     "care_first": ("care_first",),
 }
 
-# The boundary template a question type REQUIRES beside an active answer — the
-# Appendix's qualified outcomes (`active-with-boundary`, `elig-active-auth-unknown`,
-# `active-network-unknown`, `active-referral-missing`, `cob-both-recorded`). Only on
-# `active`: a boundary on a refusal would qualify an answer that was not given.
+# The boundary template a question type REQUIRES beside an active answer (the
+# Appendix's qualified outcomes). Only on `active`.
 _A1_QUESTION_TYPE_TEMPLATE: dict = {
     "will_it_pay": "no_guarantee",
     "prior_auth": "auth_unknown",
@@ -357,11 +344,9 @@ _A1_OPTIONAL = (
 def a1_default_selection(a1_status: str, question_type: str = "") -> list:
     """The deterministic action ids for an OUTCOME (eligibility-assistant-D-15).
 
-    Keyed on the outcome rather than the payer status because most outcomes have no
-    payer status behind them — a refusal, a conflict and a spend stop are all turns
-    where no coverage answer exists to select advice for. An unrecognised outcome
-    falls through to the unconfirmed advice, the same safe default
-    ``default_selection`` takes.
+    Keyed on the outcome because most outcomes have no payer status behind them.
+    An unrecognised outcome falls through to the unconfirmed advice, as
+    ``default_selection`` does.
     """
     required = list(_A1_REQUIRED.get(a1_status, ("retry_shortly", "proceed_per_policy")))
     if a1_status == "active":
@@ -374,10 +359,9 @@ def a1_default_selection(a1_status: str, question_type: str = "") -> list:
 def a1_allowed_selection(a1_status: str, question_type: str = "") -> set:
     """Every action id justified by this outcome.
 
-    A valid model selection must satisfy
+    A valid selection satisfies
     ``set(a1_default_selection(...)) <= selection <= a1_allowed_selection(...)``.
-    For the three gate outcomes the two sets are EQUAL, which is what the no-freedom
-    short-circuit reads: a model call could change the reply by exactly zero.
+    For the three gate outcomes the two sets are EQUAL: the model has no freedom.
     """
     required = set(a1_default_selection(a1_status, question_type))
     if a1_status in _A1_NO_FREEDOM:
@@ -389,12 +373,9 @@ def a1_model_vocabulary(a1_statuses, question_type: str = "") -> set:
     """The action ids model₂ may be OFFERED on a turn that can still conclude any of
     ``a1_statuses`` (``outcome.model_reachable_outcomes``).
 
-    ``a1_allowed_selection`` is keyed on the outcome a selection CONCLUDED, which is
-    only knowable after model₂ has chosen; this is the same permission seen from
-    before the choice, and it is what the injected message advertises. Narrower and
-    an outcome is unreachable — a model obeying "only these" can never select the id
-    that keys it. Wider and the message spends the eligibility-assistant-D-64 reserve
-    describing a selection the validator will reject whatever the model does.
+    ``a1_allowed_selection`` seen from BEFORE the choice. Narrower and an outcome is
+    unreachable; wider and the message spends the eligibility-assistant-D-64 reserve
+    on ids the validator will reject.
     """
     vocabulary: set = set()
     for a1_status in a1_statuses:
@@ -405,24 +386,11 @@ def a1_model_vocabulary(a1_statuses, question_type: str = "") -> set:
 def a1_verdict_line(status: str, a1_status: str, verdict: dict = None) -> str:
     """The authoritative sentence for an eligibility-assistant turn.
 
-    Keyed on the PAYER STATUS wherever the turn has one, so the sentence a clerk
-    reads for an active, inactive, unknown or pending check is the one this service
-    has always produced — the ADR 0011 §5 rule and every property `verdict_line`'s
-    docstring states carry over unchanged.
-
-    The outcome only takes over when the turn has no payer status to speak from: the
-    two gates, the four fallbacks, a conflict, an insufficient-evidence refusal, and
-    the `unavailable` outage SPEC-53 names. Those are turns where "coverage is …"
-    would be a claim about a check that did not happen.
-
-    One outcome bends the other way: `unavailable` reached through a real payer
-    ANSWER (the dict carries a payer name — a `pending` check, concluded
-    unavailable by eligibility-assistant-D-38) keeps the payer's own stamped
-    sentence, because there IS a past observation to restate and the pending
-    wording is the one this service has always produced. The refusal-class
-    outcomes (`conflict`, `refuse_definitive`, `refuse`, `stop`, `care_first`)
-    never restate a payer line — that would be exactly the definitive answer
-    they exist to withhold.
+    Keyed on the PAYER STATUS wherever the turn has one (ADR 0011 §5, every property
+    of `verdict_line` carries over). The outcome takes over only when there is no
+    payer status to speak from. One exception: `unavailable` reached through a real
+    payer answer (a `pending` check, eligibility-assistant-D-38) keeps the payer's
+    own stamped sentence. Refusal-class outcomes never restate a payer line.
     """
     if (
         a1_status == "unavailable"

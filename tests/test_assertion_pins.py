@@ -1,29 +1,18 @@
 """Assertions on PHI-control tests cannot be weakened without saying so.
 
-The guard the `turn` impl gate's round-3 class recurrence asked for. The class:
-a diff renames something or changes a shape, a RETAINED test's assertion is
-edited to match, and nothing reddens — the suite stays green while a control
-that used to be pinned closed is pinned open. Eight instances landed on the
-eligibility-assistant branch. Five were disclosed and owner-ratified
-(eligibility-assistant-D-73 x3, D-84, D-87); the pattern those five establish is
-*disclose, then move*. Three more were found undisclosed at impl-gate round 3 —
-two by the gate (f1, f2) and one, site S9, only by the sweep the recurrence
-forced. What recurred was never the moving. It was the disclosure step going
-missing.
+The class this guards: a diff changes a shape, a RETAINED test's assertion is
+edited to match, and nothing reddens. The rule is *disclose, then move*
+(eligibility-assistant-D-73, D-84, D-87), and what went missing repeatedly was
+the disclosure step.
 
-**Why a hash and not a count.** Both f1 and S9 weakened a control without
-changing how many `assert` statements the test runs. f1 turned exact dict
-equality over a log projection into equality over a four-key *subset* — count
-went UP. S9 turned byte-equality of a model payload into `in` — count unchanged.
-An assertion floor would have passed both. What moved in each case was the
-strength of the comparison, so that is what is pinned: the normalized source of
-every `assert` expression in each guarded test, hashed.
+**Why a hash and not a count.** The known weakenings changed the STRENGTH of a
+comparison (exact equality to subset, equality to `in`), not the number of
+`assert` statements, so what is pinned is the normalized source of every
+`assert` expression in each guarded test, hashed.
 
 **What this buys.** Editing any assertion in a guarded test reddens this file and
-forces the editor to update the pin below. That line is a visible diff line the
-reviewer and the impl gate both see. It does NOT stop the edit, and it is not
-meant to: a weakening that is disclosed and ratified is the workflow working.
-It stops the edit from being SILENT.
+forces a visible pin update in the same diff. It does NOT stop the edit; it stops
+the edit from being SILENT.
 
 **What it does not cover.** Python only, and only the tests named below — the
 PHI, log-closure and prompt-purity controls of `docs/landmines.md` §3. It says
@@ -42,19 +31,17 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # move in the item's Deviations, exactly as the five ratified moves were.
 ASSERTION_PINS = {
     # docs/phi-logging-policy.md rule 5: adding a field to the chat log line means
-    # adding it on purpose. Weakened undisclosed at impl-gate r3 f1 (exact dict
-    # equality -> four-key subset), re-closed in the same round.
+    # adding it on purpose.
     ("tests/test_ai_visit_chat.py", "test_the_log_says_whether_a_payer_was_asked_on_this_turn"):
         "ac9174ecd90d1e41",
     # SPEC-12: no clerk free text reaches either model payload.
     ("tests/test_ai_visit_chat.py", "test_the_prompt_contains_no_free_text_from_the_clerk"):
         "14904e3a7401925e",
-    # Invalid model ids are gated and never reach a log record. Its assertion was
-    # edited at r3 f2 to chase an unplanned rename of the gate's log message.
+    # Invalid model ids are gated and never reach a log record.
     ("tests/test_ai_visit_chat.py", "test_invalid_ids_never_reach_a_log_record"):
         "f5c581e3139be7de",
     # The strongest PHI claim in the repo: each model payload is a pure function of
-    # closed inputs. Weakened undisclosed (equality -> membership) at r3 site S9.
+    # closed inputs.
     ("tests/test_visit_chat_phi.py", "test_the_prompt_is_exactly_the_deterministic_build"):
         "0183772762f9710b",
     ("tests/test_visit_chat_phi.py", "test_no_phi_reaches_the_prompt"): "a4867c98f43ce64b",

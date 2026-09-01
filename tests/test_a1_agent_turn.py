@@ -321,15 +321,10 @@ def test_model2_message_names_the_retrieved_ids(monkeypatch):
         assert f"- {document_id}" in citable
 
 
-# The model₂ vocabulary guard (adv review round 2 f1, the injected-vocabulary class).
-# The two halves of one seam: `_build_model2_message` advertises what model₂ may
-# choose, `_validated_selection` decides what it may have chosen. Nothing but review
-# held them equal, and they had drifted in BOTH directions — `state_conflict` was
-# never advertised though the validator accepts it, and `retry_shortly` /
-# `proceed_per_policy` were advertised on verdict-less turns the applicability arm
-# forces to `refuse_definitive`, where the validator rejects them. This guard reads
-# the advertised block out of the builder and checks it against the validator's own
-# functions, so a change to either side that opens a gap reddens here.
+# The model₂ vocabulary guard. `_build_model2_message` advertises what model₂ may
+# choose and `_validated_selection` decides what it may have chosen; they have
+# drifted in both directions before, so this reads the advertised block and checks
+# it against the validator's own functions.
 _VOCABULARY_SHAPES = (
     ("active", {"status": "active", "payer": "Medicare"}),
     ("inactive", {"status": "inactive", "payer": "Aetna"}),

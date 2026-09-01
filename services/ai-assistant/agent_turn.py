@@ -1,41 +1,20 @@
 """
-agent_turn — the agent path: model₁ → retriever → [payer] → model₂, executed by the
-LangChain v1 agent runtime (eligibility-assistant SPEC-21).
+agent_turn — the agent path: model₁ → retriever → [payer] → model₂, run by the
+LangChain v1 agent runtime (SPEC-21).
 
-What lives here is the turn's BOUNDS, not its reasoning. The framework selects the
-tool, runs it, and asks model₂ for the decision; this module gives it a state object
-that counts what it has spent, a middleware that runs the payer call between the two
-model calls and injects the status model₂ is entitled to see, a once-guard that keeps
-the payer call at most one per turn whatever the agent step does (SPEC-51), and a
-`run_agent_path` that maps every way the step can end onto the closed
-eligibility-assistant-D-19 reason enum.
+This module owns the turn's BOUNDS, not its reasoning: a state object that counts
+spend, a middleware that runs the payer call between the two model calls, a
+once-guard on that call (SPEC-51), and `run_agent_path`, which maps every way the
+step can end onto the closed eligibility-assistant-D-19 reason enum. The bounds are
+structural, never prompt instructions (SPEC-22/23).
 
-Three bounds, all of them structural rather than instructions to the model
-(SPEC-22): exactly one tool call, exactly two model calls, and — because both model
-calls go through `llm_client._call` — the per-request budget preflight in front of
-each of them (SPEC-23).
+`llm_client`, `eligibility_client` and `agent_binding` are imported as MODULES and
+resolved as attributes at call time, so a test rig patching the module attribute is
+what the turn actually calls (eligibility-assistant-D-66 note 2).
 
-`llm_client` and `eligibility_client` are imported as MODULES, never
-``from … import check_coverage``: both are resolved as attributes at call time so a
-test rig patching the module attribute is what the turn actually calls
-(eligibility-assistant-D-66 note 2). The same rule is why `agent_binding` is imported
-as a module — the seam a turn egresses through must be the one the rig pinned.
-
-The five members `run_agent_path` returns are five DIFFERENT facts about the turn and
-none is derivable from another (eligibility-assistant-D-71):
-
-  * ``decision`` / ``reason`` — what model₂ chose, or why the step ended without it;
-  * ``llm_egress`` — spend: did any payload cross the vendor boundary;
-  * ``model_calls`` — how many, which the trace and the log line report;
-  * ``rows`` — the turn's retrieved set, which SPEC-5/13 validate citations against;
-  * ``degraded`` — HEALTH: did an ``llm_client.LLMError`` escape the agent step.
-    Exactly the predicate of the pre-eligibility-assistant ``except LLMError`` branch,
-    carried here because the visit-chat action-selection step that held it is gone
-    (this diff deleted it, with its output model and system prompt). It is not the
-    egress flag and it
-    is not ``mode == "fallback"``: a rejected model selection is a fallback on a
-    HEALTHY assistant that DID egress, and a `spend_stop` at model₁ is a fallback on a
-    degraded one that did not.
+`AgentResult`'s members are independent facts (eligibility-assistant-D-71):
+``degraded`` is health (an ``llm_client.LLMError`` escaped), ``llm_egress`` is
+spend, and neither is ``mode == "fallback"``.
 """
 import json
 from typing import Any, Dict, List, NamedTuple, Optional
@@ -66,13 +45,9 @@ class PayerGate:
     """The turn's ONE payer call, wherever it is asked for (SPEC-51).
 
     Shared by the agent step's ``before_model`` hook and by the fallback path, so
-    "at most once per turn" holds across a step that ended anywhere — a `spend_stop`
-    at model₁ included, where the hook never ran and the fallback path has to make
-    the call the turn is still owed.
-
-    The eligibility decision itself is unchanged and stays deterministic: whether to
-    call is a function of the derived intent and the held id (``app.py``'s existing
-    gate), never of model output or of what the free text asked for (SPEC-19).
+    "at most once per turn" holds even when the step ended before the hook ran.
+    Whether to call is a function of intent and held id, never of model output
+    (SPEC-19).
     """
 
     def __init__(
@@ -85,9 +60,8 @@ class PayerGate:
         self._eligible = eligible and bool(insurance_id)
         self.called = False
         self.verdict: Optional[Dict[str, Any]] = None
-        # What the VISIT already knows. A turn that does not buy a lookup is still
-        # entitled to answer from it — that is what `last_eligibility` is for — and so
-        # is model₂, which SPEC-50 says receives the payer status for the turn.
+        # The visit's remembered verdict: a turn that buys no lookup answers from
+        # it, and so does model₂ (SPEC-50).
         self.remembered = remembered
 
     @property
@@ -126,41 +100,29 @@ class TurnState:
 class TurnMiddleware(AgentMiddleware):
     """The payer hook, the status injection, and the loop bounds.
 
-    ``before_model`` is where the payer call runs, which puts it between the two
-    model calls exactly as eligibility-assistant-D-18 orders them — after the
-    retriever has returned and before model₂ is asked. Model₁ is deliberately NOT
-    given the status (SPEC-50): it chooses a topic, and a coverage verdict is not an
-    input to that choice.
-
-    ``after_model`` carries SPEC-22's bounds. They are enforced here, on the
-    framework's own state, rather than asked for in the prompt: an instruction is not
-    an enforcement layer, and this repo's whole visit-chat design turns on that
-    distinction.
+    ``before_model`` runs the payer call between the two model calls
+    (eligibility-assistant-D-18); model₁ never sees the status (SPEC-50).
+    ``after_model`` enforces SPEC-22's bounds on the framework's own state.
     """
 
     def __init__(self, turn_state: "TurnState", payer_gate: "PayerGate", model2_message) -> None:
         super().__init__()
         self.turn_state = turn_state
         self.payer_gate = payer_gate
-        # ``(status, verdict, rows) -> str``. The verdict rides beside the already
-        # normalised status word because the injected message derives model₂'s
-        # action-id vocabulary from the outcomes the turn can still conclude, and
-        # arm 1 of that derivation keys on the ABSENCE of a verdict, which no status
-        # string distinguishes from an empty one (adv review round 2 f1).
+        # ``(status, verdict, rows) -> str``. The verdict rides beside the normalised
+        # status because the action-id vocabulary keys on the ABSENCE of a verdict,
+        # which no status string distinguishes from an empty one.
         self._model2_message = model2_message
 
     def before_model(self, state, runtime=None):  # noqa: ARG002 - framework signature
         if self.turn_state.model_calls >= MAX_MODEL_CALLS:
-            # A third model call would be a third paid request for a turn whose
-            # answer is already bounded — reject rather than spend (SPEC-22).
+            # A third model call is a third paid request for a bounded turn (SPEC-22).
             self.turn_state.bound_out(outcome.Reason.validation_reject.value)
             return {"jump_to": "end"}
         if self.turn_state.model_calls == 1:
-            # The retrieved set is rebuilt HERE, off the framework's own tool result,
-            # because this message is where model₂ is told which ids it may cite.
-            # `run_agent_path`'s post-invoke scan runs strictly after every
-            # `before_model`, so reading the rows from there left the injected
-            # message declaring the citation vocabulary EMPTY on every turn.
+            # Rows are rebuilt HERE, off the framework's tool result, because this
+            # message is where model₂ is told which ids it may cite; the post-invoke
+            # scan runs too late for that.
             self.turn_state.rows = _rows_from_messages(state["messages"])
             self.payer_gate.run()
             status_verdict = self.payer_gate.status_verdict
@@ -206,10 +168,9 @@ class TurnMiddleware(AgentMiddleware):
 def _rows_from_tool_result(content: Any) -> List[Any]:
     """Rebuild the retrieved rows from what the tool actually returned.
 
-    Deliberately reconstructed from the tool RESULT rather than re-fetched by id: the
-    turn's retrieved set is what egressed to model₂, and re-fetching would both emit
-    a second lookup record (`retrieval-eval`'s log line) and open a gap between what
-    the model saw and what SPEC-5/13 validate its citations against.
+    From the tool RESULT, not re-fetched by id: re-fetching would emit a second
+    lookup record and open a gap between what the model saw and what SPEC-5/13
+    validate against.
     """
     try:
         payload = json.loads(content) if isinstance(content, str) else content
@@ -238,10 +199,9 @@ def _rows_from_tool_result(content: Any) -> List[Any]:
 
 
 def _rows_from_messages(messages) -> List[Any]:
-    """The turn's retrieved rows, rebuilt from the first tool result in the thread.
+    """The turn's retrieved rows, from the first tool result in the thread.
 
-    One reader for both call sites — the middleware's injection point and the
-    post-invoke read — so the rows model₂ is told it may cite and the rows the
+    One reader for both call sites, so the rows model₂ may cite and the rows the
     citation gate validates against cannot come apart.
     """
     for message in messages:
@@ -299,16 +259,10 @@ def run_agent_path(
 ) -> "AgentResult":
     """Run one agent step and map every way it can end onto the closed reason enum.
 
-    The two error mappings are the eligibility-assistant-D-37 ones and they are read
-    off the EXCEPTION TYPE, not off anything the model said: ``LLMBudgetExceeded`` is
-    the per-request preflight refusing before egress, which is `spend_stop`; every
-    other ``LLMError`` is a provider or response fault, which is `model_failure`.
-
-    ``degraded`` is set on exactly the ``LLMError`` branch — the predicate the
-    pre-eligibility-assistant ``except llm_client.LLMError`` branch used, carried here
-    unchanged. A validation reject is NOT degraded: the assistant worked, the model's
-    answer did not fit, and the fallback is the designed response to that
-    (eligibility-assistant-D-71).
+    Reasons are read off the EXCEPTION TYPE (eligibility-assistant-D-37):
+    ``LLMBudgetExceeded`` is `spend_stop`, any other ``LLMError`` is
+    `model_failure`. Only the ``LLMError`` branches set ``degraded``; a validation
+    reject is a healthy assistant whose answer did not fit (D-71).
     """
     turn_state = TurnState()
     middleware = TurnMiddleware(turn_state, payer_gate, model2_message)
@@ -349,9 +303,7 @@ def run_agent_path(
 
     decision = _parse_decision(messages)
     if decision is None:
-        # An unparseable decision is the model failing to answer in the shape it was
-        # given, which is a validation reject and NOT a health fault — the assistant
-        # is fine, the answer is not (SPEC-13).
+        # An unparseable decision is a validation reject, not a health fault (SPEC-13).
         turn_state.bound_out(outcome.Reason.validation_reject.value)
         return AgentResult(
             None, turn_state.reason, turn_state.llm_egress,
@@ -366,11 +318,10 @@ def run_agent_path(
 def _parse_decision(messages) -> Optional[schemas.AgentDecision]:
     """Model₂'s decision, or None if it did not answer in the shape it was given.
 
-    A validated JSON text block rather than provider structured output: the second
-    call already carries a tool definition, and `tool_choice: none` beside structured
-    output is an unmeasured combination on this seam (eligibility-assistant-D-37). A
-    parse miss lands HERE, as a reject the fallback path handles, rather than as an
-    ``LLMResponseError`` that would bypass it.
+    A validated JSON text block rather than provider structured output: `tool_choice:
+    none` beside structured output is unmeasured on this seam
+    (eligibility-assistant-D-37), and a parse miss must land as a reject the fallback
+    handles, not an ``LLMResponseError`` that bypasses it.
     """
     for message in reversed(messages):
         if not isinstance(message, AIMessage):

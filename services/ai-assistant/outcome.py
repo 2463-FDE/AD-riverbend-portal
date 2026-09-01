@@ -1,26 +1,13 @@
 """
 outcome — the turn's closed report vocabulary and the deterministic reason table.
 
-Three closed sets, none of them model-authored:
+Three closed sets, none model-authored: ``Outcome`` (what the turn concluded,
+eligibility-assistant-D-15), ``Reason`` (why it was deterministic, D-19) and
+``Mode`` (which path ran, D-33). Mode, health (``assistant``) and spend
+(``llm_egress``) are three independent predicates (D-71).
 
-  * ``Outcome`` — what the turn CONCLUDED, ten values, the Appendix enum
-    (eligibility-assistant-D-15). An outcome is not an action: the action ids
-    (REQ-4′) are what the reply does about the outcome, and they live in
-    ``visit_templates.CATALOG``.
-  * ``Reason`` — why a turn was deterministic, six values
-    (eligibility-assistant-D-19). Carries a value on every deterministic turn and
-    every fallback; on a completed agent path it is `null` in the response (the
-    field is always present — SPEC-4's shape does not change per turn) and OMITTED
-    from the log line, which grows by allowlist and never None-fills.
-  * ``Mode`` — which path produced the reply, six values
-    (eligibility-assistant-D-33). Distinct from health (``assistant``) and from
-    spend (``llm_egress``): three fields, three predicates, no two derivable from
-    each other (eligibility-assistant-D-71).
-
-The reason table maps a reason to the citations the reply carries. The ids are
-fixed per reason and are never chosen — not by the model and not by this turn —
-which is what makes a deterministic turn's citation set assertable the same way
-an agent-path turn's is (Appendix, "Source kinds in `expected_source_ids`").
+The reason table fixes each reason's citation ids, so a deterministic turn's
+citation set is assertable the same way an agent-path turn's is (Appendix).
 """
 from enum import Enum
 
@@ -73,12 +60,7 @@ _EMERGENCY_EXTRA = "DOC-COVERAGE-QUESTION-CHEAT-SHEET"
 
 
 def render_citations(rows) -> list:
-    """Render index rows as the four-field citation both paths carry (SPEC-4).
-
-    One renderer for both paths, so an agent-path citation and a deterministic
-    turn's are the same object built the same way — the reason the Appendix can
-    assert `expected_source_ids` identically on either.
-    """
+    """Render index rows as the four-field citation both paths carry (SPEC-4)."""
     return [
         schemas.RenderedCitation(
             title=row.title,
@@ -101,11 +83,9 @@ def reason_citation_ids(reason: "Reason", question_type: str = "") -> tuple:
 def reason_citations(reason: "Reason", question_type: str = "") -> list:
     """Fetch the reason's fixed citations BY ID through the index and render them.
 
-    ``fetch_by_id`` returns its ``(rows, record)`` two-tuple (eligibility-assistant-
-    D-58); the record is discarded here — `retrieval-eval`'s structured log line is
-    its emitter, not this module. Going through the index rather than holding a
-    second copy of title/section/version is what keeps SPEC-6's "through the index"
-    true on the deterministic path (eligibility-assistant-D-61).
+    Through the index rather than a second copy of title/section/version, so SPEC-6
+    holds on the deterministic path too (eligibility-assistant-D-61). The
+    ``fetch_by_id`` record is discarded: `retrieval-eval` emits the log line.
     """
     rows, _record = policy_index.fetch_by_id(reason_citation_ids(reason, question_type))
     return render_citations(rows)
@@ -114,12 +94,8 @@ def reason_citations(reason: "Reason", question_type: str = "") -> list:
 class Mode(str, Enum):
     """Which path produced the reply (eligibility-assistant-D-33), six values.
 
-    Not health and not spend. ``assistant`` says whether an ``LLMError`` escaped the
-    agent step, ``llm_egress`` says whether a payload crossed the vendor boundary,
-    and this says which path ran — three predicates that genuinely disagree in real
-    cases (a rejected model selection is `fallback` / `ok` / `True`; a `spend_stop`
-    at model₁ is `fallback` / `degraded` / `False`), so collapsing any two of them
-    makes a real state unrepresentable (eligibility-assistant-D-71).
+    Not health and not spend: a rejected model selection is `fallback` / `ok` /
+    egress True, a `spend_stop` at model₁ is `fallback` / `degraded` / False (D-71).
     """
 
     real = "real"
@@ -149,13 +125,9 @@ GATE_OUTCOME: dict = {
 def payer_outcome(verdict) -> "Outcome":
     """The outcome a payer verdict alone concludes (SPEC-15, eligibility-assistant-D-38).
 
-    Never a denial from anything but a payer result: an absent verdict is
-    ``unknown``; a DEGRADED verdict — one ``eligibility_client`` built without
-    reaching the payer, recognisable because it carries no payer name — is
-    ``unavailable``, the outage outcome SPEC-53 routes to a person, and so is a
-    ``pending`` one (a check that has not completed is not an answer a clerk can
-    act on either — eligibility-assistant-D-38's payer-derived table). Only a
-    real ``inactive`` from the payer renders as ``inactive``.
+    Never a denial from anything but a payer result: no verdict is ``unknown``; a
+    degraded verdict (no payer name) or a ``pending`` one is ``unavailable``
+    (SPEC-53); only a real payer ``inactive`` renders as ``inactive``.
     """
     if not verdict:
         return Outcome.unknown
@@ -174,26 +146,19 @@ def payer_outcome(verdict) -> "Outcome":
 _CONFLICT_ACTION = "state_conflict"
 _REVERIFY_ACTIONS = ("reverify", "note_disputed")
 
-# The applicability tier bound: a definitive documentary basis is a row of tier
-# 1–3 (regulation, current official source, citation-only payer record); tiers
-# 4–5 are the clinic's own synthetic material (eligibility-assistant-D-38).
+# Tiers 1–3 are a definitive documentary basis; 4–5 are the clinic's own synthetic
+# material (eligibility-assistant-D-38).
 _APPLICABLE_TIER = 3
 
 
 def applicability_mismatch(rows, *, product: str, state: str) -> bool:
     """The in-code applicability check (SPEC-42 / eligibility-assistant-D-32/D-38).
 
-    True when the retrieved set cannot support a definitive answer: nothing was
-    retrieved, no retrieved row is of tier ≤ 3, or the turn's product/state is
-    `unconfirmed` and every retrieved row needs product confirmation (EVAL-023's
-    citation-only payer pages).
-
-    All three are read off the rows the retriever RETURNED, which is what
-    eligibility-assistant-D-32 buys: `unconfirmed` does not filter the index on its
-    axis, so an empty result reports that the corpus holds nothing for this turn
-    rather than that a filter removed it. That is what makes `not rows` a
-    meaningful mismatch here — D-32 forbids inferring mismatch from a
-    filter-induced absence, not from an honest one.
+    True when the retrieved set cannot support a definitive answer: nothing
+    retrieved, no row of tier ≤ 3, or the turn's product/state is `unconfirmed` and
+    every row needs product confirmation. Read off the rows the retriever RETURNED:
+    `unconfirmed` does not filter the index, so `not rows` is an honest absence,
+    the only kind D-32 lets mismatch be inferred from.
     """
     if not rows:
         return True
@@ -205,10 +170,8 @@ def applicability_mismatch(rows, *, product: str, state: str) -> bool:
     return False
 
 
-# The outcomes that may render an EMPTY citation list (SPEC-4 / REQ-2′, the client
-# amendment 1 rule "Required citation on every non-refusal"). Every other outcome is
-# an answer, and an answer with no source is the shape the requirement forbids —
-# `_validated_selection` floors it at one of the turn's own retrieved rows.
+# The outcomes that may render an EMPTY citation list (SPEC-4 / REQ-2′). Every other
+# outcome must cite at least one of the turn's own retrieved rows.
 NO_CITATION_OUTCOMES = (
     Outcome.refuse,
     Outcome.refuse_definitive,
@@ -220,16 +183,9 @@ NO_CITATION_OUTCOMES = (
 def model_reachable_outcomes(verdict, rows, *, product: str, state: str) -> tuple:
     """Every outcome ``agent_outcome`` can still conclude for this turn.
 
-    The same precedence read from BEFORE model₂ chooses, which is when the injected
-    message has to name the vocabulary it may choose from. Arm 1 is code-keyed and
-    absolute — a verdict-less turn whose retrieved set cannot support a definitive
-    answer refuses whatever the model selects — so that shape reaches model₂ as a
-    single outcome. Otherwise the model's own bounded choice keys `conflict` or
-    `reverify`, and anything else falls to the payer-derived outcome.
-
-    This is the one derivation `_build_model2_message` advertises from, so the ids
-    model₂ is shown and the ids `_validated_selection` accepts cannot drift apart
-    (adv review round 2 f1). Held equal by
+    The same precedence, read BEFORE model₂ chooses, so the injected message can
+    name its vocabulary. `_build_model2_message` derives from this and
+    `_validated_selection` re-derives after the choice; held equal by
     ``tests/test_a1_agent_turn.py::test_model2_message_advertises_the_vocabulary_the_validator_accepts``.
     """
     if verdict is None and applicability_mismatch(rows, product=product, state=state):
@@ -238,31 +194,21 @@ def model_reachable_outcomes(verdict, rows, *, product: str, state: str) -> tupl
 
 
 def agent_outcome(decision, rows, verdict, *, product: str, state: str):
-    """What an agent-path turn concluded (eligibility-assistant-D-38), or None
-    when the selection is invalid for the outcome it keys (a `state_conflict`
-    with nothing to conflict — the caller takes `validation_reject`).
+    """What an agent-path turn concluded (eligibility-assistant-D-38), or None when
+    the selection keys an outcome it cannot support (the caller takes
+    `validation_reject`).
 
-    Precedence, reconciled against the contract Appendix (the frozen harness
-    outcomes outrank eligibility-assistant-D-38's summary where they disagree —
-    recorded as a `turn` Delivery deviation):
+    Precedence, per the contract Appendix (which outranks D-38's summary — a
+    recorded `turn` Delivery deviation):
 
-      1. the applicability check — fired only when the turn obtained NO payer
-         verdict, because a coverage answer the payer gave is not withdrawn over
-         document tiers (EVAL-002 `inactive` and EVAL-004 `reverify` retrieve
-         tier-4-only sets and keep their outcomes; EVAL-006/013/023 are
-         verdict-less turns and refuse) → ``refuse_definitive``;
-      2. model₂ selected `state_conflict` → ``conflict``, valid only when it
-         cites at least two sources — or the turn's WHOLE retrieved set when
-         fewer than two rows were retrieved (EVAL-007's conflict is against a
-         source outside the corpus; one row is all there is to cite) — else the
-         caller rejects the selection;
-      3. model₂ selected `reverify` / `note_disputed` → ``reverify`` (a payer
-         `inactive` beside a disputed card is EVAL-025's reverify, so this
-         outranks the payer);
+      1. applicability check, only when NO payer verdict was obtained
+         → ``refuse_definitive``;
+      2. `state_conflict` selected → ``conflict``, valid only with two or more
+         citations (or the whole retrieved set when fewer than two rows exist);
+      3. `reverify` / `note_disputed` selected → ``reverify``, outranking the payer;
       4. otherwise the payer-derived outcome.
 
-    Detection (which ids the model chose) is the model's bounded freedom; every
-    consequence here is code, and nothing below ever authors a verdict.
+    Detection is the model's bounded freedom; every consequence is code.
     """
     actions = set(decision.action_ids)
     if verdict is None and applicability_mismatch(rows, product=product, state=state):
@@ -282,10 +228,8 @@ def agent_outcome(decision, rows, verdict, *, product: str, state: str):
 def fallback_outcome(reason: "Reason", verdict) -> "Outcome":
     """What a turn concludes when the agent step failed or was bounded out (SPEC-52).
 
-    ``spend_stop`` is the one reason that overrides the payer: the verdict is
-    persisted in facts and deliberately NOT rendered (eligibility-assistant-D-26), so
-    the turn concludes ``stop`` whatever the payer said. Every other reason falls
-    through to the payer result if one was obtained, else ``unknown``.
+    ``spend_stop`` overrides the payer: the verdict is persisted, not rendered
+    (eligibility-assistant-D-26), so the turn concludes ``stop``.
     """
     if Reason(reason) is Reason.spend_stop:
         return Outcome.stop
@@ -293,14 +237,8 @@ def fallback_outcome(reason: "Reason", verdict) -> "Outcome":
 
 
 def mode_of(gate_mode, reason, *, fixture: bool) -> "Mode":
-    """The turn's mode, in eligibility-assistant-D-71's precedence.
-
-    The gate's own value first (`care_first` / `refuse` / `no_lookup`), then
-    `fallback` when the agent step ended on a eligibility-assistant-D-19 reason, then
-    `real` / `fixture` from configuration — so `real` / `fixture` is the value the
-    field takes exactly when no path name applies, and is never a second axis stacked
-    on the other four.
-    """
+    """The turn's mode, in eligibility-assistant-D-71's precedence: the gate's own
+    value, else `fallback` on a D-19 reason, else `real` / `fixture` from config."""
     if gate_mode is not None:
         return Mode(gate_mode)
     if reason is not None:

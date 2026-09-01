@@ -37,12 +37,9 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-# eligibility-assistant re-seam (eligibility-assistant-D-66): this file no longer
-# loads its own `app`. It shares the ONE module set `tests/a1_rig.py` publishes, for
-# the reason that rig exists — `agent_binding` and `agent_turn` are bare-name imports
-# that neither preamble pinned, so two app copies silently shared whichever loaded
-# first, and a fake installed on one copy's `llm_client` was not the object the other
-# copy's binding egressed through. One set, one seam, one place to patch.
+# The app is the ONE module set `tests/a1_rig.py` publishes
+# (eligibility-assistant-D-66): a second copy would not share the `llm_client` the
+# rig's fake is installed on.
 import conftest  # noqa: F401  (kept: tests below reach conftest.load_module)
 from conftest import load_module
 from a1_rig import (  # noqa: F401
@@ -90,17 +87,12 @@ class _Recorder(list):
     take attributes)."""
 
 
-# eligibility-assistant: the model seam moved. The visit-chat turn no longer calls
-# `complete_structured` — it runs the agent path, whose only egress is
-# `llm_client._call`, which resolves `client.messages.create` at call time. So the
-# fake is a scripted BEDROCK client, and the whole pre-egress stack (`_enforce_char
-# _cap`, `_enforce_budget`, `_require_bearer_token`) stays live in front of it. What
-# a test controls is what the model ANSWERS, exactly as before.
-# The topic model₁ "chooses" for every turn in this file. `eligibility-verification`
-# retrieves NOTHING for the neutral selections below (payer `aetna`), so every
-# agent-path turn here reached model₂ with an empty citation vocabulary and answered
-# uncited — which the SPEC-4 / REQ-2′ floor now rejects. The subject is unchanged;
-# the topic is the one the corpus actually files it under for these axes.
+# The agent path's only egress is `llm_client._call`, so the fake is a scripted
+# BEDROCK client with the pre-egress stack live in front of it; a test controls
+# what the model ANSWERS.
+# The topic model₁ "chooses" for every turn in this file: one that retrieves rows
+# for the neutral selections below, since an empty citation vocabulary fails the
+# SPEC-4 / REQ-2′ floor.
 A1_DEFAULT_TOPIC = "verification-and-reverification"
 
 
@@ -556,11 +548,9 @@ def test_a_successful_model_call_is_charged_and_healthy(fake_llm, fake_eligibili
     assert body["assistant"] == "ok"
 
 
-# eligibility-assistant SPEC-56: the agent path makes TWO model calls per turn, and
-# `llm_egress` must answer for BOTH of them — "did any payload cross the vendor
-# boundary this turn", not "did the last call". A local refusal before the first
-# call spent nothing; the same refusal before the SECOND call comes after a paid
-# first call, and reporting False there would refund a request Bedrock billed.
+# SPEC-56: `llm_egress` answers for BOTH model calls. A local refusal before the
+# SECOND call comes after a paid first call, and False there would refund a
+# request Bedrock billed.
 @pytest.mark.parametrize(
     "failure,expected_egress",
     [

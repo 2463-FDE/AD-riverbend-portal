@@ -32,14 +32,9 @@ from fastapi.testclient import TestClient
 from conftest import load_module
 
 # --- ai-assistant stack ------------------------------------------------------
-# eligibility-assistant re-seam (eligibility-assistant-D-66): this file no longer
-# loads its own ai-assistant app copy — it shares the ONE module set
-# `tests/a1_rig.py` publishes, for the reason that rig exists: `agent_binding` and
-# `agent_turn` are bare-name imports this preamble never pinned, so a second app
-# copy would silently share whichever loaded first, and a fake installed on one
-# copy's `llm_client` would not be the object the other copy's binding egresses
-# through. The gateway stack below still loads its own copy — the rig does not own
-# the gateway.
+# The ai-assistant stack is the ONE module set `tests/a1_rig.py` publishes
+# (eligibility-assistant-D-66): a second app copy would not share the `llm_client`
+# the rig's fake is installed on. The gateway stack below still loads its own copy.
 from a1_rig import (
     TEST_INTERNAL_SECRET as INTERNAL_SECRET,
     app_mod as ai_app,
@@ -151,13 +146,10 @@ def rig(monkeypatch):
     prompts = []
     payer_calls = []
 
-    # Seam 1: Bedrock. The visit-chat turn no longer calls `complete_structured` —
-    # the agent path's only egress is `llm_client._call` → `client.messages.create`
-    # (eligibility-assistant-D-40) — so the fake is a scripted Bedrock CLIENT and
-    # `prompts` captures every kwargs that would have crossed the vendor boundary,
-    # on BOTH model calls: the captured bodies ARE the D13 (no BAA) control under
-    # test. The whole pre-egress stack (`_enforce_char_cap`, `_enforce_budget`,
-    # `_require_bearer_token`) stays live in front of it.
+    # Seam 1: Bedrock. The agent path's only egress is `client.messages.create`
+    # (eligibility-assistant-D-40), so the fake is a scripted Bedrock CLIENT and
+    # `prompts` captures every kwargs on BOTH model calls: the captured bodies ARE
+    # the D13 (no BAA) control under test. The pre-egress stack stays live.
     class _Scripted:
         def __init__(self):
             self.messages = self
@@ -292,17 +284,10 @@ def test_the_prompt_is_exactly_the_deterministic_build(rig):
     An assertion about absent substrings can only catch the PHI a test thought
     to plant; this one catches any clerk text reaching either payload by ANY
     route, including a future edit that starts interpolating the message.
-    Re-pinned with its subject (eligibility-assistant-D-40): the turn now makes
-    TWO model calls, so both payloads are pinned — model₁'s user message to
-    `_build_model1_prompt` and model₂'s injected message to
-    `_build_model2_message` — a stronger form of the same rule.
-
-    Re-closed at impl-gate round 3 (the class sweep's site S9): the re-pin had
-    dropped model₂ from equality to `in`, which left the rest of that payload
-    unpinned while this docstring still claimed byte-identity. Every surface of
-    both payloads is now pinned — text blocks in order, the system prompt, the
-    tool call, the tool result, and the top-level key set — so the claim above
-    is what the assertions below actually check.
+    Both payloads are pinned (eligibility-assistant-D-40): model₁'s user message to
+    `_build_model1_prompt` and model₂'s injected message to `_build_model2_message`.
+    Every surface of both — text blocks in order, the system prompt, the tool
+    call, the tool result, and the top-level key set — is pinned by EQUALITY.
     """
     _chat(ADVERSARIAL_MESSAGE)
 
@@ -331,24 +316,16 @@ def test_the_prompt_is_exactly_the_deterministic_build(rig):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     rows = ai_app.agent_turn._rows_from_tool_result(block.get("content"))
-    # The verdict the rig's payer fake produced, as `payer_outcome` reads it — the
-    # builder takes it beside the status word to derive model₂'s action vocabulary
-    # from the outcomes still reachable (adv review round 2 f1); only `status` and
-    # `payer` are read from it, and neither is rendered into the message.
+    # The verdict the rig's payer fake produced; the builder reads only `status`
+    # and `payer` from it, and renders neither.
     expected_model2 = ai_app._build_model2_message(
         "active", {"status": "active", "payer": "edi.example.com"}, rows, req
     )
-    # EQUALITY, not membership (impl-gate round 3, the class sweep's site S9). A
-    # containment check leaves the rest of the payload unpinned, which is exactly
-    # the "reaching the payload by ANY route" the docstring above rules out: the
-    # claim is that these payloads are pure functions of closed inputs, so every
-    # text-bearing surface of BOTH calls is pinned to its builder, in order.
+    # EQUALITY, not membership: a containment check leaves the rest of the payload
+    # unpinned.
     assert _texts(rig.prompts[0]) == [expected_model1]
     assert _texts(rig.prompts[1]) == [expected_model1, expected_model2]
-    # The non-text blocks, so nothing free-form can hide in them either. The system
-    # prompt is one module constant shared by both calls — not derived from the
-    # request at all; the tool call is model₁'s own bounded choice, a closed enum
-    # value and nothing else; the tool result is the retriever's rows as JSON.
+    # The non-text blocks, so nothing free-form can hide in them either.
     assert rig.prompts[0]["system"] == ai_app.agent_turn.SYSTEM_PROMPT
     assert rig.prompts[1]["system"] == ai_app.agent_turn.SYSTEM_PROMPT
     tool_uses = [
@@ -469,9 +446,8 @@ def test_degrade_log_carries_no_exception_message(rig, monkeypatch, caplog):
     def _raise(*a, **k):
         raise ai_app.llm_client.LLMUnavailable(marker)
 
-    # eligibility-assistant re-seam: the fault is injected at `llm_client._call` —
-    # the one egress both model calls go through and the seam `run_agent_path`'s
-    # `except llm_client.LLMError` branch reads.
+    # The fault is injected at `llm_client._call`, the one egress both model calls
+    # go through.
     monkeypatch.setattr(ai_app.llm_client, "_call", _raise)
     with caplog.at_level("DEBUG"):
         r = _chat(ADVERSARIAL_MESSAGE)

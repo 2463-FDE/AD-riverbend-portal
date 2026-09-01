@@ -85,13 +85,9 @@ class Settings:
     # reddens it, by design. Clamped >= 1: 0 would return nothing on every turn.
     a1_retrieval_max_rows = max(1, int(os.getenv("A1_RETRIEVAL_MAX_ROWS", "5")))
 
-    # eligibility-assistant (SPEC-33, eligibility-assistant-D-39 as narrowed by
-    # eligibility-assistant-D-71): whether the turn reports its mode as `fixture`
-    # rather than `real`. It LABELS the mode; it does not script a model and does not
-    # gate egress — those are the rig's job and `_require_bearer_token`'s
-    # respectively. Deliberately fail-VISIBLE rather than fail-silent: a flag left on
-    # renders `fixture` on every model-produced reply, so a demo that quietly ran
-    # against a fixture cannot be mistaken for a live one.
+    # SPEC-33 / eligibility-assistant-D-39 (narrowed by D-71): LABELS the mode as
+    # `fixture`; does not script a model or gate egress. Fail-visible: a flag left on
+    # renders `fixture` on every model-produced reply.
     a1_model_fixture = os.getenv("A1_MODEL_FIXTURE", "false").strip().lower() in (
         "1",
         "true",

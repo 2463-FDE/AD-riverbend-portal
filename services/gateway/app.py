@@ -765,14 +765,9 @@ def _assistant_health(value) -> str:
     return value if isinstance(value, str) and value in _ASSISTANT_HEALTH_STATES else "unknown"
 
 
-# The four clerk-selection closed sets, MIRRORED from the one declaration in
-# contracts/visit-chat-turn.json (eligibility-assistant-D-45). The gateway cannot
-# import ai-assistant's schemas, so each of the three copies is asserted against
-# the declaration by its own side's suite: this one by
-# tests/test_gateway_ai_proxy.py::test_the_gateway_selection_sets_are_the_contract_sets,
-# the assistant's pydantic enums by tests/test_a1_turn_contract.py, the portal's
-# builder by frontend/app/assistant/turn.contract.test.ts — the same three-copies
-# discipline the intake contract carries.
+# The four clerk-selection closed sets, MIRRORED from contracts/visit-chat-turn.json
+# (eligibility-assistant-D-45) and pinned to it by
+# tests/test_gateway_ai_proxy.py::test_the_gateway_selection_sets_are_the_contract_sets.
 _TURN_QUESTION_TYPES = (
     "covered_today",
     "will_it_pay",
@@ -813,11 +808,9 @@ class _VisitChatRequest(BaseModel):
     interpolated into a Redis key, so anything else — a colon, a glob, a path —
     is rejected here rather than reaching the keyspace.
 
-    The four clerk selections are REQUIRED on every turn (eligibility-assistant
-    SPEC-54) and closed against the mirrored contract sets above: an off-menu
-    value is the client's error and is rejected before any spend, exactly like an
-    over-long message. ``emergency`` is the clerk's explicit control (SPEC-44);
-    a caller that omits it is not asserting an emergency.
+    The four clerk selections are REQUIRED on every turn (SPEC-54) and closed
+    against the mirrored contract sets above; an off-menu value is rejected before
+    any spend. ``emergency`` is the clerk's explicit control (SPEC-44).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -958,13 +951,11 @@ class _VisitChatVerdict(BaseModel):
 
 
 class _VisitChatCitation(BaseModel):
-    """One persisted citation: a document id and a version, nothing else.
+    """One persisted citation: a document id and a version, nothing else (SPEC-20).
 
-    ``extra="ignore"`` for the same rolling-deploy reason ``_VisitChatFacts``
-    ignores unknown facts: passing an unknown key THROUGH would 422 on
-    ai-assistant's own ``extra="forbid"`` next turn and brick the visit, so a
-    surplus key is dropped here and what Redis holds is ids + version only
-    (eligibility-assistant SPEC-20).
+    ``extra="ignore"`` for the rolling-deploy reason ``_VisitChatFacts`` gives: an
+    unknown key passed THROUGH would 422 on ai-assistant's ``extra="forbid"`` next
+    turn and brick the visit.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -1017,11 +1008,8 @@ class _VisitChatFacts(BaseModel):
 
     insurance_id: Optional[str] = Field(default=..., max_length=64)
     last_eligibility: Optional[_VisitChatVerdict]
-    # eligibility-assistant SPEC-20: the visit's citation provenance — document ids
-    # and versions ONLY, never text. FATAL with the rest of `facts` when present
-    # and malformed (it is written into Redis and handed back on the next turn, so
-    # a shape we cannot vouch for must not be persisted); optional with a None
-    # default so an older ai-assistant mid-rolling-deploy still answers.
+    # SPEC-20: citation provenance, ids and versions ONLY. Fatal when malformed (it
+    # is persisted); optional so an older ai-assistant mid-rolling-deploy still answers.
     last_citations: Optional[list[_VisitChatCitation]] = None
 
     @field_validator("insurance_id")
@@ -1115,13 +1103,9 @@ class _VisitChatDownstream(BaseModel):
     facts: _VisitChatFacts
     disclaimer: str = Field(min_length=1, max_length=1000)
     eligibility: Optional[_VisitChatVerdict] = None
-    # eligibility-assistant-D-72: the turn's five new report fields, all of them
-    # ANSWER-ONLY — never persisted, never fed back — validated as bounded shapes
-    # (not enum copies, the round-6 rule) and degraded rather than fatal:
-    # `citations` to `[]`, the other four to null. Failing the turn over a
-    # renderer field would discard `facts.last_eligibility`, the verdict this
-    # turn's payer call already paid for — the same rule `eligibility` above,
-    # `llm_egress` and `assistant` already follow.
+    # eligibility-assistant-D-72: five ANSWER-ONLY report fields, validated as bounded
+    # shapes (not enum copies) and degraded rather than fatal, like `eligibility`
+    # above: failing the turn would discard a verdict the payer call already paid for.
     citations: list[_RelayedCitation] = Field(default_factory=list)
     mode: Optional[str] = None
     reason: Optional[str] = None
@@ -1240,10 +1224,8 @@ def _turn_correlation_id(request: Request) -> str:
     """The turn's correlation id: the portal's header when it is UUIDv4-shaped,
     a gateway-minted UUIDv4 otherwise (eligibility-assistant-D-46).
 
-    A HEADER, read the way `x-internal-auth` is, never a body field — so the
-    request body stays `extra="forbid"` on both sides of the hop. Validated
-    structurally (shape, not trust): it identifies a request, carries no patient
-    or member identity, and an off-shape value is replaced, never forwarded.
+    A HEADER, never a body field, so the body stays `extra="forbid"` on both sides
+    of the hop. Shape-validated, not trusted; an off-shape value is replaced.
     """
     supplied = (request.headers.get("x-correlation-id") or "").strip().lower()
     if _UUID4_RE.fullmatch(supplied):
@@ -1379,11 +1361,8 @@ def proxy_visit_chat(
         # otherwise have overwritten.
         downstream = _validate_visit_chat_downstream(result)
 
-        # A downstream correlation echo that differs from the id this gateway
-        # forwarded is a wiring fault worth counting, not failing over — and not
-        # relaying: the caller gets the id the GATEWAY owns (eligibility-
-        # assistant-D-46). Count only, never either value: both are ids, but
-        # one is unvalidated downstream content.
+        # A differing downstream echo is a wiring fault: counted, not failed over,
+        # not relayed (eligibility-assistant-D-46). Never log either value.
         if result.get("correlation_id") not in (None, correlation_id):
             log.warning("visit-chat downstream echoed a different correlation id")
 
@@ -1477,9 +1456,7 @@ def proxy_visit_chat(
             "reason": downstream.reason,
             "outcome": downstream.outcome,
             "model": downstream.model,
-            # The gateway answers with the id IT forwarded (or minted) — a
-            # downstream echo is not relayed, and a differing one is only worth
-            # a count-only line (eligibility-assistant-D-46).
+            # The id the gateway forwarded or minted, never the downstream echo (D-46).
             "correlation_id": correlation_id,
         }
     finally:
