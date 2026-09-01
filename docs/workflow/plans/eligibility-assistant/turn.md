@@ -109,6 +109,26 @@ This block is verbatim for **this ticket's own diff** and no other's (eligibilit
   (i) **The `citations` degrade can render a non-refused answer with zero citations — on a version-skew path only (gate r4 f1).** Under eligibility-assistant-D-72 an unusable downstream `citations` degrades to `[]` with a count-only warning while the turn still answers 200 with `reply`, so on that path the portal renders a coverage answer with no citation block — the shape client amendment 1 / REQ-2′ forbid and SPEC-4 / SPEC-41 assert. The path is reachable only when the assistant's response fails the gateway's shape validation, and the assistant as shipped cannot produce that: its reply is built through `VisitChatResponse` (`services/ai-assistant/schemas.py:252-284`), whose `citations` field is the closed four-string shape this ticket's `schemas.py` row lands, and the gateway's `_VisitChatDownstream` validator is written against that same shape in the same diff — so the degrade fires only on a gateway/assistant **version skew** (one side redeployed without the other) or a hand-edited response, never on the contract as shipped. It is accepted as a residual rather than made conditional on `outcome`, because on that same skew path `outcome` is itself a degradable field (D-72's `null`) and a predicate on it would be no more trustworthy than the field it guards; failing the turn instead would discard `facts.last_eligibility`, the mistake `services/gateway/app.py:988-993` exists to prevent. What keeps it visible: the count-only `log.warning` names the field, and SPEC-4's `test_citation_four_fields` and SPEC-41's page test prove the contract on the shipped shape. eligibility-assistant-D-72 carries a dated note. **Corrected 2026-08-31 (impl gate r2 f1, eligibility-assistant-D-86): the clause "the assistant as shipped cannot produce that" was false when written.** `_validated_selection`'s two containments hold vacuously for an empty citation set, so a model₂ decision citing nothing rendered a 200 non-refused coverage answer with `citations: []` on the shipped agent path, with no version skew involved — live-reproduced by the gate against the rig. The residual's *scope* now holds for the reason D-86 gives instead: the non-refusal citation floor rejects that selection whole, so the assistant genuinely cannot produce the shape, and the gateway degrade remains the only path to it. The rest of the bullet — why the degrade is not made conditional on `outcome`, and what keeps it visible — stands unchanged.
   (j) **Seven of `test_a1_turn_order.py`'s 35 ids script an agent-step ending that cannot occur (gate r5 f1).** `clarify_member_id` never enters the agent path — `services/ai-assistant/app.py:859-863` sets `AMBIGUOUS_ID`, `visit_templates.py:86` puts it in `NO_LOOKUP_STATUSES`, and the plan's order (SPEC-50) short-circuits before `run_agent_path` — so the seven `clarify_member_id × <ending>` cells cannot observe their ending. Accepted by the owner 2026-08-28 as a named residual rather than a re-sum: those seven cells assert the `no_lookup` leg (zero payer calls, zero model calls, the scripted queue untouched, `status = AMBIGUOUS_ID`) whatever ending they are named for, so the 35 ids, the row's 44 and verification 9's 119 hold as written; the rig must not assert queue consumption on them. The impl gate reads the test against this bullet.
 
+## Pre-gate checklist
+
+Steps this ticket owes before every impl-gate run. Each was added by a class
+recurrence the gate found more than once; each is ticket-scoped and dies with this
+file at merge, so the durable gap behind it is filed in the registry rather than
+here.
+
+- [ ] **Re-sum the `CLAUDE.md` baseline line if the passed count moved.** After the
+  full-suite run, compare the observed `passed` against `CLAUDE.md` §6's
+  `Baseline, measured ...` line; if a commit on this branch landed a test, re-sum the
+  line in that same commit. Added at impl-gate round 4 (f1), the second instance of
+  round 2 f3 — the class is that a *closure* commit lands a test and nothing forces
+  the line to move with it. Advisory: nothing reddens. Durable gap → **TODO-74**.
+- [ ] **Re-read the whole comment block around every comment site a fix edits.** Not
+  the replaced lines — the block. Added at impl-gate round 4 (f2), the eighth instance
+  of the falsified-in-code-markers class: round 3's own fix commit inserted its
+  replacement above the superseded block and left both standing, a shape introduced
+  *after* the round-3 sweep ran, so no sweep scope could have caught it. Durable gap →
+  **TODO-73**.
+
 ## Findings
 
 Gate rounds start at 1 for this ticket; carried findings: f1 (SPEC-49 / eligibility-assistant-D-44 — the single-contradicting-id cross-patient form; decided 2026-08-26, eligibility-assistant-D-50: refuse) — **folded 2026-08-26** into the `app.py` change row; f6 (eligibility-assistant-D-40 — falsified in-code markers) — **closed by sweep 2026-08-26**, four hits rewritten in the `tests/` change row, scope and survivors in the item-level cell (plans/eligibility-assistant.md, gate r2 f6).
