@@ -312,3 +312,25 @@ The turn that consumes this retrieval is bounded structurally, not by instructio
   whose consequences are code; else the payer-derived table. The model's freedom remains a
   bounded selection validated by `required ⊆ selection ⊆ allowed` over the extended catalog —
   the selection gate generalised, not replaced.
+- **Model₂'s advertised vocabulary and the validator's accepted vocabulary are one
+  derivation** (`outcome.model_reachable_outcomes`, eligibility-assistant-D-86). Both the
+  block injected into model₂'s message and the set `_validated_selection` accepts are
+  computed from the same function of the turn's closed inputs, rather than assembled twice.
+  Two independently-written vocabularies drift in both directions and each direction is a
+  real defect: an outcome whose required ids were never advertised is unreachable by a model
+  obeying "taken only from the ids you were given" — which is how the model-chosen `conflict`
+  path of SPEC-42 came to be reachable through the rig alone — and an id advertised but
+  rejectable whatever the model does spends the D-64 prompt reserve to describe a selection
+  that always falls back. The guard is two-directional by construction
+  (`tests/test_a1_agent_turn.py::test_model2_message_advertises_the_vocabulary_the_validator_accepts`,
+  run over every clerk question type).
+- **A non-refusal must cite** (the citation floor in `_validated_selection`,
+  eligibility-assistant-D-86). The two containments above hold vacuously on an empty
+  selection, so `citation ids ⊆ retrieved` permits zero citations. An outcome outside
+  `outcome.NO_CITATION_OUTCOMES` — the four refusals — must therefore cite at least one of
+  the turn's OWN retrieved rows, or the selection is rejected whole and the turn takes the
+  deterministic fallback, which cites `DOC-SYN-NO-INVENTION`. Without the floor a shipped
+  agent path renders a coverage answer with no Sources block (SPEC-4 / REQ-2′ forbid it), and
+  it did: proved live against the rig at impl-gate round 2 before the floor existed. The
+  floor is a requirement on the outcome, not on retrieval — narrowing it to "only when rows
+  were retrieved" would leave exactly the zero-retrieval verdict-bearing turn uncited.
