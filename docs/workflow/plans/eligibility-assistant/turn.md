@@ -336,11 +336,11 @@ Branch `feat/noref-eligibility-turn`, HEAD `8396725`, merge-base `b5f3f0a` (`mai
 
 | # | anchor | finding | disposition |
 |---|---|---|---|
-| f1 | **class-repeat** (retained-assertion move, sixth instance — five ratified: eligibility-assistant-D-73 ×3, D-84, D-87) · `tests/test_ai_visit_chat.py::test_the_log_says_whether_a_payer_was_asked_on_this_turn` (`:1685`) · `docs/phi-logging-policy.md` rule 5 · eligibility-assistant-D-40 | **A retained PHI-control assertion was weakened, undisclosed.** On `main` the test asserted `reused == {"intent", "eligibility_status", "turn_count", "checked"}` — exact dict equality (`git show main:tests/test_ai_visit_chat.py:1528`), which pinned the visit-chat log line **closed** against `docs/phi-logging-policy.md` rule 5 ("adding a field means adding it here on purpose"). It is now a four-key projection plus two value checks (`:1685-1688`), so a sixth key entering `visit_chat_log_metadata` reddens nothing. Verified this session at both shas. No other test asserts that line's key set; `tests/test_visit_chat_phi.py`'s scans are substring negatives, not closure. Sixth retained-assertion move, in neither the Deviations list nor any ratified decision, and the one that lands on a PHI control. A stronger form was available and still is: `set(reused) == {…}` with a shape check on the random `correlation_id` | |
-| f2 | **class-repeat** (falsified in-code markers, sixth instance — r1 f4/f5, r2 f4/f5 and the r2 sweep) · `services/ai-assistant/app.py:761` · `tests/test_ai_visit_chat.py:380`, `:319`, `:715` · plan `app.py` change row (`turn.md:17`) | **Unplanned in-code rename moved a second retained assertion and left two stale markers.** The visit-chat gate log message became `"visit-chat decision gate: …"` (was `"visit-chat selection gate: …"`), so retained `::test_invalid_ids_never_reach_a_log_record`'s `assert "selection gate" in caplog.text` was edited to `"decision gate"` (`:380`); keeping the string would have kept the retained assertion verbatim. The rename is in neither the `app.py` change row nor the Deviations. Two markers in the same file still carry the retired phrase — `:319` section header, `:715` comment. Verified this session. Both a sixth instance of f1's class and a fresh instance of the falsified-marker class **outside r2's recorded sweep scope**, which was `git diff main...HEAD -- services/` only — the miss is the scope's, not the sweep's execution (`services/ai-assistant/app.py:167`/`:182` `intake-instructions selection gate` are a different, untouched gate) | |
-| f3 | eligibility-assistant-SPEC-37 `cmd:` · verification 8 | `pytest -m "not integration" --collect-only -q \| grep -o 'EVAL-0[0-9][0-9]\(-[a-z]*\)*' \| sort -u \| wc -l` → **32**; the frozen row expects **33**. Missing id is `EVAL-019` (trace-payload kind, `trace`'s row). Restated only because the gate obliges every `cmd:` cell in the checked set to be run — **answered from the record** (Landmines residual (b), r1 f3, r2 f7, eligibility-assistant-D-53). Not reopened | |
-| f4 | `adr/0019-*.md` change row (`turn.md:45`) · eligibility-assistant-D-86 · the `llm-seam` impl-gate r2 f1 precedent | **The two mechanisms r2 closed its classes with are registered in no file that outlives the item.** eligibility-assistant-D-86's shared `outcome.model_reachable_outcomes` vocabulary derivation and the non-refusal citation floor in `_validated_selection` are recorded in `docs/workflow/plans/eligibility-assistant.md` (dies at item delivery) and in code docstrings only. This ticket's durable-record row is `adr/0019`, whose new "wired turn" section enumerates the loop bounds, the once-guard, the budget gate and the outcome derivation but neither of these. `llm-seam`'s own impl-gate r2 f1 put a gate-round mechanism into `adr/0019` for exactly this reason | |
-| f5 | `services/ai-assistant/outcome.py:203` · plan `outcome.py` change row (`turn.md:15`) | `applicability_mismatch` reads `policy_index._current().entries` — a name deliberately outside `policy_index.__all__`. Idiom-consistent (`main`'s `policy_tool.py:55-57` calls `_check_enum`), so novel-idiom is not the charge; the plan's `outcome.py` row does not state that the applicability check reads the index's internals, and a public accessor would keep the corpus module's surface honest. Minor | |
+| f1 | **class-repeat** (retained-assertion move, sixth instance — five ratified: eligibility-assistant-D-73 ×3, D-84, D-87) · `tests/test_ai_visit_chat.py::test_the_log_says_whether_a_payer_was_asked_on_this_turn` (`:1685`) · `docs/phi-logging-policy.md` rule 5 · eligibility-assistant-D-40 | **A retained PHI-control assertion was weakened, undisclosed.** On `main` the test asserted `reused == {"intent", "eligibility_status", "turn_count", "checked"}` — exact dict equality (`git show main:tests/test_ai_visit_chat.py:1528`), which pinned the visit-chat log line **closed** against `docs/phi-logging-policy.md` rule 5 ("adding a field means adding it here on purpose"). It is now a four-key projection plus two value checks (`:1685-1688`), so a sixth key entering `visit_chat_log_metadata` reddens nothing. Verified this session at both shas. No other test asserts that line's key set; `tests/test_visit_chat_phi.py`'s scans are substring negatives, not closure. Sixth retained-assertion move, in neither the Deviations list nor any ratified decision, and the one that lands on a PHI control. A stronger form was available and still is: `set(reused) == {…}` with a shape check on the random `correlation_id` |**A · fixed @4542c1a** (owner-ruled 2026-08-31 under the round-3 rule; class closed by eligibility-assistant-D-89, not by this instance). Restored in the stronger form the finding named and the diff made available: exact key-set equality over all eight keys the agent path emits, plus `reason` pinned as ABSENT rather than null — the "omitted, not None-filled" contract in `visit_chat_log_metadata`'s own docstring, which nothing asserted before — the four original values unchanged, the three new closed values pinned, and `correlation_id` pinned by UUIDv4 SHAPE, it being the one non-enumerable value on the line and so the one a PHI-bearing string could take the place of. Negative check per `docs/landmines.md` §3: a smuggled sixth key reddens the assertion, reverted green |
+| f2 | **class-repeat** (falsified in-code markers, sixth instance — r1 f4/f5, r2 f4/f5 and the r2 sweep) · `services/ai-assistant/app.py:761` · `tests/test_ai_visit_chat.py:380`, `:319`, `:715` · plan `app.py` change row (`turn.md:17`) | **Unplanned in-code rename moved a second retained assertion and left two stale markers.** The visit-chat gate log message became `"visit-chat decision gate: …"` (was `"visit-chat selection gate: …"`), so retained `::test_invalid_ids_never_reach_a_log_record`'s `assert "selection gate" in caplog.text` was edited to `"decision gate"` (`:380`); keeping the string would have kept the retained assertion verbatim. The rename is in neither the `app.py` change row nor the Deviations. Two markers in the same file still carry the retired phrase — `:319` section header, `:715` comment. Verified this session. Both a sixth instance of f1's class and a fresh instance of the falsified-marker class **outside r2's recorded sweep scope**, which was `git diff main...HEAD -- services/` only — the miss is the scope's, not the sweep's execution (`services/ai-assistant/app.py:167`/`:182` `intake-instructions selection gate` are a different, untouched gate) |**A · fixed @1bf1029** (owner-ruled 2026-08-31; class closed by eligibility-assistant-D-89). Fixed at the cause rather than the two instances: the unplanned rename is reverted, so the retained assertion stands byte-for-byte against the merge-base and both stale markers (`:319`, `:715`) are accurate again with no separate edit. The rename also fought `adr/0019:314`, which describes this gate as "the selection gate generalised, not replaced" — the durable record was right and the rename was wrong. No `decision gate` string survives in the tree |
+| f3 | eligibility-assistant-SPEC-37 `cmd:` · verification 8 | `pytest -m "not integration" --collect-only -q \| grep -o 'EVAL-0[0-9][0-9]\(-[a-z]*\)*' \| sort -u \| wc -l` → **32**; the frozen row expects **33**. Missing id is `EVAL-019` (trace-payload kind, `trace`'s row). Restated only because the gate obliges every `cmd:` cell in the checked set to be run — **answered from the record** (Landmines residual (b), r1 f3, r2 f7, eligibility-assistant-D-53). Not reopened |**E** — answered from the record, owner-ruled 2026-08-31 not to reopen: `EVAL-019` is the `trace` ticket's row and the count closes when `trace` lands (eligibility-assistant-D-53, Landmines residual (b), previously r1 f3 and r2 f7). Third restatement; no code change, no re-litigation |
+| f4 | `adr/0019-*.md` change row (`turn.md:45`) · eligibility-assistant-D-86 · the `llm-seam` impl-gate r2 f1 precedent | **The two mechanisms r2 closed its classes with are registered in no file that outlives the item.** eligibility-assistant-D-86's shared `outcome.model_reachable_outcomes` vocabulary derivation and the non-refusal citation floor in `_validated_selection` are recorded in `docs/workflow/plans/eligibility-assistant.md` (dies at item delivery) and in code docstrings only. This ticket's durable-record row is `adr/0019`, whose new "wired turn" section enumerates the loop bounds, the once-guard, the budget gate and the outcome derivation but neither of these. `llm-seam`'s own impl-gate r2 f1 put a gate-round mechanism into `adr/0019` for exactly this reason |**A · fixed @999f03f** (owner-ruled 2026-08-31). Both eligibility-assistant-D-86 mechanisms added to `adr/0019`'s "wired turn" section, matching the `llm-seam` impl-gate r2 f1 precedent — each written as the failure it prevents rather than a restatement of the code: the shared `outcome.model_reachable_outcomes` derivation with why drift in either direction is a real defect and why the guard is two-directional, and the non-refusal citation floor with why the two containments hold vacuously without it and why narrowing it to "only when rows were retrieved" reopens the case it was written for |
+| f5 | `services/ai-assistant/outcome.py:203` · plan `outcome.py` change row (`turn.md:15`) | `applicability_mismatch` reads `policy_index._current().entries` — a name deliberately outside `policy_index.__all__`. Idiom-consistent (`main`'s `policy_tool.py:55-57` calls `_check_enum`), so novel-idiom is not the charge; the plan's `outcome.py` row does not state that the applicability check reads the index's internals, and a public accessor would keep the corpus module's surface honest. Minor |**A · fixed @46586fa** (owner-ruled 2026-08-31 — public accessor, not disclose-only). `policy_index.needs_product_confirmation()` joins `tier()` in `__all__`; the call site reads `needs_product_confirmation(row.id)`, exact parity with the `policy_index.tier(row.id)` two lines above it. Duck-typed on `.id` rather than `isinstance(document, Row)` — the rig stands rows in as `SimpleNamespace(id=...)`, which the `entries[row.id]` this replaces accepted, and an accessor stricter than the reach it replaces is a behaviour change wearing a refactor's clothes (caught by `::test_model2_message_advertises_the_vocabulary_the_validator_accepts`) |
 
 **Class recurrence — retained-assertion move (f1, f2).** Five moves are ratified on this branch (eligibility-assistant-D-73 ×3, D-84, D-87), each disclosed as a Deviation and each carrying the owner's reason. f1 and f2 are the sixth and seventh, and neither was disclosed at all: one weakens a PHI-control closure assertion, one edits a retained assertion to chase an unplanned rename. The pattern the five ratified moves establish is *disclose, then move*; what recurs here is the disclosure step going missing, not the moving. Under the impl-gate class-recurrence rule an instance-only fix is not an available disposition, owner included: closure is a sweep whose scope is recorded — the natural scope being **every** assertion in the retained test files that `main...HEAD` weakens, deletes or edits, extracted mechanically per test function rather than per file — or a guard that reddens when a retained test's assertion set shrinks. If closure needs a plan change, that is structural → stage 3 now, per the rule.
 
@@ -364,7 +364,7 @@ Scope: eligibility-assistant-SPEC-1–66 read against `git diff main...HEAD` (45
 
 ## Delivery
 
-Status: delivery DRAFT 2026-08-31 (stage 4 complete; owner calls ratified 2026-08-31 — eligibility-assistant-D-84/D-85; `plan GATED` stands)
+Status: delivery DRAFT 2026-08-31 (stage 4 complete; owner calls ratified 2026-08-31 — eligibility-assistant-D-84/D-85; impl-gate rounds 1–3 dispositioned, r3 closed under the round-3 rule with eligibility-assistant-D-89; `plan GATED` stands)
 
 **Owner calls (three) — RESOLVED: all three ratified by the owner 2026-08-31 (in session),
 recorded as eligibility-assistant-D-84 (call 1) and eligibility-assistant-D-85 (calls 2–3) in the
@@ -429,8 +429,11 @@ the visit-chat section, template only, no secret, with the fail-visible rational
    Likewise `tests/test_gateway_ai_chat_controls.py::_chat` and `tests/test_visit_chat_phi.py::_chat`
    carry the now-required selections (the `A1_SELECTIONS` helper idiom; no assertion moved), and the
    frontend retained `page.test.tsx` helpers (`okTurn`, new `turnBody`) carry the new required
-   response/request fields with three exact-body assertions re-pointed through `turnBody` (SPEC-54;
-   frontend retained tests sit outside D-40's enumeration — same class, disclosed).
+   response/request fields with four exact-body assertions re-pointed through `turnBody` (SPEC-54;
+   frontend retained tests sit outside D-40's enumeration — same class, disclosed). **Corrected
+   2026-08-31 from "three" by the impl-gate round-3 sweep** (sites S10–S13): there are four —
+   `page.test.tsx:95`, `:109`, `:129`, `:308`. All four keep exact `toEqual` equality through the
+   helper, so the count was the only thing wrong; the disclosure was right in kind.
 10. The gateway correlation-mint case is folded into `test_a1_correlation_header_forwarded` rather
     than a third test, keeping the file's planned +2; `_VisitChatCitation`/`_RelayedCitation`
     version bounds are 200 B (manifest versions run to 83 B — a 64 B bound 502'd real fallbacks).
@@ -565,3 +568,74 @@ break-then-revert and a measurement instead — neither is a behavioural seam.
 `npm test -- --run` → **127 passed, 13 files**, unmoved. **+13** on the round's observed 1501 —
 2 validation tests, 10 vocabulary-guard params, 1 gateway contract test; deselected, xfailed and
 skipped unmoved.
+
+### Impl gate round 3 — what moved
+
+Five findings, all owner-dispositioned 2026-08-31 in session under the round-3 rule: **A** ×4
+(f1, f2, f4, f5), **E** ×1 (f3, answered from the record and not reopened). Four fixed, one
+commit per disposition. The two class-recurrence findings were **not** closed as instances —
+the owner ruled the closure to be all three of: fix the instances, record the sweep with its
+scope, and add a standing guard, all on the branch (**eligibility-assistant-D-89**). Routing
+checked against the skill's table before taking it on-branch: no counter, TTL, lock, breaker,
+budget or cache moves, so nothing here is structural; the guard is a new test, not new state.
+
+**The recorded sweep.** Scope, chosen to be the natural one the gate named and wider than r2's
+(`git diff main...HEAD -- services/`): **every `assert`/`expect(` line the branch removes or
+edits in a file that already existed on the merge-base**, extracted mechanically per test
+function across `tests/` **and** `frontend/`. That is 19 lines over 12 sites in 3 files —
+`tests/test_ai_visit_chat.py` (14), `frontend/app/assistant/page.test.tsx` (4),
+`tests/test_visit_chat_phi.py` (1). Every site classified; nothing sampled.
+
+| site | test | what moved | verdict |
+|---|---|---|---|
+| S1 | `::test_the_prompt_contains_no_free_text_from_the_clerk` | one prompt → both prompts, plus a new negative (`"active" not in prompts[0]`) | **stronger** — D-40 re-seam, deviation 9 |
+| S2 | `::test_invalid_ids_never_reach_a_log_record` | `"selection gate"` → `"decision gate"` | **weakened, undisclosed → r3 f2**, fixed @1bf1029 |
+| S3 | `::test_no_llm_failure_discards_a_completed_eligibility_result` | `LLMBudgetExceeded` leg carved out; every other leg verbatim | **ratified** — eligibility-assistant-D-84, owner call 1 |
+| S4 | `::test_the_model_is_called_exactly_when_the_status_leaves_it_a_choice` | exact count re-pinned 1 → 2, still exact in both directions | **equivalent** — deviation 9 |
+| S5 | `::test_an_id_that_contradicts_the_visits_confirmed_id_is_refused` | `status == "ambiguous_id"` → outcome/reason/mode/citations | **ratified, stronger** — D-73 (1 assert → 4) |
+| S6 | `::test_a_genuinely_different_id_still_contradicts_in_lower_case` | same | **ratified, stronger** — D-73 |
+| S7 | `::test_freshness_does_not_soften_the_contradiction_rule` | same | **ratified, stronger** — D-73 |
+| S8 | `::test_the_log_says_whether_a_payer_was_asked_on_this_turn` | exact dict equality → four-key subset | **weakened, undisclosed → r3 f1**, fixed @4542c1a |
+| S9 | `test_visit_chat_phi.py::test_the_prompt_is_exactly_the_deterministic_build` | model₂'s payload: byte-equality → `in` | **weakened, undisclosed — NEW**, fixed @a582d6b |
+| S10–S13 | `page.test.tsx` ×4 exact-body assertions | `toEqual({…})` → `toEqual(turnBody(…))` | **equivalent** — `turnBody` keeps exact equality and adds the five new required fields; deviation 9, whose count is corrected below |
+
+**S9 is the finding the round did not have.** Neither gate agent reached it; three gate rounds
+and three adversarial rounds had all passed over it. The re-pin kept byte-equality for model₁
+and dropped model₂ to membership, while the docstring above it still claimed byte-identity and
+"catches any clerk text reaching either payload by ANY route". Proved at runtime rather than
+argued: with a text block carrying clerk text appended to model₂'s payload, **the membership
+form passes green**; the equality form reddens. A second route — clerk text appended to the
+`tool_result` content — sits outside `_texts` altogether and was unpinned by either form. Both
+are now pinned, along with the shared system prompt, the tool call's name and closed topic
+argument, and each payload's top-level key set.
+
+**The standing guard** (`tests/test_assertion_pins.py`, @844467b). A sha256 over the normalized
+source (`ast.unparse`) of every `assert` expression in each of the 13 PHI, log-closure and
+prompt-purity tests `docs/landmines.md` §3 covers. A count floor was the obvious choice and
+would have caught **neither** instance: f1 raised the assert count, S9 left it unchanged — what
+moved in both was comparison *strength*. The guard does not veto a weakening; it forces the pin
+update into the same commit, which is the disclosure step that went missing. Negative checks,
+all run this session: replaying f1's exact weakening reddens, replaying S9's exact weakening
+reddens, renaming a pinned test reddens with a distinct message, and reflowing a pinned
+assertion with added comments stays green.
+
+**What stays open.** The guard is Python-only, so the four frontend retained assertions
+(S10–S13) and any future `expect(` edit stay a reviewer's job — filed with the standing half of
+the marker class on `docs/todo.md` TODO-73 rather than as a second entry. The guard says nothing
+about whether an assertion is *correct*, only whether it changed.
+
+**Counts after the round:** `make test-docker` → **1515 passed, 1 skipped, 19 deselected,
+1 xfailed** (112.1s); the SPEC-36 offline+keyless leg (same image, `--network none`, empty
+`AWS_BEARER_TOKEN_BEDROCK` / `LANGSMITH_TRACING`) → identical counts (112.0s); frontend
+`npm test -- --run` → **127 passed, 13 files**, unmoved. **+1** on the round's observed 1514 —
+`tests/test_assertion_pins.py::test_phi_control_assertions_are_pinned`, the standing guard, and
+nothing else: the four instance fixes strengthen assertions inside existing tests rather than
+adding any. Deselected, xfailed and skipped unmoved. Against the ticket row's `1369 passed, 19
+deselected, 1 xfailed`: **+146 passed, +1 skipped**.
+
+**Traceability for the two files this round adds or re-shapes outside the plan's change list**,
+per the same route r1 f4/f5 used for `tests/test_symbol_claims.py`: `tests/test_assertion_pins.py`
+is new, mapping to the r3 f1/f2 dispositions and eligibility-assistant-D-89; `policy_index`'s new
+public `needs_product_confirmation` maps to the r3 f5 disposition. Neither has a plan change row
+and neither needs one — both exist because a gate round said so, which is the recorded-disposition
+route the traceability check accepts.
