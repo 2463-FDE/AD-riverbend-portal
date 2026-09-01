@@ -29,6 +29,7 @@ import json
 import os
 import re
 import sys
+import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -1682,11 +1683,30 @@ def test_the_log_says_whether_a_payer_was_asked_on_this_turn(
     # eligibility-assistant: the line gains five closed values (SPEC-33 mode, the
     # D-19 reason, the outcome, the model-call count, the correlation id). The four
     # original keys and their meanings are unchanged, which is what this asserts.
+    # eligibility-assistant: the line gains closed values (SPEC-33 mode, the D-19
+    # reason, the outcome, the model-call count, the correlation id). The CLOSURE
+    # is the point of this assertion, not the four original values: rule 5 of
+    # docs/phi-logging-policy.md is "adding a field means adding it here on
+    # purpose", and only exact key-set equality makes a sixth field redden a test.
+    # A projection over a fixed key list would let one in silently.
+    assert set(reused) == {
+        "intent", "eligibility_status", "turn_count", "checked",
+        "mode", "outcome", "model_calls", "correlation_id",
+    }
+    # `reason` is ABSENT, not null — schemas.visit_chat_log_metadata omits a value
+    # a caller does not have rather than filling five columns that would read as
+    # "we measured this and it was nothing". A clean reuse turn has no reason.
+    assert "reason" not in reused
+    # The four original keys and their meanings are unchanged.
     assert {key: reused[key] for key in ("intent", "eligibility_status", "turn_count", "checked")} == {
         "intent": "ask_status", "eligibility_status": "active", "turn_count": 0, "checked": False
     }
     assert reused["mode"] in ("real", "fixture")
+    assert reused["outcome"] == "active"
     assert reused["model_calls"] == 2
+    # Structural, not closed: pinned by SHAPE so a PHI-bearing string cannot take
+    # this key's place (UUIDv4, the one non-enumerable value on the line).
+    assert uuid.UUID(reused["correlation_id"]).version == 4
     assert rechecked["checked"] is True
     # Still metadata only.
     assert MEMBER_ID not in caplog.text
