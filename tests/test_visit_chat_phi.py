@@ -21,6 +21,7 @@ because only the first kind existed).
 """
 import json
 import logging
+import re
 import sys
 from types import SimpleNamespace
 
@@ -31,41 +32,19 @@ from fastapi.testclient import TestClient
 from conftest import load_module
 
 # --- ai-assistant stack ------------------------------------------------------
-_AI_PINNED = (
-    "config",
-    "logging_config",
-    "schemas",
-    "llm_client",
-    "templates",
-    "visit_templates",
-    "breaker",
-    "eligibility_client",
+# The ai-assistant stack is the ONE module set `tests/a1_rig.py` publishes
+# (eligibility-assistant-D-66): a second app copy would not share the `llm_client`
+# the rig's fake is installed on. The gateway stack below still loads its own copy.
+from a1_rig import (
+    TEST_INTERNAL_SECRET as INTERNAL_SECRET,
+    app_mod as ai_app,
+    assert_pinned,
+    client as ai_client,
+    schemas as ai_schemas,
 )
-_saved = {name: sys.modules.pop(name, None) for name in _AI_PINNED}
-sys.modules["config"] = load_module("services/ai-assistant/config.py", "phi_ai_config")
-sys.modules["logging_config"] = load_module(
-    "services/ai-assistant/logging_config.py", "phi_ai_logging"
-)
-ai_schemas = sys.modules["schemas"] = load_module(
-    "services/ai-assistant/schemas.py", "phi_ai_schemas"
-)
-sys.modules["llm_client"] = load_module("services/ai-assistant/llm_client.py", "phi_ai_llm")
-sys.modules["templates"] = load_module("services/ai-assistant/templates.py", "phi_ai_templates")
-visit_templates = sys.modules["visit_templates"] = load_module(
-    "services/ai-assistant/visit_templates.py", "phi_ai_visit_templates"
-)
-breaker_mod = sys.modules["breaker"] = load_module(
-    "services/ai-assistant/breaker.py", "phi_ai_breaker"
-)
-elig_client = sys.modules["eligibility_client"] = load_module(
-    "services/ai-assistant/eligibility_client.py", "phi_ai_elig_client"
-)
-ai_app = load_module("services/ai-assistant/app.py", "phi_ai_app")
-for _name, _module in _saved.items():
-    if _module is not None:
-        sys.modules[_name] = _module
-    else:
-        sys.modules.pop(_name, None)
+
+visit_templates = ai_app.visit_templates
+elig_client = ai_app.eligibility_client
 
 # --- gateway stack -----------------------------------------------------------
 _GW_PINNED = ("config", "logging_config", "db", "models", "security")
@@ -84,13 +63,8 @@ for _name, _module in _saved.items():
     else:
         sys.modules.pop(_name, None)
 
-INTERNAL_SECRET = "phi-test-secret"
-ai_app.settings.ai_proxy_shared_secret = INTERNAL_SECRET
+# The rig owns the assistant's client and secret; the gateway is pointed at it.
 gw.settings.ai_proxy_shared_secret = INTERNAL_SECRET
-
-ai_client = TestClient(
-    ai_app.app, raise_server_exceptions=False, headers={"X-Internal-Auth": INTERNAL_SECRET}
-)
 
 OWNER = "frontdesk"
 OTHER = "drnguyen"
@@ -168,23 +142,76 @@ def rig(monkeypatch):
     monkeypatch.setattr(gw.settings, "ai_rate_limit_global_per_day", 1_000_000)
     _session.update(username=OWNER)
 
+    assert_pinned()
     prompts = []
     payer_calls = []
 
-    # Seam 1: Bedrock. Capture every prompt that would have crossed the vendor
-    # boundary — this is the D13 (no BAA) control under test.
-    def _fake_llm(prompt, output_model, system=None, max_tokens=None):
-        prompts.append({"prompt": prompt, "system": system})
-        required = visit_templates.default_selection("active")
-        return SimpleNamespace(
-            parsed=ai_schemas.VisitReplyPlan.model_validate_json(
-                json.dumps({"template_ids": required})
+    # Seam 1: Bedrock. The agent path's only egress is `client.messages.create`
+    # (eligibility-assistant-D-40), so the fake is a scripted Bedrock CLIENT and
+    # `prompts` captures every kwargs on BOTH model calls: the captured bodies ARE
+    # the D13 (no BAA) control under test. The pre-egress stack stays live.
+    class _Scripted:
+        def __init__(self):
+            self.messages = self
+
+        def create(self, **kwargs):
+            prompts.append(kwargs)
+            has_tool_result = any(
+                isinstance(block, dict) and block.get("type") == "tool_result"
+                for entry in kwargs["messages"]
+                for block in (
+                    entry["content"] if isinstance(entry["content"], list) else []
+                )
             )
-        )
+            if not has_tool_result:
+                body = {
+                    "id": "msg-tool",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu-1",
+                            "name": "policy_lookup",
+                            "input": {"topic": "eligibility-verification"},
+                        }
+                    ],
+                    "usage": {"input_tokens": 100, "output_tokens": 20},
+                    "stop_reason": "tool_use",
+                }
+                return ai_app.llm_client._adapt(body, "req-1")
+            message = "\n".join(
+                block.get("text", "")
+                for entry in kwargs["messages"]
+                for block in (
+                    entry["content"] if isinstance(entry["content"], list) else []
+                )
+                if isinstance(block, dict)
+            )
+            status_match = re.search(
+                r"Eligibility status from the payer for this turn: (\S+)", message
+            )
+            status = status_match.group(1) if status_match else "unknown"
+            concluded = ai_app.outcome.payer_outcome(
+                {"status": status, "payer": "edi.example.com"}
+            )
+            actions = visit_templates.a1_default_selection(concluded.value, "covered_today")
+            body = {
+                "id": "msg-text",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps({"citation_ids": [], "action_ids": actions}),
+                    }
+                ],
+                "usage": {"input_tokens": 100, "output_tokens": 20},
+                "stop_reason": "end_turn",
+            }
+            return ai_app.llm_client._adapt(body, "req-2")
 
-    monkeypatch.setattr(ai_app.llm_client, "complete_structured", _fake_llm)
+    monkeypatch.setattr(ai_app.llm_client, "client", _Scripted())
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "phi-test-bearer-not-a-placeholder")
 
-    # Seam 2: the eligibility HTTP call. The REAL eligibility_client runs, so its
+    # Seam 2: the eligibility HTTP call. The REAL eligibility_client runs — the
+    # rig's pinned copy, the one `agent_turn`'s PayerGate calls — so its
     # projection and PHI-safe error handling are exercised, not stubbed.
     def _fake_get(url, params=None, timeout=None):
         payer_calls.append(params or {})
@@ -202,7 +229,9 @@ def rig(monkeypatch):
 
     monkeypatch.setattr(elig_client.httpx, "get", _fake_get)
     monkeypatch.setattr(
-        elig_client, "_breaker", breaker_mod.CircuitBreaker(fail_threshold=3, reset_seconds=30)
+        elig_client,
+        "_breaker",
+        elig_client.CircuitBreaker(fail_threshold=3, reset_seconds=30),
     )
 
     # The gateway's fan-out calls the real ai-assistant app.
@@ -219,8 +248,19 @@ def rig(monkeypatch):
     return SimpleNamespace(redis=redis, prompts=prompts, payer_calls=payer_calls)
 
 
+# eligibility-assistant: the four clerk menu selections are REQUIRED on every
+# turn (SPEC-54), so every body this file posts carries them. One neutral set —
+# nothing here is about the selections (the tests/test_ai_visit_chat.py idiom).
+A1_SELECTIONS = {
+    "question_type": "covered_today",
+    "payer": "aetna",
+    "product": "commercial",
+    "state": "unconfirmed",
+}
+
+
 def _chat(message, visit_id=None):
-    body = {"message": message}
+    body = {"message": message, **A1_SELECTIONS}
     if visit_id is not None:
         body["visit_id"] = visit_id
     return gw_client.post("/ai/visit-chat", json=body)
@@ -232,29 +272,88 @@ def test_no_phi_reaches_the_prompt(rig):
     assert r.status_code == 200
 
     assert rig.prompts, "the model was never called — the test proves nothing"
-    blob = json.dumps(rig.prompts)
+    blob = json.dumps(rig.prompts, default=str)
     for phi in PHI_STRINGS + (MEMBER_ID,):
         assert phi not in blob, f"{phi!r} crossed the vendor boundary"
 
 
 def test_the_prompt_is_exactly_the_deterministic_build(rig):
-    """The strongest form of the claim: the prompt is a pure function of CLOSED
-    inputs, so it is byte-identical to what the builder produces from them.
+    """The strongest form of the claim: each model payload is a pure function of
+    CLOSED inputs, so it is byte-identical to what its builder produces from them.
 
     An assertion about absent substrings can only catch the PHI a test thought
-    to plant; this one catches any clerk text reaching the prompt by ANY route,
-    including a future edit that starts interpolating the message.
+    to plant; this one catches any clerk text reaching either payload by ANY
+    route, including a future edit that starts interpolating the message.
+    Both payloads are pinned (eligibility-assistant-D-40): model₁'s user message to
+    `_build_model1_prompt` and model₂'s injected message to `_build_model2_message`.
+    Every surface of both — text blocks in order, the system prompt, the tool
+    call, the tool result, and the top-level key set — is pinned by EQUALITY.
     """
     _chat(ADVERSARIAL_MESSAGE)
 
-    expected = ai_app._build_visit_prompt(
-        ai_schemas.VisitIntent.check_eligibility,
-        "active",
-        0,
-        visit_templates.default_selection("active"),
-        visit_templates.allowed_selection("active"),
+    req = ai_schemas.VisitChatRequest(
+        message=ADVERSARIAL_MESSAGE, turns=[], facts={}, **A1_SELECTIONS
     )
-    assert rig.prompts[0]["prompt"] == expected
+    assert len(rig.prompts) == 2
+
+    def _texts(kwargs):
+        return [
+            block.get("text", "")
+            for entry in kwargs["messages"]
+            for block in (
+                entry["content"] if isinstance(entry["content"], list) else []
+            )
+            if isinstance(block, dict) and block.get("type") in (None, "text")
+        ]
+
+    expected_model1 = ai_app._build_model1_prompt(
+        req, ai_schemas.VisitIntent.check_eligibility, 0
+    )
+    rows = []  # the adversarial turn retrieves nothing for these axes
+    for message in rig.prompts[1]["messages"]:
+        content = message["content"]
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    rows = ai_app.agent_turn._rows_from_tool_result(block.get("content"))
+    # The verdict the rig's payer fake produced; the builder reads only `status`
+    # and `payer` from it, and renders neither.
+    expected_model2 = ai_app._build_model2_message(
+        "active", {"status": "active", "payer": "edi.example.com"}, rows, req
+    )
+    # EQUALITY, not membership: a containment check leaves the rest of the payload
+    # unpinned.
+    assert _texts(rig.prompts[0]) == [expected_model1]
+    assert _texts(rig.prompts[1]) == [expected_model1, expected_model2]
+    # The non-text blocks, so nothing free-form can hide in them either.
+    assert rig.prompts[0]["system"] == ai_app.agent_turn.SYSTEM_PROMPT
+    assert rig.prompts[1]["system"] == ai_app.agent_turn.SYSTEM_PROMPT
+    tool_uses = [
+        block
+        for message in rig.prompts[1]["messages"]
+        if isinstance(message["content"], list)
+        for block in message["content"]
+        if isinstance(block, dict) and block.get("type") == "tool_use"
+    ]
+    tool_results = [
+        block
+        for message in rig.prompts[1]["messages"]
+        if isinstance(message["content"], list)
+        for block in message["content"]
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    ]
+    assert len(tool_uses) == 1 and len(tool_results) == 1
+    assert tool_uses[0]["name"] == "policy_lookup"
+    assert set(tool_uses[0]["input"]) == {"topic"}
+    assert tool_uses[0]["input"]["topic"] in ai_app.policy_tool.TOPICS
+    # This adversarial turn retrieves nothing for its axes, so the tool result is
+    # the empty list — pinned exactly, not merely "carries no PHI".
+    assert tool_results[0]["content"] == "[]"
+    assert rows == []
+    # Nothing else in either payload is a string the clerk could have influenced:
+    # the remaining keys are the model id, the token cap, and the closed tool schema.
+    for kwargs in (rig.prompts[0], rig.prompts[1]):
+        assert set(kwargs) == {"extra_body", "max_tokens", "messages", "model", "system"}
 
 
 # --- logs -------------------------------------------------------------------
@@ -347,7 +446,9 @@ def test_degrade_log_carries_no_exception_message(rig, monkeypatch, caplog):
     def _raise(*a, **k):
         raise ai_app.llm_client.LLMUnavailable(marker)
 
-    monkeypatch.setattr(ai_app.llm_client, "complete_structured", _raise)
+    # The fault is injected at `llm_client._call`, the one egress both model calls
+    # go through.
+    monkeypatch.setattr(ai_app.llm_client, "_call", _raise)
     with caplog.at_level("DEBUG"):
         r = _chat(ADVERSARIAL_MESSAGE)
 
@@ -375,7 +476,7 @@ def test_degrade_log_carries_the_provider_request_id(rig, monkeypatch, caplog):
     def _raise(*a, **k):
         raise ai_app.llm_client.LLMResponseError(marker, request_id="req_drift_88")
 
-    monkeypatch.setattr(ai_app.llm_client, "complete_structured", _raise)
+    monkeypatch.setattr(ai_app.llm_client, "_call", _raise)
     with caplog.at_level("DEBUG"):
         r = _chat(ADVERSARIAL_MESSAGE)
 

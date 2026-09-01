@@ -64,6 +64,7 @@ __all__ = [
     "categories",
     "lookup",
     "fetch_by_id",
+    "needs_product_confirmation",
     "tier",
     "rank",
     "default_ranker",
@@ -446,6 +447,20 @@ def _filter(topic: str, payer: str, product: str, state: str, index: Optional[In
         if not _matches(entry.states, state):
             continue
         yield row
+
+
+def needs_product_confirmation(document: Union[str, Row]) -> bool:
+    """Whether a row's manifest entry is flagged as needing product confirmation.
+
+    A named accessor rather than a reach into `entries`, which is outside `__all__`.
+    """
+    # Duck-typed on `.id`, not `isinstance(document, Row)`: the rig stands rows in
+    # as `SimpleNamespace(id=...)`.
+    doc_id = getattr(document, "id", document)
+    entry = _current().entries.get(doc_id)
+    if entry is None:
+        raise ValueError("unknown document id")
+    return bool(entry.needs_product_confirmation)
 
 
 def tier(document: Union[str, Mapping[str, str], Row]) -> int:

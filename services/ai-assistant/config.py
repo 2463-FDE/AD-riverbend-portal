@@ -85,6 +85,16 @@ class Settings:
     # reddens it, by design. Clamped >= 1: 0 would return nothing on every turn.
     a1_retrieval_max_rows = max(1, int(os.getenv("A1_RETRIEVAL_MAX_ROWS", "5")))
 
+    # SPEC-33 / eligibility-assistant-D-39 (narrowed by D-71): LABELS the mode as
+    # `fixture`; does not script a model or gate egress. Fail-visible: a flag left on
+    # renders `fixture` on every model-produced reply.
+    a1_model_fixture = os.getenv("A1_MODEL_FIXTURE", "false").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
     # --- visit-chat: the eligibility dependency (ADR 0011) -------------------
     # ai-assistant's own hop to eligibility-service. Bounded and breakered from
     # the start: the D4 lesson (RIV-088/RIV-141) is about the CALLER's worker

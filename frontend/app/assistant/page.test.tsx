@@ -35,8 +35,31 @@ function okTurn(over: Record<string, unknown> = {}) {
     disclaimer: "Verify with the payer before billing.",
     eligibility: { status: "active", payer: "Aetna", checked_at: "2026-08-07T10:00:00Z" },
     assistant: "ok",
+    // eligibility-assistant: the turn's report fields ride every 200 now; the
+    // neutral values here keep this helper about whatever each test IS about.
+    citations: [],
+    mode: "real",
+    reason: null,
+    outcome: "active",
+    model: "us.anthropic.claude-sonnet-4-6",
+    correlation_id: "3f2b8c44-9a1d-4e5f-8a6b-0c1d2e3f4a5b",
     ...over,
   });
+}
+
+// The body every turn carries now (SPEC-54/44): the four closed selections at
+// the page's defaults plus the emergency flag. The tests that are ABOUT the
+// selections change them through the menus; everything else sends these.
+function turnBody(message: string, over: Record<string, unknown> = {}) {
+  return {
+    message,
+    question_type: "covered_today",
+    payer: "unitedhealthcare",
+    product: "unconfirmed",
+    state: "unconfirmed",
+    emergency: false,
+    ...over,
+  };
 }
 
 async function send(text: string) {
@@ -69,7 +92,7 @@ describe("assistant chat surface", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Coverage active");
     expect(apiFetch).toHaveBeenCalledWith("/api/ai/visit-chat", expect.anything());
     // A first turn carries no visit_id — the gateway mints one.
-    expect(lastBody()).toEqual({ message: "Is this patient covered?" });
+    expect(lastBody()).toEqual(turnBody("Is this patient covered?"));
   });
 
   it("echoes the visit id on the following turn (W3-SPEC-20)", async () => {
@@ -83,10 +106,9 @@ describe("assistant chat surface", () => {
     await send("Is it still active?");
     await screen.findByText("Yes, still active.");
 
-    expect(lastBody()).toEqual({
-      message: "Is it still active?",
-      visit_id: "a".repeat(32),
-    });
+    expect(lastBody()).toEqual(
+      turnBody("Is it still active?", { visit_id: "a".repeat(32) })
+    );
   });
 
   it("starts a fresh visit when the gateway returns a null visit id (W3-SPEC-20)", async () => {
@@ -104,7 +126,7 @@ describe("assistant chat surface", () => {
     await send("Second message");
     await screen.findByText("Fresh visit.");
 
-    expect(lastBody()).toEqual({ message: "Second message" });
+    expect(lastBody()).toEqual(turnBody("Second message"));
   });
 
   // NEGATIVE (docs/landmines.md §3 — a coverage answer read under the wrong
@@ -283,7 +305,7 @@ describe("assistant chat surface", () => {
     apiFetch.mockResolvedValueOnce(okTurn({ reply: "Fresh visit." }));
     await send("Is it still active?");
     await screen.findByText("Fresh visit.");
-    expect(lastBody()).toEqual({ message: "Is it still active?" });
+    expect(lastBody()).toEqual(turnBody("Is it still active?"));
   });
 
   // NEGATIVE (docs/landmines.md §3). A 200 carrying `reply` but no disclaimer,
@@ -342,5 +364,88 @@ describe("assistant chat surface", () => {
       await screen.findByText("The assistant is busy — try again in a moment.")
     ).toBeInTheDocument();
     expect(screen.getByLabelText(/message/i)).not.toBeDisabled();
+  });
+});
+
+// --- eligibility-assistant: the turn's report fields and closed inputs -------
+import { PAYERS, PRODUCTS, QUESTION_TYPES, STATES } from "../lib/types";
+
+describe("eligibility-assistant turn surface", () => {
+  it("renders citations, mode and reason (SPEC-41)", async () => {
+    apiFetch.mockResolvedValueOnce(
+      okTurn({
+        reply: "This is the standard guidance for an unverified check.",
+        eligibility: null,
+        citations: [
+          {
+            title: "No-invention rule",
+            document_id: "DOC-SYN-NO-INVENTION",
+            section: "Insufficient evidence",
+            version: "2026-07",
+          },
+        ],
+        mode: "fallback",
+        reason: "model_failure",
+        outcome: "unknown",
+      })
+    );
+    render(<AssistantPage />);
+
+    await send("Is this patient covered?");
+
+    expect(await screen.findByText(/standard guidance for an unverified/)).toBeInTheDocument();
+    // The citation renders all four fields (SPEC-4's shape, rendered).
+    expect(
+      screen.getByText(/No-invention rule — Insufficient evidence \(DOC-SYN-NO-INVENTION, 2026-07\)/)
+    ).toBeInTheDocument();
+    // Mode and outcome are shown, and the fallback names its reason.
+    expect(screen.getByText(/Mode: fallback/)).toBeInTheDocument();
+    expect(screen.getByText(/Outcome: unknown/)).toBeInTheDocument();
+    expect(screen.getByText(/reason: model_failure/)).toBeInTheDocument();
+    // The health notice is the OTHER field's and does not appear for a healthy
+    // fallback: mode is not health (eligibility-assistant-D-71).
+    expect(
+      screen.queryByText(/assistant is answering in a degraded mode/i)
+    ).not.toBeInTheDocument();
+  });
+
+  it("emergency flag sent (SPEC-44)", async () => {
+    apiFetch.mockResolvedValueOnce(
+      okTurn({ mode: "care_first", outcome: "care_first", reason: "emergency" })
+    );
+    render(<AssistantPage />);
+
+    fireEvent.click(screen.getByLabelText(/emergency/i));
+    await send("Chest pain at the front desk");
+
+    expect(lastBody()).toEqual(
+      turnBody("Chest pain at the front desk", { emergency: true })
+    );
+  });
+
+  it("question type, payer, product and state menus closed (SPEC-54)", async () => {
+    apiFetch.mockResolvedValueOnce(okTurn());
+    render(<AssistantPage />);
+
+    // Each menu offers exactly the contract's closed set — nothing typed, no
+    // free-text path to the prompt.
+    const menus: Array<[RegExp, readonly string[]]> = [
+      [/question type/i, QUESTION_TYPES],
+      [/payer/i, PAYERS],
+      [/product/i, PRODUCTS],
+      [/^state$/i, STATES],
+    ];
+    for (const [label, values] of menus) {
+      const select = screen.getByLabelText(label) as HTMLSelectElement;
+      expect(Array.from(select.options).map((o) => o.value)).toEqual([...values]);
+    }
+
+    fireEvent.change(screen.getByLabelText(/payer/i), { target: { value: "aetna" } });
+    fireEvent.change(screen.getByLabelText(/product/i), { target: { value: "commercial" } });
+    await send("please check AETN1224");
+
+    expect(lastBody()).toEqual(
+      turnBody("please check AETN1224", { payer: "aetna", product: "commercial" })
+    );
   });
 });

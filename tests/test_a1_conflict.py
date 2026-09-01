@@ -91,3 +91,97 @@ def test_tier_rank_in_code():
     emergency_tiers = [tiers[r.id] for r in emergency]
     assert emergency_tiers == sorted(emergency_tiers)
     assert emergency_tiers[0] == 1
+
+
+# --------------------------------------------------------------------------- #
+# eligibility-assistant `turn` — the 1c half: the wired conflict/insufficiency
+# outcomes (SPEC-42, EVAL-007/020/013/023). The tier function above is `corpus`'s
+# half; what lands here is the turn that consumes it.
+# --------------------------------------------------------------------------- #
+import json as _json
+
+import pytest
+
+
+@pytest.mark.parametrize(
+    "case_id", ["EVAL-007", "EVAL-020", "EVAL-013", "EVAL-023"]
+)
+def test_eval_007_020_013_023(case_id, monkeypatch):
+    """SPEC-42 — conflicting sources are cited, stated through the catalog
+    template, refused a definitive answer and routed to a person; a question no
+    approved applicable document (or only citation-only pages on unconfirmed
+    axes) can answer refuses definitively. Conflicting sources are never
+    blended: the reply's coverage line is a catalog template, not a synthesis.
+    """
+    # `assert_pinned` is re-imported here deliberately: the module-level one is
+    # `a1_corpus_rig`'s, which checks the corpus module set only. The turn half of
+    # this file patches through `a1_rig`, so it is `a1_rig`'s three extra identity
+    # assertions — `agent_binding.llm_client`, `agent_turn.llm_client`,
+    # `agent_turn.eligibility_client` — that have to hold before a turn runs here.
+    from a1_rig import (
+        MEMBER_ID,
+        assert_pinned,
+        install_model,
+        install_payer,
+        post,
+        retrieved_ids,
+        text_body,
+        tool_use_body,
+        topic,
+        turn,
+        verdict,
+    )
+
+    assert_pinned()
+
+    def decision(citation_ids, action_ids):
+        return text_body(
+            _json.dumps(
+                {"citation_ids": list(citation_ids), "action_ids": list(action_ids)}
+            )
+        )
+
+    if case_id in ("EVAL-007", "EVAL-020"):
+        # Conflict detection is model₂'s bounded choice of `state_conflict`; the
+        # consequences are code. EVAL-007's second "source" (the clinic
+        # procedure) is outside the corpus, so its citation set is the whole
+        # retrieved set — one row; EVAL-020 cites two of its five.
+        cited = retrieved_ids(case_id)[: (1 if case_id == "EVAL-007" else 2)]
+        install_model(
+            monkeypatch,
+            tool_use_body("policy_lookup", {"topic": topic(case_id)}),
+            decision(cited, ["state_conflict", "escalate"]),
+        )
+        install_payer(monkeypatch, verdict("active", payer="Payer"))
+        body = post(turn(case_id, facts={"insurance_id": MEMBER_ID})).json()
+        assert body["outcome"] == "conflict"
+        assert [c["document_id"] for c in body["citations"]] == cited
+        # Stated through the catalog template, never blended into a verdict.
+        assert "DISAGREE" in body["reply"].split("\n")[0].upper()
+        assert "ACTIVE" not in body["reply"].split("\n")[0].upper()
+        assert "escalate" in _json.dumps(body["reply"]).lower() or "supervisor" in body["reply"].lower()
+        return
+
+    # EVAL-013 / EVAL-023 — the in-code applicability check on a turn with no
+    # payer verdict: no tier-1..3 row (013), or only needs-product-confirmation
+    # citation-only pages on unconfirmed axes (023) -> refuse_definitive.
+    install_model(
+        monkeypatch,
+        tool_use_body("policy_lookup", {"topic": topic(case_id)}),
+        decision(retrieved_ids(case_id)[:1], ["escalate"]),
+    )
+    payer = install_payer(monkeypatch, verdict("active", payer="Payer"))
+    # A question about a product, not a member: no id, no payer call. The visit
+    # holds an id (the agent path requires one) but the intent buys no lookup.
+    body = post(
+        turn(
+            case_id,
+            message="does this plan cover out-of-state visits?",
+            facts={"insurance_id": MEMBER_ID},
+        )
+    ).json()
+    assert payer.calls == []
+    assert body["outcome"] == "refuse_definitive"
+    first_line = body["reply"].split("\n")[0].upper()
+    assert "ACTIVE" not in first_line
+    assert "escalate" in _json.dumps(body["reply"]).lower() or "supervisor" in body["reply"].lower()

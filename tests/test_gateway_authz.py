@@ -290,3 +290,77 @@ def test_granted_role_reaches_the_downstream_proxy(monkeypatch, role, method, pa
     r = client.request(method, path, json={} if method == "POST" else None)
     assert r.status_code == 200
     assert r.json() == sentinel
+
+
+# --------------------------------------------------------------------------- #
+# 5. eligibility-assistant: the visit-chat role gate as client acceptance
+#    (SPEC-47/48 — EVAL-010/011/029/030; eligibility-assistant-D-17, D-30).
+#    Tests only: no authz line moves, and EXPECTED_ROUTE_CAPABILITIES above is
+#    untouched — /ai/visit-chat already carries ai.use.
+# --------------------------------------------------------------------------- #
+_A1_TURN_BODY = {
+    "message": "please check AETN1224",
+    "question_type": "covered_today",
+    "payer": "aetna",
+    "product": "commercial",
+    "state": "unconfirmed",
+}
+
+
+@pytest.mark.parametrize("role", ["clinician", "roi_clerk"], ids=["EVAL-010", "EVAL-011"])
+def test_visit_chat_roles(monkeypatch, role):
+    """SPEC-47 — the refused roles get 403 BEFORE any assistant turn: no fan-out,
+    no rate-limit or budget read, no visit memory touched."""
+    _forbid_fanout(monkeypatch)
+    _login_as(role)
+
+    r = client.post("/ai/visit-chat", json=_A1_TURN_BODY)
+
+    assert r.status_code == 403
+    assert r.json()["detail"] == "requires capability ai.use"
+    assert "AETN1224" not in r.text
+
+
+@pytest.mark.parametrize("leg", ["grant", "config"], ids=["EVAL-029", "EVAL-030"])
+def test_ai_use_grants(monkeypatch, leg):
+    """SPEC-48 — the `ai.use` grant set is pinned at exactly `front_desk`,
+    `admin`, `staff` (EVAL-030's "reclassify", the eligibility-assistant-D-17
+    known limitation: `staff` keeps the grant as the compat default role), and
+    `admin` actually reaches the proxy (EVAL-029)."""
+    if leg == "config":
+        with open(os.path.join(REPO_ROOT, "config", "roles.yaml")) as f:
+            declared = yaml.safe_load(f)["roles"]
+        granted = {
+            role
+            for role, spec in declared.items()
+            if "ai.use" in (spec.get("permissions") or [])
+        }
+        assert granted == {"front_desk", "admin", "staff"}
+        # The enforced twin agrees — yaml alone gates nothing (authz.py:4-8).
+        enforced = {
+            role
+            for role in declared
+            if "ai.use" in authz.capabilities_for(role)
+        }
+        assert enforced == granted
+        return
+
+    proxied = []
+
+    def _fake_post_checked(service, path, payload, timeout=None, headers=None):
+        proxied.append(path)
+        raise gw.HTTPException(status_code=503, detail="stub: reached the fan-out")
+
+    monkeypatch.setattr(gw, "_post_checked", _fake_post_checked)
+    monkeypatch.setattr(gw, "check_ai_rate_limit", lambda *a, **k: 0)
+    monkeypatch.setattr(gw, "consume_ai_global_budget", lambda *a, **k: (0, None))
+    monkeypatch.setattr(gw, "visit_lock_acquire", lambda *a, **k: "tok")
+    monkeypatch.setattr(gw, "visit_lock_release", lambda *a, **k: None)
+    _login_as("admin")
+
+    r = client.post("/ai/visit-chat", json=_A1_TURN_BODY)
+
+    # The 403 gate passed and the request reached the fan-out; the stubbed 503
+    # is this test's own sentinel, not a denial.
+    assert proxied == ["/visit-chat"]
+    assert r.status_code == 503

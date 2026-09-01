@@ -9,6 +9,8 @@ exception CLASS only in logs, downstream URL never in a response or log line.
 No Redis/DB I/O: require_session is dependency-overridden and httpx.post is
 faked at the gateway module seam.
 """
+import json
+import pathlib
 import sys
 
 import httpx
@@ -174,3 +176,191 @@ def test_route_requires_session():
             "username": "frontdesk",
             "role": "staff",
         }
+
+
+# --- eligibility-assistant turn: the correlation hop and the answer-only degrade
+# (SPEC-26 / eligibility-assistant-D-46; SPEC-41 / eligibility-assistant-D-72) ---
+
+# One legal turn body. The four selections are required on every turn (SPEC-54);
+# the values are the contract's own (contracts/visit-chat-turn.json).
+_TURN_SELECTIONS = {
+    "question_type": "covered_today",
+    "payer": "aetna",
+    "product": "commercial",
+    "state": "unconfirmed",
+    "emergency": False,
+}
+
+_TURN_CID = "3f2b8c44-9a1d-4e5f-8a6b-0c1d2e3f4a5b"
+
+
+def _turn_downstream(**overrides):
+    """A body our renderer would produce, overridable per test."""
+    body = {
+        "reply": "Coverage is ACTIVE with edi.example.com.\n- Collect the copay",
+        "intent": "check_eligibility",
+        "status": "active",
+        "facts": {
+            "insurance_id": "AETN1224",
+            "last_eligibility": None,
+            "last_citations": [
+                {"document_id": "DOC-PAYER-AETNA-ELIG", "version": "2026-07"}
+            ],
+        },
+        "disclaimer": "Administrative guidance only.",
+        "eligibility": None,
+        "llm_egress": True,
+        "assistant": "ok",
+        "citations": [
+            {
+                "title": "Aetna eligibility",
+                "document_id": "DOC-PAYER-AETNA-ELIG",
+                "section": "Verification",
+                "version": "2026-07",
+            }
+        ],
+        "mode": "real",
+        "reason": None,
+        "outcome": "active",
+        "correlation_id": _TURN_CID,
+        "model": "us.anthropic.claude-sonnet-4-6",
+    }
+    body.update(overrides)
+    return body
+
+
+@pytest.fixture()
+def visit_state(monkeypatch):
+    """Visit memory and the per-visit lock, off Redis; records saves."""
+    saves = []
+    monkeypatch.setattr(gw, "visit_lock_acquire", lambda *a, **k: "tok")
+    monkeypatch.setattr(gw, "visit_lock_release", lambda *a, **k: None)
+
+    def _save(visit_id, owner, facts, turns, *a, **k):
+        saves.append({"visit_id": visit_id, "facts": facts, "turns": turns})
+        return True
+
+    monkeypatch.setattr(gw, "visit_memory_save", _save)
+    return saves
+
+
+def _post_turn(monkeypatch, downstream_body, *, headers=None):
+    calls = _patch_post(monkeypatch, response=_FakeResponse(body=downstream_body))
+    r = client.post(
+        "/ai/visit-chat",
+        json={"message": "please check AETN1224", **_TURN_SELECTIONS},
+        headers=headers or {},
+    )
+    return r, calls
+
+
+def test_a1_correlation_header_forwarded(monkeypatch, visit_state):
+    """SPEC-26 — the portal's X-Correlation-Id rides the fan-out hop as a HEADER
+    (never a body field) and is echoed back; the gateway answers with the id IT
+    forwarded, not whatever downstream claims (eligibility-assistant-D-46)."""
+    r, calls = _post_turn(
+        monkeypatch,
+        _turn_downstream(correlation_id="00000000-0000-4000-8000-000000000000"),
+        headers={"X-Correlation-Id": _TURN_CID},
+    )
+
+    assert r.status_code == 200, r.text
+    assert calls[0]["headers"]["X-Correlation-Id"] == _TURN_CID
+    # The body forwarded downstream carries the turn payload, never the id.
+    assert "X-Correlation-Id" not in calls[0]["json"]
+    assert "correlation_id" not in calls[0]["json"]
+    assert r.json()["correlation_id"] == _TURN_CID
+
+    # The other leg of eligibility-assistant-D-46: a caller with no usable header
+    # (here: not UUIDv4-shaped) gets a gateway-MINTED UUIDv4, replaced rather than
+    # forwarded — the id is bounded and structural on every path.
+    r2, calls2 = _post_turn(
+        monkeypatch, _turn_downstream(), headers={"X-Correlation-Id": "not-a-uuid"}
+    )
+    assert r2.status_code == 200, r2.text
+    forwarded = calls2[0]["headers"]["X-Correlation-Id"]
+    assert forwarded != "not-a-uuid"
+    import uuid as _uuid
+
+    assert _uuid.UUID(forwarded).version == 4
+    assert r2.json()["correlation_id"] == forwarded
+
+
+def test_a1_answer_fields_degrade_and_facts_stay_fatal(monkeypatch, visit_state):
+    """SPEC-41 / eligibility-assistant-D-72 — the five answer-only fields degrade
+    (`citations` to `[]`, the other four to null) while the turn still answers 200
+    with `facts` persisted; an unusable `facts.last_citations` is FATAL (502) with
+    visit memory untouched. The two halves fail independently."""
+    # Half 1: every answer-only field unusable -> 200, degraded, facts persisted.
+    r, _ = _post_turn(
+        monkeypatch,
+        _turn_downstream(
+            citations="nonsense",
+            mode=123,
+            reason={"free": "text"},
+            outcome="NOT SNAKE CASE",
+            model="\x00" * 300,
+        ),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["citations"] == []
+    assert body["mode"] is None
+    assert body["reason"] is None
+    assert body["outcome"] is None
+    assert body["model"] is None
+    assert len(visit_state) == 1
+    assert visit_state[0]["facts"]["insurance_id"] == "AETN1224"
+    # The persisted citation is ids + version ONLY — no text key survives the hop.
+    assert visit_state[0]["facts"]["last_citations"] == [
+        {"document_id": "DOC-PAYER-AETNA-ELIG", "version": "2026-07"}
+    ]
+
+    # Half 2: unusable facts.last_citations -> 502, nothing further persisted.
+    r2, _ = _post_turn(
+        monkeypatch,
+        _turn_downstream(
+            facts={
+                "insurance_id": "AETN1224",
+                "last_eligibility": None,
+                "last_citations": [{"document_id": 42}],
+            }
+        ),
+    )
+    assert r2.status_code == 502
+    assert len(visit_state) == 1, "the 502 must not touch visit memory"
+
+
+# --- the gateway's copy of the four closed selection sets (eligibility-assistant
+# -D-45) --------------------------------------------------------------------
+def test_the_gateway_selection_sets_are_the_contract_sets():
+    """The THIRD copy, asserted against the one declaration.
+
+    `contracts/visit-chat-turn.json` is the single declaration of the turn payload
+    because the portal, the gateway and the assistant each carry a copy of these
+    four menus, and three copies of a closed set kept equal by review alone is the
+    shape `docs/landmines.md` §1 names as the intake contract break. Two of the
+    three were asserted — `tests/test_a1_turn_contract.py` for the assistant's
+    pydantic enums, `frontend/app/assistant/turn.contract.test.ts` for the portal's
+    builder — and the gateway's literal tuples were pinned by nothing while two
+    in-code comments said they were. A value added to the contract and the assistant
+    but not to `_TURN_*` here 422s every turn carrying it, with nothing red.
+    """
+    contract = json.loads(
+        (
+            pathlib.Path(__file__).resolve().parent.parent
+            / "contracts"
+            / "visit-chat-turn.json"
+        ).read_text()
+    )
+    for axis, mirrored in (
+        ("question_type", gw._TURN_QUESTION_TYPES),
+        ("payer", gw._TURN_PAYERS),
+        ("product", gw._TURN_PRODUCTS),
+        ("state", gw._TURN_STATES),
+    ):
+        assert set(contract["enums"][axis]) == set(mirrored), (
+            f"contracts/visit-chat-turn.json declares "
+            f"{sorted(contract['enums'][axis])} for {axis}, but the gateway mirrors "
+            f"{sorted(mirrored)}"
+        )

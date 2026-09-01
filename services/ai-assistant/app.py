@@ -20,9 +20,10 @@ docstring for the full argument and the obligations it created.
 import json
 import re
 import secrets
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, NamedTuple
+from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -31,13 +32,17 @@ from fastapi.responses import JSONResponse
 from config import settings
 from logging_config import configure
 import agent_binding  # noqa: F401  (dark import — see the seam note below)
+import agent_turn
 import eligibility_client
 import llm_client
+import outcome
 import policy_index
 import policy_tool  # noqa: F401  (dark import — see the lifespan note below)
 import templates
 import visit_templates
 from schemas import (
+    AgentDecision,
+    Citation,  # noqa: F401  (the agent path's decision shape — see agent_turn)
     InstructionsChecklist,
     InstructionsRequest,
     InstructionsResponse,
@@ -45,7 +50,6 @@ from schemas import (
     VisitChatResponse,
     VisitFacts,
     VisitIntent,
-    VisitReplyPlan,
     log_metadata,
     visit_chat_log_metadata,
 )
@@ -317,16 +321,6 @@ def intake_instructions(req: InstructionsRequest):
 # --------------------------------------------------------------------------- #
 # visit-chat — the front-desk eligibility assistant (ADR 0011)
 # --------------------------------------------------------------------------- #
-_VISIT_SYSTEM_PROMPT = (
-    "You choose which follow-up actions a front-desk clerk should see alongside "
-    "an insurance eligibility result that has ALREADY been decided. You are given "
-    "the situation as fixed labels, the required action ids for that situation, "
-    "and optional extra ids. Respond with the chosen ids. Rules: include every "
-    "required id; add an optional id only when it is genuinely useful; use only "
-    "ids you were given; never write action text yourself; never state or revise "
-    "the coverage result."
-)
-
 _VISIT_DISCLAIMER = (
     "Coverage information comes from the payer's eligibility response and can be "
     "out of date or incomplete. It is not a guarantee of payment, and it is not "
@@ -662,186 +656,291 @@ def _derive_intent(message: str, facts: VisitFacts) -> tuple[VisitIntent, str | 
     return VisitIntent.other, None
 
 
-def _build_visit_prompt(
-    intent: VisitIntent, status: str, turn_count: int, required: list[str], allowed: set[str]
-) -> str:
-    """Render the CLOSED situation labels + candidate ids as prompt lines.
+def _build_model1_prompt(req: VisitChatRequest, intent: VisitIntent, turn_count: int) -> str:
+    """Model₁'s whole payload: what to retrieve about, and nothing else.
 
-    Every interpolated value is closed vocabulary: an enum value, a status string
-    this service derived from the ADR 0010 contract, an integer, and catalog keys
-    with their fixed catalog text. The clerk's message is deliberately absent —
-    it is PHI-bearing free text and never crosses the vendor boundary.
+    Every interpolated value is closed vocabulary. The clerk's MESSAGE, the member
+    id and every other identifier are absent (SPEC-12, eligibility-assistant-D-14);
+    the free text is read only by `_derive_intent`, in this process. The payer
+    status is absent on purpose: it reaches model₂ only (SPEC-50).
     """
-    optional = [key for key in visit_templates.OPTIONAL_IDS if key in allowed]
-    required_lines = [f"- {key}: {visit_templates.CATALOG[key]}" for key in required]
-    optional_lines = [f"- {key}: {visit_templates.CATALOG[key]}" for key in optional]
     return (
-        "A front-desk clerk is working through a patient's insurance eligibility "
-        "during check-in. Situation:\n"
-        f"- what the clerk's latest turn is asking for: {intent.value}\n"
-        f"- eligibility result already determined: {status}\n"
+        "A front-desk clerk is asking about a patient's insurance eligibility "
+        "during check-in. The turn:\n"
+        f"- what the clerk's turn is asking for: {intent.value}\n"
+        f"- question type the clerk selected: {req.question_type.value}\n"
+        f"- payer the clerk selected: {req.payer.value}\n"
+        f"- product the clerk selected: {req.product.value}\n"
+        f"- state the clerk selected: {req.state.value}\n"
         f"- turns so far in this visit: {turn_count}\n"
-        "\nRequired action ids (include every id):\n"
-        + "\n".join(required_lines)
-        + "\n\nOptional action ids (add one only when genuinely useful):\n"
-        + ("\n".join(optional_lines) if optional_lines else "- (none)")
-        + "\n\nSelect the action ids to show the clerk."
+        "\nTopics you may retrieve about:\n"
+        + "\n".join(f"- {name}" for name in policy_index.categories())
+        + "\n\nCall `policy_lookup` once with the topic that fits this question."
     )
 
 
-def _select_reply_items(status: str, selection: list[str]) -> list[str]:
-    """Render the model's action selection, or the deterministic fallback.
+def _build_model2_message(status: str, verdict, rows, req: VisitChatRequest) -> str:
+    """Model₂'s injected payload: the status, the row keys, and the catalog ids.
 
-    Identical contract to _select_items: the selection is untrusted model output,
-    and catalog membership alone is not enough — `self_pay_options` is a real
-    catalog id and the wrong thing to say after a check that FAILED rather than
-    came back inactive. A selection renders only if it satisfies
-    ``required <= selection <= allowed``, both derived server-side from the
-    status; anything else discards the whole selection for the default. Log lines
-    carry indexes and counts only — an invalid "id" is model free text and must
-    never reach a log record.
+    Same closure as model₁'s: no clerk text, no member id, no identifier. `verdict`
+    is read for the OUTCOMES it makes reachable and never rendered; `status` is the
+    middleware's already-normalised SPEC-53 label. The action vocabulary comes from
+    `outcome.model_reachable_outcomes`, the same derivation `_validated_selection`
+    re-runs after the choice, so the two cannot drift apart.
     """
-    required = set(visit_templates.default_selection(status))
-    allowed = visit_templates.allowed_selection(status)
-    stray = [i for i, key in enumerate(selection) if key not in allowed]
-    missing = len(required - set(selection))
-    if stray or missing:
+    allowed = sorted(
+        visit_templates.a1_model_vocabulary(
+            [
+                concluded.value
+                for concluded in outcome.model_reachable_outcomes(
+                    verdict, rows, product=req.product.value, state=req.state.value
+                )
+            ],
+            req.question_type.value,
+        )
+    )
+    return (
+        f"Eligibility status from the payer for this turn: {status or 'no result'}\n"
+        "\nDocument ids you may cite (only these):\n"
+        + ("\n".join(f"- {row.id}" for row in rows) if rows else "- (none retrieved)")
+        + "\n\nAction ids you may choose from (only these):\n"
+        # IDS only, never the template copy: sentences are rendered server-side after
+        # validation, and the eligibility-assistant-D-64 reserve is sized on ids.
+        + "\n".join(f"- {key}" for key in allowed)
+        + "\n\nReply with the JSON object described in your instructions."
+    )
+
+
+def _validated_selection(decision, rows, req: VisitChatRequest, concluded) -> tuple:
+    """The validate step (SPEC-5/13). Returns (citation ids, action ids) or None.
+
+    Two containments, both re-derived server-side: every citation id must be in the
+    turn's RETRIEVED set (SPEC-5), and ``required <= actions <= allowed`` as
+    `_select_items` states for the intake catalog. Plus one floor containment does
+    not give: a non-refusal outcome must cite at least ONE row (SPEC-4 / REQ-2′),
+    since both containments hold vacuously for an empty set.
+
+    Any failure discards the WHOLE selection and the turn takes the
+    `validation_reject` fallback. Log lines carry counts and indexes only: an
+    invalid "id" is model free text.
+    """
+    retrieved = {row.id for row in rows}
+    stray_citations = [i for i, key in enumerate(decision.citation_ids) if key not in retrieved]
+    required = set(visit_templates.a1_default_selection(concluded.value, req.question_type.value))
+    allowed = visit_templates.a1_allowed_selection(concluded.value, req.question_type.value)
+    stray_actions = [i for i, key in enumerate(decision.action_ids) if key not in allowed]
+    missing = len(required - set(decision.action_ids))
+    uncited = not decision.citation_ids and concluded not in outcome.NO_CITATION_OUTCOMES
+    if stray_citations or stray_actions or missing or uncited:
         log.warning(
-            "visit-chat selection gate: %d/%d ids unjustified by the eligibility "
-            "status (indexes=%s), %d required ids missing; serving deterministic "
-            "default selection",
-            len(stray),
-            len(selection),
-            stray,
+            "visit-chat selection gate: %d/%d citation ids outside the turn's "
+            "retrieved set (indexes=%s), %d/%d action ids unjustified by the outcome "
+            "(indexes=%s), %d required ids missing, uncited non-refusal=%s; taking "
+            "the deterministic fallback",
+            len(stray_citations),
+            len(decision.citation_ids),
+            stray_citations,
+            len(stray_actions),
+            len(decision.action_ids),
+            stray_actions,
             missing,
+            uncited,
         )
-        return visit_templates.render(required)
-    items = visit_templates.render(selection)
-    if not visit_templates.MIN_ITEMS <= len(items) <= visit_templates.MAX_ITEMS:
-        # Unreachable while required <= selection <= allowed forces 1-4 items for
-        # every status, but kept as a belt independent of how the sets evolve —
-        # same role as the 3-8 check in _select_items.
-        log.warning(
-            "visit-chat selection gate: %d ids deduplicated to %d items, outside "
-            "the %d-%d contract; serving deterministic default selection",
-            len(selection),
-            len(items),
-            visit_templates.MIN_ITEMS,
-            visit_templates.MAX_ITEMS,
-        )
-        return visit_templates.render(required)
-    return items
+        return None
+    return decision.citation_ids, decision.action_ids
 
 
-class _ReplyPlan(NamedTuple):
-    """What the action-selection step produced, plus the two facts about HOW.
+# SPEC-26 / eligibility-assistant-D-46: the correlation id is a HEADER, never a body
+# field, so `VisitChatRequest` keeps `extra="forbid"`. It identifies a REQUEST and
+# carries no patient or member identity.
+_UUID4_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
-    ``llm_egress`` is spend accounting (did a request cross the vendor
-    boundary). ``degraded`` is service health (did the clerk get the model's
-    selection or the deterministic fallback). They are genuinely independent —
-    a post-egress failure is billable and degraded; a local refusal is neither
-    — so one boolean cannot carry both, and collapsing them is how a
-    misconfiguration becomes invisible.
+
+def _correlation_id(request: Request) -> str:
+    """The turn's correlation id: the caller's, shape-validated, or a fresh one.
+
+    The value is echoed and logged, so it is validated, not trusted. A malformed
+    value is REPLACED, not rejected: a bad trace handle must not cost the clerk an
+    answer.
     """
+    provided = request.headers.get("x-correlation-id", "")
+    if _UUID4_RE.match(provided):
+        return provided.lower()
+    return str(uuid.uuid4())
 
-    items: list[str]
-    llm_egress: bool
-    degraded: bool
+
+# eligibility-assistant-D-44 rule (b): the closed cross-patient phrase list, matched
+# case-insensitively. Closed on purpose: a NAME detector is the pattern filter
+# `schemas.VisitTurn` already rejected.
+_CROSS_PATIENT_PHRASES = (
+    "another patient",
+    "other patient",
+    "different patient",
+    "someone else",
+    "also check",
+    "and also",
+    "next patient",
+    "for my other",
+)
 
 
-def _reply_items(intent: VisitIntent, status: str, turn_count: int) -> _ReplyPlan:
-    """Ask the model to choose follow-up actions; degrade deterministically.
+def _is_cross_patient(message: str, facts: VisitFacts) -> bool:
+    """SPEC-49 — is this turn asking about a second patient?
 
-    **No LLM failure of any kind fails this
-    turn** (Codex PR #14 round 3): action selection is the LAST and least
-    important step, and by the time it runs the payer lookup has already
-    happened and mutated the visit's facts. Raising here threw that work away —
-    the clerk lost a coverage verdict that had been computed and paid for, the
-    gateway never persisted the visit, and each retry re-ran a PHI-bearing payer
-    call for no user-visible value. Every branch below now renders the
-    deterministic default selection instead, so the only thing an LLM fault can
-    cost is the *quality* of the follow-up list.
-
-    What the branches still differ on is SPEND, which is why the flag exists.
-    The old mapping encoded that in the HTTP status because the gateway's refund
-    rule keys on it (ADR 0007); a turn that succeeds without egress cannot say
-    that with a status code, so it says it with ``llm_egress`` and the gateway
-    refunds on the boolean (ADR 0011 §7).
-
-    ONE catch, and the spend answer is read off the exception rather than
-    inferred from its type. Splitting by type here was wrong and shipped briefly
-    in this PR: `LLMConfigError` is raised both by the local pricing/token gates
-    AND by Bedrock's own `ClientError` rejection, so "config error" says nothing
-    about whether a request crossed the boundary. `llm_client.LLMError.egressed`
-    is set at each raise site, defaulting to True, so an unclassified or future
-    failure keeps the charge. `getattr` rather than attribute access because a
-    caller must not be broken by an exception raised from somewhere that predates
-    the attribute.
-
-    The model is also not consulted when the status leaves it nothing to decide
-    — see the short-circuit below.
+    Two closed, deterministic forms (eligibility-assistant-D-44 as amended by D-50):
+    (a) the visit holds a confirmed `insurance_id` and the message carries a
+    recognised member id that differs from it — refused, not corrected, so a
+    mistyped id gets a refusal; (b) a phrase from the closed list above. Two ids
+    with NO confirmed id stay `clarify_member_id` (`_derive_intent`). A second
+    patient named in prose alone is not detectable by pattern (D-44; `docs/todo.md`).
     """
-    required = visit_templates.default_selection(status)
-    allowed = visit_templates.allowed_selection(status)
-    if not allowed - set(required):
-        # Nothing to decide, so nothing to buy (Codex PR #14 round 5). For the
-        # no-lookup statuses `allowed_selection` collapses onto the required
-        # core, so the ONLY selection the gate downstream would accept is the one
-        # rendered here: a model call could change this reply by exactly zero
-        # while costing a real Bedrock request. Those are also the cheapest turns
-        # to provoke — a message with no member id in it, repeatable by anyone
-        # holding a never-expiring session (CLAUDE.md §6) — so the waste is
-        # drainable by one clerk.
-        #
-        # What this does NOT save is the gateway's ADR 0007 admission slot: the
-        # reservation is taken before the fan-out, and the gateway cannot know
-        # the turn is free until this function has answered. The slot is
-        # reserved and refunded, so a no-lookup turn still consumes admission
-        # while it is in flight and is still refused once the ceiling is
-        # exhausted (ADR 0011, round 5 gap).
-        #
-        # Derived from the two sets rather than tested against
-        # NO_LOOKUP_STATUSES: the property that matters is "the model has no
-        # freedom", and a future status whose optional ids are narrowed away
-        # then inherits the short-circuit instead of quietly paying for it.
-        #
-        # Not `degraded`: this is the designed path for these statuses, not a
-        # fallback from a fault, and health must keep meaning health (ADR 0011
-        # §7). `llm_egress=False` is what makes the gateway refund the slot it
-        # reserved before the call it turns out we never made.
-        #
-        # Logged, because this is now the most common reason the shared counter
-        # is charged and immediately credited back, and an accounting path with
-        # no signal is one a double-refund can quietly drift through: nothing
-        # else in either service records that a 200 skipped the vendor. Both
-        # values are closed vocabulary, same allowlist discipline as the request
-        # line above.
-        log.info(
-            "visit-chat answered with no model call: %s",
-            json.dumps({"eligibility_status": status, "model_consulted": False}),
-        )
-        return _ReplyPlan(visit_templates.render(required), False, False)
-    try:
-        result = llm_client.complete_structured(
-            prompt=_build_visit_prompt(intent, status, turn_count, required, allowed),
-            output_model=VisitReplyPlan,
-            system=_VISIT_SYSTEM_PROMPT,
-        )
-    except llm_client.LLMError as e:
-        egressed = getattr(e, "egressed", True)
-        # request_id read the same defensive way as egressed — an attribute set
-        # by the raiser, None on every branch that has no provider response to
-        # name. Structured, so the class-name-only rule (W1-SPEC-13) costs the
-        # operator no correlation handle on a response-format incident.
-        # Codex PR #69 round 1.
-        log.error(
-            "visit-chat degrading to deterministic reply (%s, egressed=%s, request_id=%s)",
-            type(e).__name__,
-            egressed,
-            getattr(e, "request_id", None),
-        )
-        return _ReplyPlan(visit_templates.render(required), egressed, True)
-    return _ReplyPlan(_select_reply_items(status, result.parsed.template_ids), True, False)
+    lowered = (message or "").lower()
+    if any(phrase in lowered for phrase in _CROSS_PATIENT_PHRASES):
+        return True
+    stored = facts.insurance_id
+    if not stored:
+        return False
+    return any(candidate != stored for candidate in _extract_insurance_ids(message))
+
+
+def _no_lookup_turn(
+    req: VisitChatRequest,
+    intent: VisitIntent,
+    status: str,
+    facts: VisitFacts,
+    correlation_id: str,
+) -> VisitChatResponse:
+    """The `awaiting_id` / `ambiguous_id` short-circuit — outside BOTH paths.
+
+    No model call, no payer call, no restatement of a stored verdict; reported as
+    mode `no_lookup` (eligibility-assistant-D-33). Not `degraded`: it is the designed
+    path, not a fault (ADR 0011 §7). `llm_egress=False` makes the gateway refund the
+    reserved slot.
+    """
+    log.info(
+        "visit-chat answered with no model call: %s",
+        json.dumps({"eligibility_status": status, "model_consulted": False}),
+    )
+    action_ids = visit_templates.default_selection(status)
+    reply = "\n".join(
+        [visit_templates.verdict_line(status)]
+        + [f"- {item}" for item in visit_templates.render(action_ids)]
+    )
+    concluded = outcome.Outcome.unknown
+    log.info(
+        "POST /visit-chat meta=%s",
+        json.dumps(
+            visit_chat_log_metadata(
+                intent,
+                status,
+                len(req.turns),
+                mode=outcome.Mode.no_lookup.value,
+                outcome=concluded.value,
+                model_calls=0,
+                correlation_id=correlation_id,
+            )
+        ),
+    )
+    return VisitChatResponse(
+        reply=reply,
+        intent=intent,
+        status=status,
+        facts=facts,
+        eligibility=None,
+        disclaimer=_VISIT_DISCLAIMER,
+        llm_egress=False,
+        assistant="ok",
+        citations=[],
+        mode=outcome.Mode.no_lookup.value,
+        reason=None,
+        outcome=concluded.value,
+        correlation_id=correlation_id,
+        model=settings.bedrock_model_id,
+    )
+
+
+def _deterministic_turn(
+    req: VisitChatRequest,
+    reason,
+    correlation_id: str,
+    *,
+    facts: VisitFacts | None = None,
+    verdict: dict[str, Any] | None = None,
+    intent: VisitIntent = VisitIntent.other,
+    degraded: bool = False,
+    llm_egress: bool = False,
+    model_calls: int = 0,
+    checked: bool = False,
+) -> VisitChatResponse:
+    """The reply for a turn no model output may reach (SPEC-3).
+
+    One builder for the two gates and the four agent-step fallbacks: citations are
+    EXACTLY the reason's fixed set, fetched by id through the same index as an
+    agent-path citation (SPEC-6), and the action comes from the reason table's
+    outcome. `verdict` is the payer result if one was obtained; on `spend_stop` it
+    is persisted in `facts` and NOT rendered (eligibility-assistant-D-26).
+    """
+    reason = outcome.Reason(reason)
+    gate_mode = outcome.GATE_MODE.get(reason)
+    concluded = outcome.GATE_OUTCOME.get(reason) or outcome.fallback_outcome(reason, verdict)
+    facts = facts if facts is not None else req.facts.model_copy(deep=True)
+    citations = outcome.reason_citations(reason, question_type=req.question_type.value)
+    facts.last_citations = [
+        Citation(document_id=c.document_id, version=c.version) for c in citations
+    ]
+    action_ids = visit_templates.a1_default_selection(
+        concluded.value, req.question_type.value
+    )
+    # SPEC-52: a fallback renders the payer result if one was obtained; `spend_stop`
+    # is the exception (eligibility-assistant-D-26).
+    rendered_verdict = None if concluded is outcome.Outcome.stop else verdict
+    # A gate turn echoes its REASON as the pseudo-status, the `awaiting_id` precedent
+    # (eligibility-assistant-D-73): `status` is never a duplicate of `outcome`.
+    status = (rendered_verdict or {}).get("status") or (
+        reason.value if gate_mode is not None else concluded.value
+    )
+    reply = "\n".join(
+        [visit_templates.a1_verdict_line(status, concluded.value, rendered_verdict)]
+        + [f"- {item}" for item in visit_templates.render(action_ids)]
+    )
+    mode = outcome.mode_of(gate_mode, reason, fixture=settings.a1_model_fixture)
+    log.info(
+        "POST /visit-chat meta=%s",
+        json.dumps(
+            visit_chat_log_metadata(
+                intent,
+                status,
+                len(req.turns),
+                checked=checked,
+                mode=mode.value,
+                reason=reason.value,
+                outcome=concluded.value,
+                model_calls=model_calls,
+                correlation_id=correlation_id,
+            )
+        ),
+    )
+    return VisitChatResponse(
+        reply=reply,
+        intent=intent,
+        status=status,
+        facts=facts,
+        eligibility=rendered_verdict,
+        disclaimer=_VISIT_DISCLAIMER,
+        llm_egress=llm_egress,
+        # Mode and health are different predicates (eligibility-assistant-D-71): only
+        # an escaped `LLMError` degrades.
+        assistant="degraded" if degraded else "ok",
+        citations=citations,
+        mode=mode.value,
+        reason=reason.value,
+        outcome=concluded.value,
+        correlation_id=correlation_id,
+        model=settings.bedrock_model_id,
+    )
 
 
 @app.post(
@@ -849,7 +948,7 @@ def _reply_items(intent: VisitIntent, status: str, turn_count: int) -> _ReplyPla
     response_model=VisitChatResponse,
     dependencies=[Depends(_require_internal_auth), Depends(_require_member_id_catalog)],
 )
-def visit_chat(req: VisitChatRequest):
+def visit_chat(req: VisitChatRequest, request: Request):
     """One turn of the front-desk eligibility conversation.
 
     Stateless: the caller (the gateway) owns visit memory and passes the visit's
@@ -857,73 +956,149 @@ def visit_chat(req: VisitChatRequest):
     this boundary, so the key that addresses a patient's visit memory cannot
     appear in an ai-assistant log line.
 
-    Order is understand -> act -> ground -> phrase, and the first three steps are
-    deterministic. The model is consulted last, about follow-up actions only, and
-    never about whether the patient has coverage.
+    Order is SPEC-50's:
+
+        emergency gate -> cross-patient gate -> understand -> agent path
+        -> validate -> ground -> phrase
+
+    The two gates are deterministic refusals that run before the id checks
+    (SPEC-45/49). The model is never consulted about coverage: on the agent path it
+    chooses sources and action ids, and the server discards the whole selection if
+    it does not fit (SPEC-13).
     """
+    correlation_id = _correlation_id(request)
+
+    # Gate 1 — emergency (SPEC-45/46). Before the id checks: none of them is read here.
+    if req.emergency:
+        return _deterministic_turn(req, outcome.Reason.emergency, correlation_id)
+
+    # Gate 2 — cross-patient (SPEC-49). Before any retrieval, model or payer call.
+    if _is_cross_patient(req.message, req.facts):
+        return _deterministic_turn(req, outcome.Reason.cross_patient, correlation_id)
+
+    # Understand — deterministic, no model call, so no free text leaves the process
+    # for this step (ADR 0011 §2).
     intent, found_id = _derive_intent(req.message, req.facts)
 
     facts = req.facts.model_copy(deep=True)
     if found_id:
         facts.insurance_id = found_id
 
-    verdict = facts.last_eligibility
-    checked_this_turn = False
-    if intent in (VisitIntent.check_eligibility, VisitIntent.recheck_eligibility) and facts.insurance_id:
-        # Deterministic act step: the decision to make an outbound PHI-bearing
-        # call is never a function of model output or of what the free text told
-        # the model to do. Bounded and breakered (eligibility_client).
-        checked_this_turn = True
-        verdict = eligibility_client.check_coverage(facts.insurance_id)
+    # The no-freedom short-circuit: no id yet, or two ids and no way to pick one.
+    # Outside BOTH paths, reported as mode `no_lookup` (SPEC-50, D-33).
+    if intent is VisitIntent.clarify_member_id or not facts.insurance_id:
+        status = (
+            visit_templates.AMBIGUOUS_ID
+            if intent is VisitIntent.clarify_member_id
+            else visit_templates.AWAITING_ID
+        )
+        return _no_lookup_turn(req, intent, status, facts, correlation_id)
+
+    # Whether to call the payer is a function of intent and held id, never of model
+    # output (SPEC-19). The call runs in the agent step's `before_model` hook under a
+    # once-guard the fallback path shares (SPEC-51).
+    payer_gate = agent_turn.PayerGate(
+        facts.insurance_id,
+        intent in (VisitIntent.check_eligibility, VisitIntent.recheck_eligibility),
+        facts.last_eligibility,
+    )
+
+    step = agent_turn.run_agent_path(
+        payer=req.payer.value,
+        product=req.product.value,
+        state=req.state.value,
+        model1_message=_build_model1_prompt(req, intent, len(req.turns)),
+        model2_message=lambda status, verdict, rows: _build_model2_message(
+            status, verdict, rows, req
+        ),
+        payer_gate=payer_gate,
+    )
+
+    # The payer call the turn is still owed when the hook never ran (a `spend_stop`
+    # at model₁); a no-op otherwise (eligibility-assistant-D-26).
+    payer_gate.run()
+    # Fresh verdict if one was obtained, else the visit's memory (ADR 0011 §5).
+    verdict = payer_gate.status_verdict
+    if payer_gate.called:
         facts.last_eligibility = _remembered_verdict(
             facts.last_eligibility if req.facts.insurance_id == facts.insurance_id else None,
-            verdict,
+            payer_gate.verdict,
         )
 
-    status = (verdict or {}).get("status") or visit_templates.AWAITING_ID
-    if not facts.insurance_id:
-        status = visit_templates.AWAITING_ID
-    if intent is VisitIntent.clarify_member_id:
-        # Two ids in play, or one that contradicts the visit's confirmed id. The
-        # stored verdict describes a DIFFERENT subject, so rendering it here would
-        # answer a question nobody asked; say plainly that nothing ran.
-        status = visit_templates.AMBIGUOUS_ID
+    if step.reason is not None:
+        # Fallback per reason (SPEC-52).
+        return _deterministic_turn(
+            req, step.reason, correlation_id, facts=facts, verdict=verdict,
+            intent=intent, degraded=step.degraded, llm_egress=step.llm_egress,
+            model_calls=step.model_calls, checked=payer_gate.called,
+        )
 
-    # Allowlisted, non-PHI projection only — never the message, the transcript, or
-    # the id (D1 lesson, docs/phi-logging-policy.md). `checked` is the turn's
-    # EGRESS fact, and it is here because `intent` no longer implies it: `ask_status`
-    # now covers both "answered a status question" and "declined to re-verify an id
-    # the clerk re-presented, because the stored verdict was still fresh". Without
-    # it, nobody reviewing why a clerk recorded ACTIVE can tell whether a payer was
-    # asked on that turn (adversarial review, round 4; D2/D12 are open).
+    # `status` is the PAYER's status for this turn; `outcome` is what the turn
+    # CONCLUDED (SPEC-14). They differ on purpose: a degraded payer is status
+    # `pending` and outcome `unavailable`.
+    status = (verdict or {}).get("status") or visit_templates.AWAITING_ID
+    # Outcome derivation (eligibility-assistant-D-38). None means the selection keyed
+    # an outcome it cannot support, rejected like any other invalid selection.
+    concluded = outcome.agent_outcome(
+        step.decision, step.rows, verdict,
+        product=req.product.value, state=req.state.value,
+    )
+    validated = (
+        None
+        if concluded is None
+        else _validated_selection(step.decision, step.rows, req, concluded)
+    )
+    if validated is None:
+        return _deterministic_turn(
+            req, outcome.Reason.validation_reject, correlation_id, facts=facts,
+            verdict=verdict, intent=intent, degraded=False,
+            llm_egress=step.llm_egress, model_calls=step.model_calls,
+            checked=payer_gate.called,
+        )
+
+    # Ground — every rendered citation is one of the turn's own retrieved rows.
+    citation_ids, action_ids = validated
+    by_id = {row.id: row for row in step.rows}
+    citations = outcome.render_citations([by_id[key] for key in citation_ids])
+    facts.last_citations = [
+        Citation(document_id=c.document_id, version=c.version) for c in citations
+    ]
+
+    mode = outcome.mode_of(None, None, fixture=settings.a1_model_fixture)
     log.info(
         "POST /visit-chat meta=%s",
         json.dumps(
-            visit_chat_log_metadata(intent, status, len(req.turns), checked=checked_this_turn)
+            visit_chat_log_metadata(
+                intent,
+                status,
+                len(req.turns),
+                checked=payer_gate.called,
+                mode=mode.value,
+                outcome=concluded.value,
+                model_calls=step.model_calls,
+                correlation_id=correlation_id,
+            )
         ),
     )
-
-    plan = _reply_items(intent, status, len(req.turns))
+    # Phrase — the verdict line is deterministic code; the model never authors the
+    # coverage sentence (ADR 0011 §5).
     reply = "\n".join(
-        [visit_templates.verdict_line(status, verdict)] + [f"- {item}" for item in plan.items]
+        [visit_templates.a1_verdict_line(status, concluded.value, verdict)]
+        + [f"- {item}" for item in visit_templates.render(action_ids)]
     )
-    # No lookup ran this turn (no id yet, or an ambiguous one), so this turn has
-    # no eligibility result to report — even when the visit holds an earlier one.
-    # `facts.last_eligibility` still carries it for the next turn that asks.
-    turn_verdict = None if status in visit_templates.NO_LOOKUP_STATUSES else verdict
     return VisitChatResponse(
         reply=reply,
-        # Echoed so the caller can record a metadata-only turn without ever
-        # touching the clerk's text again (schemas.VisitTurn).
         intent=intent,
         status=status,
         facts=facts,
-        eligibility=turn_verdict,
+        eligibility=verdict,
         disclaimer=_VISIT_DISCLAIMER,
-        # The turn's spend verdict, not the turn's outcome: False means nothing
-        # crossed the vendor boundary, so the gateway must give the reserved slot
-        # back (ADR 0011 §7).
-        llm_egress=plan.llm_egress,
-        # The turn's health, which the status code no longer carries.
-        assistant="degraded" if plan.degraded else "ok",
+        llm_egress=step.llm_egress,
+        assistant="degraded" if step.degraded else "ok",
+        citations=citations,
+        mode=mode.value,
+        reason=None,
+        outcome=concluded.value,
+        correlation_id=correlation_id,
+        model=settings.bedrock_model_id,
     )

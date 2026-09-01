@@ -1,0 +1,123 @@
+{
+  "_comment": "The one declaration of the POST /visit-chat turn payload (eligibility-assistant-D-45). Asserted from BOTH suites: tests/test_a1_turn_contract.py for the assistant's pydantic models, frontend/app/assistant/turn.contract.test.ts for the portal's builder. The gateway's _VisitChatRequest mirrors the same closed sets and cannot import either side, so this file is what keeps the three copies equal.",
+  "request_fields": {
+    "root": [
+      "emergency",
+      "facts",
+      "message",
+      "payer",
+      "product",
+      "question_type",
+      "state",
+      "turns"
+    ],
+    "facts": [
+      "insurance_id",
+      "last_citations",
+      "last_eligibility"
+    ],
+    "last_citations": [
+      "document_id",
+      "version"
+    ],
+    "response": [
+      "assistant",
+      "citations",
+      "correlation_id",
+      "disclaimer",
+      "eligibility",
+      "facts",
+      "intent",
+      "llm_egress",
+      "mode",
+      "model",
+      "outcome",
+      "reason",
+      "reply",
+      "status"
+    ],
+    "citations": [
+      "document_id",
+      "section",
+      "title",
+      "version"
+    ]
+  },
+  "enums": {
+    "question_type": [
+      "covered_today",
+      "will_it_pay",
+      "in_network",
+      "referral_needed",
+      "prior_auth",
+      "who_pays_first",
+      "copay",
+      "portal_down",
+      "emergency"
+    ],
+    "payer": [
+      "unitedhealthcare",
+      "aetna",
+      "cigna",
+      "humana",
+      "anthem_blue",
+      "medicare",
+      "medicaid"
+    ],
+    "product": [
+      "commercial",
+      "medicare_advantage",
+      "medicaid_mco",
+      "chip",
+      "original_medicare",
+      "unconfirmed"
+    ],
+    "state": [
+      "CA",
+      "other_us",
+      "unconfirmed"
+    ],
+    "mode": [
+      "real",
+      "fixture",
+      "fallback",
+      "care_first",
+      "refuse",
+      "no_lookup"
+    ],
+    "reason": [
+      "emergency",
+      "cross_patient",
+      "validation_reject",
+      "no_retrieval",
+      "spend_stop",
+      "model_failure"
+    ],
+    "outcome": [
+      "active",
+      "inactive",
+      "unknown",
+      "unavailable",
+      "reverify",
+      "conflict",
+      "refuse_definitive",
+      "refuse",
+      "stop",
+      "care_first"
+    ]
+  },
+  "sample_request": {
+    "message": "Is AETN1224 covered today?",
+    "turns": [],
+    "facts": {
+      "insurance_id": null,
+      "last_eligibility": null,
+      "last_citations": null
+    },
+    "question_type": "covered_today",
+    "payer": "aetna",
+    "product": "commercial",
+    "state": "unconfirmed",
+    "emergency": false
+  }
+}

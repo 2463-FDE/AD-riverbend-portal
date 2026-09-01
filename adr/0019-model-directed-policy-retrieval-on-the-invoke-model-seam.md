@@ -287,3 +287,50 @@ follow-on ranking item cites as its starting point.
 - Harder from here: widening what the model may pass to the retriever, or adding a second
   manifest reader — both redden a pinned test and re-open the §1 approval of record
   (eligibility-assistant-D-56).
+
+## The wired turn: bounds and outcome derivation (eligibility-assistant `turn`)
+
+The turn that consumes this retrieval is bounded structurally, not by instruction
+(eligibility-assistant-D-42's pattern — enforcement layers, never prompt requests):
+
+- **Two model calls, one tool call** (`run_limit=2` in effect): `agent_turn.TurnMiddleware`
+  ends the step on a second retrieval or a third model call (`validation_reject`), and on a
+  model₁ that answers without retrieving (`no_retrieval`).
+- **One payer call per turn, wherever asked for**: `agent_turn.PayerGate` is shared by the
+  `before_model` hook (between the two model calls) and the fallback path, so "at most once"
+  holds across a step that ended anywhere — a `spend_stop` at model₁ included, where the hook
+  never ran and the fallback path makes the call the turn is still owed. Whether to call stays
+  a function of the derived intent and the held id, never of model output.
+- **The per-request budget preflight gates each call** (`_enforce_budget` in front of the one
+  egress seam): `spend_stop` at either site ends the step with outcome `stop`, the payer
+  verdict persisted in facts and deliberately not rendered (eligibility-assistant-D-26).
+- **Outcome, required/allowed sets, conflict and applicability are computed in code from
+  closed inputs** (`services/ai-assistant/outcome.py`, eligibility-assistant-D-38): the
+  reason table for deterministic turns; the applicability check (empty set, no tier ≤ 3 row,
+  unconfirmed axes with only needs-product-confirmation rows) on a turn with no payer
+  verdict; `state_conflict` / `reverify` / `note_disputed` as model₂'s bounded *detection*
+  whose consequences are code; else the payer-derived table. The model's freedom remains a
+  bounded selection validated by `required ⊆ selection ⊆ allowed` over the extended catalog —
+  the selection gate generalised, not replaced.
+- **Model₂'s advertised vocabulary and the validator's accepted vocabulary are one
+  derivation** (`outcome.model_reachable_outcomes`, eligibility-assistant-D-86). Both the
+  block injected into model₂'s message and the set `_validated_selection` accepts are
+  computed from the same function of the turn's closed inputs, rather than assembled twice.
+  Two independently-written vocabularies drift in both directions and each direction is a
+  real defect: an outcome whose required ids were never advertised is unreachable by a model
+  obeying "taken only from the ids you were given" — which is how the model-chosen `conflict`
+  path of SPEC-42 came to be reachable through the rig alone — and an id advertised but
+  rejectable whatever the model does spends the D-64 prompt reserve to describe a selection
+  that always falls back. The guard is two-directional by construction
+  (`tests/test_a1_agent_turn.py::test_model2_message_advertises_the_vocabulary_the_validator_accepts`,
+  run over every clerk question type).
+- **A non-refusal must cite** (the citation floor in `_validated_selection`,
+  eligibility-assistant-D-86). The two containments above hold vacuously on an empty
+  selection, so `citation ids ⊆ retrieved` permits zero citations. An outcome outside
+  `outcome.NO_CITATION_OUTCOMES` — the four refusals — must therefore cite at least one of
+  the turn's OWN retrieved rows, or the selection is rejected whole and the turn takes the
+  deterministic fallback, which cites `DOC-SYN-NO-INVENTION`. Without the floor a shipped
+  agent path renders a coverage answer with no Sources block (SPEC-4 / REQ-2′ forbid it), and
+  it did: proved live against the rig at impl-gate round 2 before the floor existed. The
+  floor is a requirement on the outcome, not on retrieval — narrowing it to "only when rows
+  were retrieved" would leave exactly the zero-retrieval verdict-bearing turn uncited.

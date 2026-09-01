@@ -164,7 +164,7 @@ def test_calls_past_per_minute_limit_are_rejected_before_fan_out(monkeypatch, fa
 
     assert statuses == [200, 200, 200, 429, 429, 429]
     # The paid fan-out ran ONLY for the three allowed calls; rejected requests
-    # were stopped in the gateway before reaching complete_structured.
+    # were stopped in the gateway before reaching the assistant's egress seam.
     assert len(fan_out_calls) == 3
 
 

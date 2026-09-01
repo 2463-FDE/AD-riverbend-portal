@@ -15,6 +15,7 @@ Inherited shortcomings (left as-is from the handoff):
 """
 import re
 import time
+import uuid
 from enum import Enum
 from typing import Optional
 
@@ -764,6 +765,40 @@ def _assistant_health(value) -> str:
     return value if isinstance(value, str) and value in _ASSISTANT_HEALTH_STATES else "unknown"
 
 
+# The four clerk-selection closed sets, MIRRORED from contracts/visit-chat-turn.json
+# (eligibility-assistant-D-45) and pinned to it by
+# tests/test_gateway_ai_proxy.py::test_the_gateway_selection_sets_are_the_contract_sets.
+_TURN_QUESTION_TYPES = (
+    "covered_today",
+    "will_it_pay",
+    "in_network",
+    "referral_needed",
+    "prior_auth",
+    "who_pays_first",
+    "copay",
+    "portal_down",
+    "emergency",
+)
+_TURN_PAYERS = (
+    "unitedhealthcare",
+    "aetna",
+    "cigna",
+    "humana",
+    "anthem_blue",
+    "medicare",
+    "medicaid",
+)
+_TURN_PRODUCTS = (
+    "commercial",
+    "medicare_advantage",
+    "medicaid_mco",
+    "chip",
+    "original_medicare",
+    "unconfirmed",
+)
+_TURN_STATES = ("CA", "other_us", "unconfirmed")
+
+
 class _VisitChatRequest(BaseModel):
     """Gateway-side validation of a chat turn.
 
@@ -772,12 +807,49 @@ class _VisitChatRequest(BaseModel):
     exact shape ``new_visit_id`` mints (32 lowercase hex chars): the value is
     interpolated into a Redis key, so anything else — a colon, a glob, a path —
     is rejected here rather than reaching the keyspace.
+
+    The four clerk selections are REQUIRED on every turn (SPEC-54) and closed
+    against the mirrored contract sets above; an off-menu value is rejected before
+    any spend. ``emergency`` is the clerk's explicit control (SPEC-44).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     visit_id: Optional[str] = Field(default=None, pattern="^[0-9a-f]{32}$")
     message: str = Field(min_length=1, max_length=settings.ai_visit_max_message_chars)
+    question_type: str
+    payer: str
+    product: str
+    state: str
+    emergency: bool = False
+
+    @field_validator("question_type")
+    @classmethod
+    def _question_type_on_menu(cls, value: str) -> str:
+        if value not in _TURN_QUESTION_TYPES:
+            raise ValueError("question_type is not on the menu")
+        return value
+
+    @field_validator("payer")
+    @classmethod
+    def _payer_on_menu(cls, value: str) -> str:
+        if value not in _TURN_PAYERS:
+            raise ValueError("payer is not on the menu")
+        return value
+
+    @field_validator("product")
+    @classmethod
+    def _product_on_menu(cls, value: str) -> str:
+        if value not in _TURN_PRODUCTS:
+            raise ValueError("product is not on the menu")
+        return value
+
+    @field_validator("state")
+    @classmethod
+    def _state_on_menu(cls, value: str) -> str:
+        if value not in _TURN_STATES:
+            raise ValueError("state is not on the menu")
+        return value
 
 
 def _validate_visit_chat_request(payload: dict) -> dict:
@@ -878,6 +950,20 @@ class _VisitChatVerdict(BaseModel):
     observed_at: Optional[str] = Field(default=None, max_length=64)
 
 
+class _VisitChatCitation(BaseModel):
+    """One persisted citation: a document id and a version, nothing else (SPEC-20).
+
+    ``extra="ignore"`` for the rolling-deploy reason ``_VisitChatFacts`` gives: an
+    unknown key passed THROUGH would 422 on ai-assistant's ``extra="forbid"`` next
+    turn and brick the visit.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    document_id: str = Field(min_length=1, max_length=128)
+    version: str = Field(min_length=1, max_length=200)
+
+
 class _VisitChatFacts(BaseModel):
     """Mirror of ai-assistant ``schemas.VisitFacts`` — the only shape allowed to
     overwrite a visit's memory.
@@ -922,6 +1008,9 @@ class _VisitChatFacts(BaseModel):
 
     insurance_id: Optional[str] = Field(default=..., max_length=64)
     last_eligibility: Optional[_VisitChatVerdict]
+    # SPEC-20: citation provenance, ids and versions ONLY. Fatal when malformed (it
+    # is persisted); optional so an older ai-assistant mid-rolling-deploy still answers.
+    last_citations: Optional[list[_VisitChatCitation]] = None
 
     @field_validator("insurance_id")
     @classmethod
@@ -952,6 +1041,19 @@ class _VisitChatFacts(BaseModel):
         if _STORED_MEMBER_ID_RE is None or not _STORED_MEMBER_ID_RE.fullmatch(value):
             raise ValueError("insurance_id is not a recognisable member id")
         return value
+
+
+class _RelayedCitation(BaseModel):
+    """One rendered citation on its way to the portal: four bounded strings
+    (SPEC-4's shape as a shape, not a copy of any enum). Answer-only — the
+    persisted twin is ``_VisitChatCitation`` and carries no display fields."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    title: str = Field(min_length=1, max_length=300)
+    document_id: str = Field(min_length=1, max_length=128)
+    section: str = Field(min_length=1, max_length=300)
+    version: str = Field(min_length=1, max_length=200)
 
 
 class _VisitChatDownstream(BaseModel):
@@ -1001,6 +1103,14 @@ class _VisitChatDownstream(BaseModel):
     facts: _VisitChatFacts
     disclaimer: str = Field(min_length=1, max_length=1000)
     eligibility: Optional[_VisitChatVerdict] = None
+    # eligibility-assistant-D-72: five ANSWER-ONLY report fields, validated as bounded
+    # shapes (not enum copies) and degraded rather than fatal, like `eligibility`
+    # above: failing the turn would discard a verdict the payer call already paid for.
+    citations: list[_RelayedCitation] = Field(default_factory=list)
+    mode: Optional[str] = None
+    reason: Optional[str] = None
+    outcome: Optional[str] = None
+    model: Optional[str] = None
 
     @field_validator("eligibility", mode="before")
     @classmethod
@@ -1012,6 +1122,56 @@ class _VisitChatDownstream(BaseModel):
             return _VisitChatVerdict.model_validate(value)
         except ValidationError:
             return None
+
+    @field_validator("citations", mode="before")
+    @classmethod
+    def _degrade_unusable_citations(cls, value: object) -> object:
+        """Answer-only: an unusable citations list degrades to [], count-only log."""
+        if value is None:
+            return []
+        try:
+            if not isinstance(value, list):
+                raise ValueError("not a list")
+            return [_RelayedCitation.model_validate(item) for item in value]
+        except (ValidationError, ValueError):
+            log.warning("visit-chat downstream citations unusable; degraded to []")
+            return []
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _degrade_unusable_mode(cls, value: object) -> object:
+        return cls._snake_or_none(value, "mode")
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _degrade_unusable_reason(cls, value: object) -> object:
+        return cls._snake_or_none(value, "reason")
+
+    @field_validator("outcome", mode="before")
+    @classmethod
+    def _degrade_unusable_outcome(cls, value: object) -> object:
+        return cls._snake_or_none(value, "outcome")
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def _degrade_unusable_model(cls, value: object) -> object:
+        """A model id is dots/colons/digits, not snake_case — its own bound."""
+        if value is None:
+            return None
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value):
+            return value
+        log.warning("visit-chat downstream model unusable; degraded to null")
+        return None
+
+    @classmethod
+    def _snake_or_none(cls, value: object, field_name: str) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str) and re.fullmatch(r"[a-z_]{1,32}", value):
+            return value
+        # Field NAME only — ours, from this model; the value is downstream content.
+        log.warning("visit-chat downstream %s unusable; degraded to null", field_name)
+        return None
 
 
 def _validate_visit_chat_downstream(result: dict) -> _VisitChatDownstream:
@@ -1055,8 +1215,28 @@ def _validate_visit_chat_downstream(result: dict) -> _VisitChatDownstream:
     return model
 
 
+_UUID4_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+
+
+def _turn_correlation_id(request: Request) -> str:
+    """The turn's correlation id: the portal's header when it is UUIDv4-shaped,
+    a gateway-minted UUIDv4 otherwise (eligibility-assistant-D-46).
+
+    A HEADER, never a body field, so the body stays `extra="forbid"` on both sides
+    of the hop. Shape-validated, not trusted; an off-shape value is replaced.
+    """
+    supplied = (request.headers.get("x-correlation-id") or "").strip().lower()
+    if _UUID4_RE.fullmatch(supplied):
+        return supplied
+    return str(uuid.uuid4())
+
+
 @app.post("/ai/visit-chat")
-def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limited)):
+def proxy_visit_chat(
+    payload: dict, request: Request, session: dict = Depends(_ai_chat_rate_limited)
+):
     """One turn of the front-desk eligibility chat.
 
     The gateway owns everything stateful here — auth, abuse controls, and the
@@ -1075,6 +1255,7 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
     # server fault for the duration of the misconfiguration (pre-push review).
     body = _validate_visit_chat_request(payload)
     _require_member_id_catalog()
+    correlation_id = _turn_correlation_id(request)
     owner = session.get("username") or "unknown"
     visit_id = body.get("visit_id")
     record = None
@@ -1150,9 +1331,23 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
             result = _post_checked(
                 "ai",
                 "/visit-chat",
-                {"message": body["message"], "turns": turns, "facts": facts},
+                {
+                    "message": body["message"],
+                    "turns": turns,
+                    "facts": facts,
+                    "question_type": body["question_type"],
+                    "payer": body["payer"],
+                    "product": body["product"],
+                    "state": body["state"],
+                    "emergency": body["emergency"],
+                },
                 timeout=settings.ai_read_timeout_seconds,
-                headers={"X-Internal-Auth": settings.ai_proxy_shared_secret},
+                headers={
+                    "X-Internal-Auth": settings.ai_proxy_shared_secret,
+                    # The correlation hop (SPEC-26): a header beside the auth
+                    # header, never a body field (eligibility-assistant-D-46).
+                    "X-Correlation-Id": correlation_id,
+                },
             )
         except HTTPException as e:
             if e.status_code in _NON_PAID_DOWNSTREAM_STATUS:
@@ -1165,6 +1360,11 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
         # conversation whose only copy of the payer verdict this path would
         # otherwise have overwritten.
         downstream = _validate_visit_chat_downstream(result)
+
+        # A differing downstream echo is a wiring fault: counted, not failed over,
+        # not relayed (eligibility-assistant-D-46). Never log either value.
+        if result.get("correlation_id") not in (None, correlation_id):
+            log.warning("visit-chat downstream echoed a different correlation id")
 
         # A 200 from /visit-chat is NOT proof of a paid call (Codex PR #14 round
         # 3). The endpoint answers with the deterministic action list rather than
@@ -1249,6 +1449,15 @@ def proxy_visit_chat(payload: dict, session: dict = Depends(_ai_chat_rate_limite
             # be the green-dashboard lie; claiming "degraded" would raise a
             # false alarm on every turn during a deploy.
             "assistant": _assistant_health(result.get("assistant")),
+            # eligibility-assistant-D-72: the five answer-only report fields,
+            # validated as bounded shapes and DEGRADED (never fatal) above.
+            "citations": [c.model_dump(mode="json") for c in downstream.citations],
+            "mode": downstream.mode,
+            "reason": downstream.reason,
+            "outcome": downstream.outcome,
+            "model": downstream.model,
+            # The id the gateway forwarded or minted, never the downstream echo (D-46).
+            "correlation_id": correlation_id,
         }
     finally:
         visit_lock_release(visit_id, lock_token)

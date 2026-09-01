@@ -27,7 +27,9 @@ the real seam's parse step. The eligibility client is faked at the module seam.
 """
 import json
 import os
+import re
 import sys
+import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -35,50 +37,20 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-import conftest
+# The app is the ONE module set `tests/a1_rig.py` publishes
+# (eligibility-assistant-D-66): a second copy would not share the `llm_client` the
+# rig's fake is installed on.
+import conftest  # noqa: F401  (kept: tests below reach conftest.load_module)
 from conftest import load_module
+from a1_rig import (  # noqa: F401
+    TEST_INTERNAL_SECRET,
+    app_mod,
+    assert_pinned,
+    client,
+    schemas,
+)
 
-_PINNED = (
-    "config",
-    "logging_config",
-    "schemas",
-    "llm_client",
-    "templates",
-    "visit_templates",
-    "breaker",
-    "eligibility_client",
-)
-_saved = {name: sys.modules.pop(name, None) for name in _PINNED}
-sys.modules["config"] = load_module("services/ai-assistant/config.py", "vc_config")
-sys.modules["logging_config"] = load_module(
-    "services/ai-assistant/logging_config.py", "vc_logging_config"
-)
-schemas = sys.modules["schemas"] = load_module(
-    "services/ai-assistant/schemas.py", "vc_schemas"
-)
-sys.modules["llm_client"] = load_module("services/ai-assistant/llm_client.py", "vc_llm_client")
-sys.modules["templates"] = load_module("services/ai-assistant/templates.py", "vc_templates")
-visit_templates = sys.modules["visit_templates"] = load_module(
-    "services/ai-assistant/visit_templates.py", "vc_visit_templates"
-)
-sys.modules["breaker"] = load_module("services/ai-assistant/breaker.py", "vc_breaker")
-sys.modules["eligibility_client"] = load_module(
-    "services/ai-assistant/eligibility_client.py", "vc_eligibility_client"
-)
-app_mod = load_module("services/ai-assistant/app.py", "visit_chat_app")
-for _name, _module in _saved.items():
-    if _module is not None:
-        sys.modules[_name] = _module
-    else:
-        sys.modules.pop(_name, None)
-
-TEST_INTERNAL_SECRET = "test-internal-secret"
-app_mod.settings.ai_proxy_shared_secret = TEST_INTERNAL_SECRET
-client = TestClient(
-    app_mod.app,
-    raise_server_exceptions=False,
-    headers={"X-Internal-Auth": TEST_INTERNAL_SECRET},
-)
+visit_templates = app_mod.visit_templates
 
 MEMBER_ID = "AETN1224"
 ACTIVE_VERDICT = {
@@ -115,41 +87,93 @@ class _Recorder(list):
     take attributes)."""
 
 
-def _seam_parse(ids):
-    """Mirror complete_structured's parse step exactly (llm_client.py):
-    model_validate_json on the wire JSON, ValidationError → LLMResponseError."""
-    try:
-        parsed = schemas.VisitReplyPlan.model_validate_json(
-            json.dumps({"template_ids": ids})
-        )
-    except ValidationError:
-        raise app_mod.llm_client.LLMResponseError(
-            "response failed VisitReplyPlan validation (request_id=fake)"
-        ) from None
-    return SimpleNamespace(parsed=parsed)
+# The agent path's only egress is `llm_client._call`, so the fake is a scripted
+# BEDROCK client with the pre-egress stack live in front of it; a test controls
+# what the model ANSWERS.
+# The topic model₁ "chooses" for every turn in this file: one that retrieves rows
+# for the neutral selections below, since an empty citation vocabulary fails the
+# SPEC-4 / REQ-2′ floor.
+A1_DEFAULT_TOPIC = "verification-and-reverification"
+
+
+def _tool_use_body(topic):
+    return {
+        "id": "msg-tool",
+        "content": [
+            {"type": "tool_use", "id": "toolu-1", "name": "policy_lookup", "input": {"topic": topic}}
+        ],
+        "usage": {"input_tokens": 100, "output_tokens": 20},
+        "stop_reason": "tool_use",
+    }
+
+
+def _decision_body(citation_ids, action_ids):
+    return {
+        "id": "msg-text",
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(
+                    {"citation_ids": list(citation_ids), "action_ids": list(action_ids)}
+                ),
+            }
+        ],
+        "usage": {"input_tokens": 100, "output_tokens": 20},
+        "stop_reason": "end_turn",
+    }
+
+
+_OFFERED_DOC_RE = re.compile(r"^- (DOC-[A-Z0-9-]+)$", re.MULTILINE)
+_STATUS_RE = re.compile(r"Eligibility status from the payer for this turn: (\S+)")
 
 
 @pytest.fixture()
 def fake_llm(monkeypatch):
-    """Capture prompts and return whatever the test queues as model output.
+    """Capture the bodies that egress and answer with whatever the test queues.
 
-    Default output is the deterministic required set for the status, so a test
-    that cares about routing does not also have to care about selection.
+    Default answer is the deterministic required set for the turn's outcome, so a
+    test that cares about routing does not also have to care about selection — the
+    same contract the pre-eligibility-assistant fixture had, read off model₂'s own
+    message instead of off the single prompt.
     """
     calls = _Recorder()
     queued = {"ids": None}
 
-    def _fake(prompt, output_model, system=None, max_tokens=None):
-        calls.append({"prompt": prompt, "system": system, "output_model": output_model})
-        if queued["ids"] is not None:
-            return _seam_parse(queued["ids"])
-        # Echo the required ids named in the prompt back as a valid selection.
-        required = [
-            key for key in visit_templates.CATALOG if f"- {key}:" in prompt.split("Optional")[0]
-        ]
-        return _seam_parse(required)
+    class _Scripted:
+        def __init__(self):
+            self.messages = self
 
-    monkeypatch.setattr(app_mod.llm_client, "complete_structured", _fake)
+        def create(self, **kwargs):
+            calls.append({"prompt": json.dumps(kwargs["messages"]), "system": kwargs.get("system"),
+                          "kwargs": kwargs})
+            # Which call this is, read off the CONVERSATION rather than off a
+            # counter: the fixture serves more than one turn, and a counter would make
+            # the second turn's model₁ look like the first turn's model₂.
+            has_tool_result = any(
+                isinstance(block, dict) and block.get("type") == "tool_result"
+                for entry in kwargs["messages"]
+                for block in (entry["content"] if isinstance(entry["content"], list) else [])
+            )
+            if not has_tool_result:
+                return app_mod.llm_client._adapt(_tool_use_body(A1_DEFAULT_TOPIC), "req-1")
+            message = "\n".join(
+                block.get("text", "")
+                for entry in kwargs["messages"]
+                for block in (entry["content"] if isinstance(entry["content"], list) else [])
+                if isinstance(block, dict)
+            )
+            offered_docs = _OFFERED_DOC_RE.findall(message)
+            status_match = _STATUS_RE.search(message)
+            status = status_match.group(1) if status_match else "unknown"
+            concluded = app_mod.outcome.payer_outcome({"status": status, "payer": "edi.example.com"})
+            actions = queued["ids"]
+            if actions is None:
+                actions = visit_templates.a1_default_selection(concluded.value, "covered_today")
+            citations = offered_docs[:1]
+            return app_mod.llm_client._adapt(_decision_body(citations, actions), "req-2")
+
+    monkeypatch.setattr(app_mod.llm_client, "client", _Scripted())
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "test-bearer-not-a-placeholder")
     calls.queue = lambda ids: queued.update(ids=ids)
     return calls
 
@@ -169,8 +193,20 @@ def fake_eligibility(monkeypatch):
     return calls
 
 
+# eligibility-assistant: the four clerk menu selections are REQUIRED on every turn
+# (SPEC-54/55), so every body this file posts carries them. One neutral set, because
+# nothing in this file is about the selections — the tests that are live in
+# tests/test_a1_prompt_boundary.py and tests/test_a1_harness.py.
+A1_SELECTIONS = {
+    "question_type": "covered_today",
+    "payer": "aetna",
+    "product": "commercial",
+    "state": "unconfirmed",
+}
+
+
 def _post(message, turns=None, facts=None, **kwargs):
-    body = {"message": message}
+    body = {"message": message, **A1_SELECTIONS}
     if turns is not None:
         body["turns"] = turns
     if facts is not None:
@@ -244,12 +280,20 @@ def test_the_prompt_contains_no_free_text_from_the_clerk(fake_llm, fake_eligibil
 
     _post(message)
 
-    prompt = fake_llm[0]["prompt"]
-    for fragment in ("Jane Doe", "1985-03-12", "123-45-6789", MEMBER_ID, "patient Jane"):
-        assert fragment not in prompt
-    # What it DOES contain is closed vocabulary only.
-    assert "check_eligibility" in prompt
-    assert "active" in prompt
+    # eligibility-assistant: the turn makes TWO model calls, so the property is
+    # asserted over both captured bodies rather than over one prompt — a stronger
+    # form of the same rule (SPEC-12).
+    prompts = [call["prompt"] for call in fake_llm]
+    assert len(prompts) == 2
+    for prompt in prompts:
+        for fragment in ("Jane Doe", "1985-03-12", "123-45-6789", MEMBER_ID, "patient Jane"):
+            assert fragment not in prompt
+    # What they DO contain is closed vocabulary only, and the split is deliberate:
+    # model₁ gets the derived intent and chooses a topic, model₂ gets the payer status
+    # (SPEC-50 — a coverage verdict is not an input to a topic choice).
+    assert "check_eligibility" in prompts[0]
+    assert "active" not in prompts[0]
+    assert "active" in prompts[1]
 
 
 def test_prompt_carries_only_the_ids_the_status_justifies(fake_llm, fake_eligibility):
@@ -257,7 +301,9 @@ def test_prompt_carries_only_the_ids_the_status_justifies(fake_llm, fake_eligibi
 
     _post(f"check {MEMBER_ID}")
 
-    prompt = fake_llm[0]["prompt"]
+    # The id vocabulary rides model₂'s message now, not model₁'s: model₁ chooses a
+    # topic and is offered no action ids at all.
+    prompt = fake_llm[1]["prompt"]
     assert "retry_shortly" in prompt
     # self_pay_options belongs to a definitive `inactive`, never to a failed check.
     assert "self_pay_options" not in prompt
@@ -406,9 +452,17 @@ _LLM_FAILURE_IDS = [
 
 
 def _raiser(error_name, egressed):
+    """Fail the turn AT THE EGRESS SEAM.
+
+    eligibility-assistant re-seam: the visit-chat turn no longer calls
+    `complete_structured`, so the fault is injected at `llm_client._call` — the one
+    place both the agent binding and every other caller egress through, and the
+    place `run_agent_path`'s `except llm_client.LLMError` branch reads. The failure
+    contract these tests assert is unchanged.
+    """
     cls = getattr(app_mod.llm_client, error_name)
 
-    def _raise(**kwargs):
+    def _raise(*args, **kwargs):
         if egressed is None:
             raise cls("failure detail")
         raise cls("failure detail", egressed=egressed)
@@ -423,20 +477,32 @@ def test_no_llm_failure_discards_a_completed_eligibility_result(
     monkeypatch, fake_eligibility, error_name, egressed, billable
 ):
     monkeypatch.setattr(
-        app_mod.llm_client, "complete_structured", _raiser(error_name, egressed)
+        app_mod.llm_client, "_call", _raiser(error_name, egressed)
     )
 
     r = _post(f"check {MEMBER_ID}")
 
     assert r.status_code == 200, f"{error_name} must not fail a turn that already checked"
     body = r.json()
-    # The verdict the payer gave us survives, in all three places the caller
-    # reads it: the turn's result, the reply text, and the facts to persist.
-    assert body["eligibility"]["status"] == "active"
-    assert body["facts"]["last_eligibility"]["status"] == "active"
-    assert "ACTIVE" in body["reply"].split("\n")[0].upper()
-    for item in visit_templates.render(visit_templates.default_selection("active")):
-        assert item in body["reply"]
+    if error_name == "LLMBudgetExceeded":
+        # eligibility-assistant-D-26 (owner-amended at spec review): the budget
+        # preflight concludes `stop`. The verdict the payer call paid for still
+        # survives — persisted in FACTS for the next turn — but is deliberately
+        # NOT rendered beside a stop, because restating a coverage answer there
+        # would claim the turn finished. The invariant this test was written for
+        # (no LLM fault destroys a paid verdict) holds through the facts.
+        assert body["facts"]["last_eligibility"]["status"] == "active"
+        assert body["eligibility"] is None
+        assert "ACTIVE" not in body["reply"].split("\n")[0].upper()
+        assert body["outcome"] == "stop"
+    else:
+        # The verdict the payer gave us survives, in all three places the caller
+        # reads it: the turn's result, the reply text, and the facts to persist.
+        assert body["eligibility"]["status"] == "active"
+        assert body["facts"]["last_eligibility"]["status"] == "active"
+        assert "ACTIVE" in body["reply"].split("\n")[0].upper()
+        for item in visit_templates.render(visit_templates.default_selection("active")):
+            assert item in body["reply"]
     # ...and exactly one payer call was spent to get it.
     assert fake_eligibility == [MEMBER_ID]
 
@@ -451,7 +517,7 @@ def test_the_spend_flag_reports_whether_bedrock_could_have_been_billed(
     # now mean "answered without spending". It is read off the exception, never
     # inferred from its class, so a post-egress LLMConfigError keeps the charge.
     monkeypatch.setattr(
-        app_mod.llm_client, "complete_structured", _raiser(error_name, egressed)
+        app_mod.llm_client, "_call", _raiser(error_name, egressed)
     )
 
     assert _post(f"check {MEMBER_ID}").json()["llm_egress"] is billable
@@ -469,7 +535,7 @@ def test_every_llm_failure_is_reported_as_degraded(
     # (correctly) refunds the spend counter, so neither of the two things an
     # operator watches would move.
     monkeypatch.setattr(
-        app_mod.llm_client, "complete_structured", _raiser(error_name, egressed)
+        app_mod.llm_client, "_call", _raiser(error_name, egressed)
     )
 
     assert _post(f"check {MEMBER_ID}").json()["assistant"] == "degraded"
@@ -480,6 +546,49 @@ def test_a_successful_model_call_is_charged_and_healthy(fake_llm, fake_eligibili
 
     assert body["llm_egress"] is True
     assert body["assistant"] == "ok"
+
+
+# SPEC-56: `llm_egress` answers for BOTH model calls. A local refusal before the
+# SECOND call comes after a paid first call, and False there would refund a
+# request Bedrock billed.
+@pytest.mark.parametrize(
+    "failure,expected_egress",
+    [
+        ("budget-at-model1", False),
+        ("bearer-fail-closed", False),
+        ("budget-at-model2", True),
+    ],
+    ids=["stop-at-model1-False", "bearer-fail-closed-False", "stop-at-model2-True"],
+)
+def test_a1_llm_egress_covers_both_calls(
+    fake_llm, fake_eligibility, monkeypatch, failure, expected_egress
+):
+    if failure == "bearer-fail-closed":
+        # A placeholder bearer refuses egress locally (`_require_bearer_token`,
+        # fail-closed): zero calls crossed, so zero spend — and it IS a health
+        # fault, unlike the designed budget stop's healthy sibling paths.
+        monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "placeholder")
+    else:
+        stop_at = 1 if failure == "budget-at-model1" else 2
+        real_call = app_mod.llm_client._call
+        seen = {"n": 0}
+
+        def gated(*args, **kwargs):
+            seen["n"] += 1
+            if seen["n"] == stop_at:
+                raise app_mod.llm_client.LLMBudgetExceeded("per-request cap")
+            return real_call(*args, **kwargs)
+
+        monkeypatch.setattr(app_mod.llm_client, "_call", gated)
+
+    body = _post(f"check {MEMBER_ID}").json()
+
+    assert body["llm_egress"] is expected_egress
+    if failure == "bearer-fail-closed":
+        assert body["reason"] == "model_failure"
+    else:
+        assert body["reason"] == "spend_stop"
+    assert body["assistant"] == "degraded"
 
 
 # --- a turn with nothing to decide does not buy a model call ----------------
@@ -540,8 +649,12 @@ def test_the_model_is_called_exactly_when_the_status_leaves_it_a_choice(
     body = _post(message).json()
 
     assert body["status"] == status
-    # Exact counts, not "not one": two calls for one turn is also a defect.
-    assert len(fake_llm) == (1 if expect_model_call else 0), (
+    # Exact counts, not "not any": the agent path pays exactly TWO model calls per
+    # turn (model₁ picks the topic, model₂ the selection — SPEC-22's bound), so
+    # three for one turn is a defect and so is one. Re-pinned from 1 with the seam
+    # (eligibility-assistant-D-40: the single-prompt assertions re-pin the two-call
+    # payloads).
+    assert len(fake_llm) == (2 if expect_model_call else 0), (
         f"{status}: wrong number of model calls"
     )
     assert body["llm_egress"] is expect_model_call
@@ -611,7 +724,7 @@ def test_a_local_refusal_does_not_re_spend_the_payer_on_retry_of_a_known_id(
     # repeated-PHI-call symptom the old mapping produced under a persistent
     # Bedrock misconfiguration.
     monkeypatch.setattr(
-        app_mod.llm_client, "complete_structured", _raiser("LLMConfigError", False)
+        app_mod.llm_client, "_call", _raiser("LLMConfigError", False)
     )
 
     first = _post(f"check {MEMBER_ID}").json()
@@ -721,7 +834,23 @@ def test_catalog_copy_is_clinical_term_free(key):
     assert not instructions_tests._CLINICAL_TERMS.search(visit_templates.CATALOG[key])
 
 
-@pytest.mark.parametrize("status", ["active", "inactive", "unknown", "pending"])
+@pytest.mark.parametrize(
+    "status",
+    [
+        "active",
+        "inactive",
+        "unknown",
+        "pending",
+        # eligibility-assistant: the six outcome-keyed sentences the turn added
+        # (SPEC-13/15/16/42) go through the same screen as the original four.
+        "unavailable",
+        "conflict",
+        "refuse_definitive",
+        "refuse",
+        "stop",
+        "care_first",
+    ],
+)
 def test_every_verdict_line_is_clinical_term_free(status):
     instructions_tests = load_module(
         "tests/test_ai_intake_instructions.py", "instructions_tests_for_screen2"
@@ -786,21 +915,27 @@ def test_two_ids_in_one_message_are_never_guessed_between(fake_llm, fake_eligibi
     assert body["eligibility"] is None
 
 
-def test_an_id_that_contradicts_the_visits_confirmed_id_asks_first(
+def test_an_id_that_contradicts_the_visits_confirmed_id_is_refused(
     fake_llm, fake_eligibility
 ):
     # Silently switching subjects mid-visit would re-attribute every later turn.
+    # Re-pointed with its subject (eligibility-assistant-D-73, owner 2026-08-27):
+    # under eligibility-assistant-D-50 a recognised id that differs from the visit's
+    # confirmed one is a cross-patient REFUSAL decided before intent derivation, not
+    # an "ambiguous, ask" turn. Renamed because the old name stated the replaced rule.
     facts = {"insurance_id": MEMBER_ID, "last_eligibility": dict(ACTIVE_VERDICT)}
 
     r = _post("actually try BCBS4471", facts=facts)
 
     assert fake_eligibility == []
     body = r.json()
-    assert body["status"] == "ambiguous_id"
+    assert body["outcome"] == "refuse"
+    assert body["reason"] == "cross_patient"
+    assert body["mode"] == "refuse"
+    assert [c["document_id"] for c in body["citations"]] == ["DOC-SYN-PRIVACY-FD"]
     # The stored verdict describes a DIFFERENT subject and must not be restated.
     verdict_sentence = body["reply"].split("\n")[0]
     assert "ACTIVE" not in verdict_sentence.upper()
-    assert "Confirm which member ID" in body["reply"]
     assert body["eligibility"] is None, "no check ran this turn"
     assert body["facts"]["insurance_id"] == MEMBER_ID  # unchanged
 
@@ -863,11 +998,16 @@ def test_a_genuinely_different_id_still_contradicts_in_lower_case(
     fake_llm, fake_eligibility
 ):
     # Case folding must not soften the contradiction rule it runs alongside.
+    # The consequence moved with its subject (eligibility-assistant-D-73): a
+    # contradicting id now refuses (eligibility-assistant-D-50) instead of asking.
     facts = {"insurance_id": MEMBER_ID, "last_eligibility": dict(ACTIVE_VERDICT)}
 
     body = _post("actually try bcbs4471", facts=facts).json()
 
-    assert body["status"] == "ambiguous_id"
+    assert body["outcome"] == "refuse"
+    assert body["reason"] == "cross_patient"
+    assert body["mode"] == "refuse"
+    assert [c["document_id"] for c in body["citations"]] == ["DOC-SYN-PRIVACY-FD"]
     assert fake_eligibility == []
     assert body["facts"]["insurance_id"] == MEMBER_ID
 
@@ -1348,14 +1488,19 @@ def test_a_fresh_verdict_with_no_id_on_file_does_not_suppress_the_first_lookup(
 
 
 def test_freshness_does_not_soften_the_contradiction_rule(fake_llm, fake_eligibility):
-    # A DIFFERENT id is still ambiguous however fresh the stored verdict is —
-    # reuse must not become a path that answers about the wrong subject.
+    # A DIFFERENT id still contradicts however fresh the stored verdict is —
+    # reuse must not become a path that answers about the wrong subject. The
+    # consequence moved with its subject (eligibility-assistant-D-73): refusal.
     facts = {"insurance_id": MEMBER_ID, "last_eligibility": _observed(ACTIVE_VERDICT)}
 
     body = _post("actually try BCBS4471", facts=facts).json()
 
     assert fake_eligibility == []
-    assert body["status"] == "ambiguous_id"
+    assert body["outcome"] == "refuse"
+    assert body["reason"] == "cross_patient"
+    assert body["mode"] == "refuse"
+    assert [c["document_id"] for c in body["citations"]] == ["DOC-SYN-PRIVACY-FD"]
+    # The stored ACTIVE verdict is not restated in the verdict line.
     assert "ACTIVE" not in body["reply"].split("\n")[0].upper()
     assert body["eligibility"] is None
 
@@ -1525,9 +1670,30 @@ def test_the_log_says_whether_a_payer_was_asked_on_this_turn(
         _post(f"recheck {MEMBER_ID}", facts=facts)
         rechecked = _turn_meta()
 
-    assert reused == {
+    # eligibility-assistant: the line gains closed values (SPEC-33 mode, the D-19
+    # reason, the outcome, the model-call count, the correlation id). The CLOSURE
+    # is the point of this assertion, not the four original values: rule 5 of
+    # docs/phi-logging-policy.md is "adding a field means adding it here on
+    # purpose", and only exact key-set equality makes a sixth field redden a test.
+    # A projection over a fixed key list would let one in silently.
+    assert set(reused) == {
+        "intent", "eligibility_status", "turn_count", "checked",
+        "mode", "outcome", "model_calls", "correlation_id",
+    }
+    # `reason` is ABSENT, not null — schemas.visit_chat_log_metadata omits a value
+    # a caller does not have rather than filling five columns that would read as
+    # "we measured this and it was nothing". A clean reuse turn has no reason.
+    assert "reason" not in reused
+    # The four original keys and their meanings are unchanged.
+    assert {key: reused[key] for key in ("intent", "eligibility_status", "turn_count", "checked")} == {
         "intent": "ask_status", "eligibility_status": "active", "turn_count": 0, "checked": False
     }
+    assert reused["mode"] in ("real", "fixture")
+    assert reused["outcome"] == "active"
+    assert reused["model_calls"] == 2
+    # Structural, not closed: pinned by SHAPE so a PHI-bearing string cannot take
+    # this key's place (UUIDv4, the one non-enumerable value on the line).
+    assert uuid.UUID(reused["correlation_id"]).version == 4
     assert rechecked["checked"] is True
     # Still metadata only.
     assert MEMBER_ID not in caplog.text
