@@ -1680,9 +1680,6 @@ def test_the_log_says_whether_a_payer_was_asked_on_this_turn(
         _post(f"recheck {MEMBER_ID}", facts=facts)
         rechecked = _turn_meta()
 
-    # eligibility-assistant: the line gains five closed values (SPEC-33 mode, the
-    # D-19 reason, the outcome, the model-call count, the correlation id). The four
-    # original keys and their meanings are unchanged, which is what this asserts.
     # eligibility-assistant: the line gains closed values (SPEC-33 mode, the D-19
     # reason, the outcome, the model-call count, the correlation id). The CLOSURE
     # is the point of this assertion, not the four original values: rule 5 of
