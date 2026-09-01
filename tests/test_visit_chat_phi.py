@@ -296,6 +296,13 @@ def test_the_prompt_is_exactly_the_deterministic_build(rig):
     TWO model calls, so both payloads are pinned — model₁'s user message to
     `_build_model1_prompt` and model₂'s injected message to
     `_build_model2_message` — a stronger form of the same rule.
+
+    Re-closed at impl-gate round 3 (the class sweep's site S9): the re-pin had
+    dropped model₂ from equality to `in`, which left the rest of that payload
+    unpinned while this docstring still claimed byte-identity. Every surface of
+    both payloads is now pinned — text blocks in order, the system prompt, the
+    tool call, the tool result, and the top-level key set — so the claim above
+    is what the assertions below actually check.
     """
     _chat(ADVERSARIAL_MESSAGE)
 
@@ -317,10 +324,6 @@ def test_the_prompt_is_exactly_the_deterministic_build(rig):
     expected_model1 = ai_app._build_model1_prompt(
         req, ai_schemas.VisitIntent.check_eligibility, 0
     )
-    model1_kwargs = rig.prompts[0]
-    model1_texts = _texts(model1_kwargs)
-    assert model1_texts and model1_texts[0] == expected_model1
-
     rows = []  # the adversarial turn retrieves nothing for these axes
     for message in rig.prompts[1]["messages"]:
         content = message["content"]
@@ -335,7 +338,45 @@ def test_the_prompt_is_exactly_the_deterministic_build(rig):
     expected_model2 = ai_app._build_model2_message(
         "active", {"status": "active", "payer": "edi.example.com"}, rows, req
     )
-    assert expected_model2 in _texts(rig.prompts[1])
+    # EQUALITY, not membership (impl-gate round 3, the class sweep's site S9). A
+    # containment check leaves the rest of the payload unpinned, which is exactly
+    # the "reaching the payload by ANY route" the docstring above rules out: the
+    # claim is that these payloads are pure functions of closed inputs, so every
+    # text-bearing surface of BOTH calls is pinned to its builder, in order.
+    assert _texts(rig.prompts[0]) == [expected_model1]
+    assert _texts(rig.prompts[1]) == [expected_model1, expected_model2]
+    # The non-text blocks, so nothing free-form can hide in them either. The system
+    # prompt is one module constant shared by both calls — not derived from the
+    # request at all; the tool call is model₁'s own bounded choice, a closed enum
+    # value and nothing else; the tool result is the retriever's rows as JSON.
+    assert rig.prompts[0]["system"] == ai_app.agent_turn.SYSTEM_PROMPT
+    assert rig.prompts[1]["system"] == ai_app.agent_turn.SYSTEM_PROMPT
+    tool_uses = [
+        block
+        for message in rig.prompts[1]["messages"]
+        if isinstance(message["content"], list)
+        for block in message["content"]
+        if isinstance(block, dict) and block.get("type") == "tool_use"
+    ]
+    tool_results = [
+        block
+        for message in rig.prompts[1]["messages"]
+        if isinstance(message["content"], list)
+        for block in message["content"]
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    ]
+    assert len(tool_uses) == 1 and len(tool_results) == 1
+    assert tool_uses[0]["name"] == "policy_lookup"
+    assert set(tool_uses[0]["input"]) == {"topic"}
+    assert tool_uses[0]["input"]["topic"] in ai_app.policy_tool.TOPICS
+    # This adversarial turn retrieves nothing for its axes, so the tool result is
+    # the empty list — pinned exactly, not merely "carries no PHI".
+    assert tool_results[0]["content"] == "[]"
+    assert rows == []
+    # Nothing else in either payload is a string the clerk could have influenced:
+    # the remaining keys are the model id, the token cap, and the closed tool schema.
+    for kwargs in (rig.prompts[0], rig.prompts[1]):
+        assert set(kwargs) == {"extra_body", "max_tokens", "messages", "model", "system"}
 
 
 # --- logs -------------------------------------------------------------------
