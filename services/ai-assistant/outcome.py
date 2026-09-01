@@ -200,8 +200,7 @@ def applicability_mismatch(rows, *, product: str, state: str) -> bool:
     if not any(policy_index.tier(row.id) <= _APPLICABLE_TIER for row in rows):
         return True
     if product == "unconfirmed" or state == "unconfirmed":
-        entries = policy_index._current().entries
-        if all(entries[row.id].needs_product_confirmation for row in rows):
+        if all(policy_index.needs_product_confirmation(row.id) for row in rows):
             return True
     return False
 

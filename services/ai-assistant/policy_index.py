@@ -64,6 +64,7 @@ __all__ = [
     "categories",
     "lookup",
     "fetch_by_id",
+    "needs_product_confirmation",
     "tier",
     "rank",
     "default_ranker",
@@ -446,6 +447,25 @@ def _filter(topic: str, payer: str, product: str, state: str, index: Optional[In
         if not _matches(entry.states, state):
             continue
         yield row
+
+
+def needs_product_confirmation(document: Union[str, Row]) -> bool:
+    """Whether a row's manifest entry is flagged as needing product confirmation.
+
+    A named accessor rather than a reach into the index's `entries` map, which is
+    deliberately outside `__all__` (`turn` impl-gate round 3 f5). The applicability
+    check in `outcome.py` asks exactly this one manifest question of a row, so the
+    corpus module answers it instead of handing out its internals.
+    """
+    # Duck-typed on `.id`, not `isinstance(document, Row)`: the rig stands rows in
+    # as `SimpleNamespace(id=...)`, which is what the `entries[row.id]` this replaces
+    # accepted, and an accessor that is stricter than the reach it replaces is a
+    # behaviour change wearing a refactor's clothes.
+    doc_id = getattr(document, "id", document)
+    entry = _current().entries.get(doc_id)
+    if entry is None:
+        raise ValueError("unknown document id")
+    return bool(entry.needs_product_confirmation)
 
 
 def tier(document: Union[str, Mapping[str, str], Row]) -> int:
