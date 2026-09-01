@@ -377,7 +377,7 @@ def test_invalid_ids_never_reach_a_log_record(fake_llm, fake_eligibility, caplog
 
     assert "Jane Doe" not in caplog.text
     assert "pay cash" not in caplog.text
-    assert "decision gate" in caplog.text
+    assert "selection gate" in caplog.text
 
 
 # --- an unconfirmed check is never a denial --------------------------------

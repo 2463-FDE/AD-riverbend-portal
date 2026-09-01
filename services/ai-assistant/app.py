@@ -758,7 +758,7 @@ def _validated_selection(decision, rows, req: VisitChatRequest, concluded) -> tu
     uncited = not decision.citation_ids and concluded not in outcome.NO_CITATION_OUTCOMES
     if stray_citations or stray_actions or missing or uncited:
         log.warning(
-            "visit-chat decision gate: %d/%d citation ids outside the turn's "
+            "visit-chat selection gate: %d/%d citation ids outside the turn's "
             "retrieved set (indexes=%s), %d/%d action ids unjustified by the outcome "
             "(indexes=%s), %d required ids missing, uncited non-refusal=%s; taking "
             "the deterministic fallback",
