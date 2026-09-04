@@ -97,9 +97,7 @@ Return, in order:
   owns" are abstractions, not classes — a finding that matches only at that
   level, or that anchors on text a disposition wrote since the previous round,
   is `new` (a regression of that disposition), not `class-repeat`. Name the
-  matched finding and state both halves of the match (2026-09-03,
-  eligibility-assistant `trace` / `lifecycle` r10: every finding was tagged
-  `class-repeat` under the broad reading, most on text one round old); `new` — the anchored
+  matched finding and state both halves of the match; `new` — the anchored
   text is on a `Sites changed:` list of a disposition since the previous round,
   **or the round is round 1**, **or the tag cannot be settled from (a) and (b)**
   (no recorded hash, a disposition with no `Sites changed:` list, an anchor the

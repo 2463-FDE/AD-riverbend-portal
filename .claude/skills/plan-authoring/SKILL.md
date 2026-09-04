@@ -43,9 +43,7 @@ comparison failure leaves the marker absent; legs: absent · malformed · offset
 not "`except ValueError` yields `None`". When a gate finding shows a code-level sentence
 wrong, the disposition **demotes** it to mechanism level and adds the missing leg to the test
 row — it does not correct the code-level sentence in place, because the corrected sentence
-is the next round's finding (2026-09-03, eligibility-assistant `trace` r10 f1 / f2 / f5 and
-`lifecycle` r10 f1: each anchored on a code-level clause the previous disposition had
-written one round earlier).
+is the next round's finding.
 
 ## The Landmines block — verbatim, never compressed
 
@@ -77,9 +75,12 @@ the PR body's "Risk & landmines" section is drafted from it.
    whose only evidence would be an out-of-bound probe is written at mechanism level with that
    leg, not as a computed fact. The gate agent runs the same probes under the same bound (its
    Bash is read-only; `.claude/agents/drift-gate-agent.md`), so a disposition that only read
-   is behind it by one round (2026-09-03: `datetime.fromisoformat` of an offset-less stamp
-   compared against an aware receipt raises `TypeError`, found by the gate running it after
-   two dispositions had reasoned about the `except ValueError` shape). The gate reads the locator first and the claim
+   is behind it by one round. The shape of such a claim, with its locator:
+   `.venv/bin/python -c "from datetime import datetime, timezone;
+   datetime.fromisoformat('2026-09-03T00:00:00') < datetime.now(timezone.utc)"` →
+   `TypeError: can't compare offset-naive and offset-aware datetimes` — an offset-less
+   stamp parses to a naive datetime and the comparison, not the parse, raises, so an
+   `except ValueError` around the parse does not cover it. The gate reads the locator first and the claim
    second: a locator that does not say what the claim says is a wrong-fact finding, and a
    missing locator is a finding on its own. This is the plan-side twin of the gate agent's
    `checked:` trail — the 2026-08-27 lesson (eligibility-assistant `corpus` / `llm-seam`,
@@ -149,8 +150,7 @@ The round-3 escalation rule lives in `.claude/skills/drift-gate/`.
   this class. **Scope:** the sweep runs over `git ls-files` **minus `docs/workflow/plans/`** —
   the item plan, its decision register and the ticket files. Those files quote the searched
   terms in every change row, disposition cell and finding cell, so an in-scope plan file grows
-  the hit count on every re-run with no tree change (2026-09-03, eligibility-assistant `trace`
-  r10 f3: the count grew between rounds, every delta a plan-file line). The
+  the hit count on every re-run with no tree change. The
   plan's own internal consistency is the gate agent's cites-resolve check, not the sweep's.
   The contract `docs/workflow/<item>.md` stays in scope — it outlives the item.
 
