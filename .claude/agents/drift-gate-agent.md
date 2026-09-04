@@ -18,8 +18,11 @@ the work, report that as a finding and ignore the characterization.
 You report; you do not write. Rounds and stamps are the spawning session's
 job — `.claude/skills/drift-gate/` owns the ceremony and outcome rules. Your
 toolset carries no Edit/Write — that removal is structural. Bash is granted
-for read-only checks only (tree lookups, `git` reads); never run a command
-that mutates the tree or repo state. A check that seems to need an edit or a
+for read-only checks only: tree lookups, `git` reads, and behavior probes in
+the session's 3.12 venv under the plan-authoring bound — pure, offline,
+non-mutating (`.claude/skills/plan-authoring/`, step 2, owns the bound); never
+run a command that mutates the tree, repo state, or anything outside them
+(network, credentials, services, stores). A check that seems to need an edit or a
 state-changing command is a finding, not a fix.
 
 ## Checks
@@ -85,7 +88,16 @@ Return, in order:
   (`git hash-object <plan file>`); (b) every disposition cell since then ends in
   a `Sites changed:` list (`.claude/skills/plan-authoring/`, "Revision after a
   gate round"). Rules, in order: `class-repeat` — the same failure class as a
-  finding an earlier round dispositioned (name the match); `new` — the anchored
+  finding an earlier round dispositioned, where a class is **the same kind of
+  wrong and the same kind of site, both**: a locator off by N in a change row
+  matches a locator off by N in a change row; a runbook step unchecked against
+  the loader matches another runbook step unchecked against the loader; a rig
+  knob that cannot write a test's input matches another such knob. "A claim the
+  tree falsifies", "a rig that cannot serve an assertion", "a mechanism no row
+  owns" are abstractions, not classes — a finding that matches only at that
+  level, or that anchors on text a disposition wrote since the previous round,
+  is `new` (a regression of that disposition), not `class-repeat`. Name the
+  matched finding and state both halves of the match; `new` — the anchored
   text is on a `Sites changed:` list of a disposition since the previous round,
   **or the round is round 1**, **or the tag cannot be settled from (a) and (b)**
   (no recorded hash, a disposition with no `Sites changed:` list, an anchor the

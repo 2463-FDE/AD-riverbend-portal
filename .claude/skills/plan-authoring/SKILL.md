@@ -34,6 +34,17 @@ No narrative, no quoted code, no embedded DDL — the diff is the DDL. A code sn
 justified only where the exact content is load-bearing and nothing else can carry it (a
 probe command, a config block that is the spec of itself).
 
+**Fidelity: mechanism and test legs, not code.** A change row names what the mechanism
+does; a test row names the legs that prove it. Neither spells how the code will be shaped —
+no exception clauses (`try` / `except X`), no field list a fake or a record "carries", no
+statement order inside a function, no branch structure. Those are stage-4 facts: a red test
+proves or falsifies each in one run, and prose cannot be executed. Write "any parse or
+comparison failure leaves the marker absent; legs: absent · malformed · offset-less · future",
+not "`except ValueError` yields `None`". When a gate finding shows a code-level sentence
+wrong, the disposition **demotes** it to mechanism level and adds the missing leg to the test
+row — it does not correct the code-level sentence in place, because the corrected sentence
+is the next round's finding.
+
 ## The Landmines block — verbatim, never compressed
 
 The one deliberate exception to deltas-only: the landmine-approval block is written as
@@ -53,12 +64,31 @@ the PR body's "Risk & landmines" section is drafted from it.
    client package this session — never from memory or convention — and the sentence that
    states it carries where it was read: `path:line` for a tree fact, the command and its
    output for a computed fact, the package path for a client-package fact. **A claim
-   without a locator is not writable.** The gate reads the locator first and the claim
+   without a locator is not writable.** **A claim about behavior is a computed fact, and its
+   locator is the run:** what a stdlib, SDK or package call returns, raises, accepts or
+   serialises is read by executing it in the session's 3.12 venv (`.venv/bin/python -c …`)
+   and recording the command and its output — reading the source is not running it, and a
+   version pin is not an observation. **The probe is bounded:** pure, offline, non-mutating
+   calls only — no network, no credentials read or sent, no file, repo, service or store
+   write. A behavior that shows only under a side effect (a request sent, a row written, a
+   key consumed) is observed through a test leg in the test row, never a live probe; a claim
+   whose only evidence would be an out-of-bound probe is written at mechanism level with that
+   leg, not as a computed fact. The gate agent runs the same probes under the same bound (its
+   Bash is read-only; `.claude/agents/drift-gate-agent.md`), so a disposition that only read
+   is behind it by one round. The shape of such a claim, with its locator:
+   `.venv/bin/python -c "from datetime import datetime, timezone;
+   datetime.fromisoformat('2026-09-03T00:00:00') < datetime.now(timezone.utc)"` →
+   `TypeError: can't compare offset-naive and offset-aware datetimes` — an offset-less
+   stamp parses to a naive datetime and the comparison, not the parse, raises, so an
+   `except ValueError` around the parse does not cover it. The gate reads the locator first and the claim
    second: a locator that does not say what the claim says is a wrong-fact finding, and a
    missing locator is a finding on its own. This is the plan-side twin of the gate agent's
    `checked:` trail — the 2026-08-27 lesson (eligibility-assistant `corpus` / `llm-seam`,
-   three rounds each): every substantive finding across six rounds was a tree or package
-   fact the plan asserted and the gate re-derived.
+   three rounds each; the ticket files were deleted at delivery and read from history:
+   `git show a93f7c4^:docs/workflow/plans/eligibility-assistant/corpus.md`,
+   `git show 8fa44ee^:docs/workflow/plans/eligibility-assistant/llm-seam.md`): every
+   substantive finding across six rounds was a tree or package fact the plan asserted and
+   the gate re-derived.
 3. **Fill the spec's planned test names** where planning sharpens them; the check column
    is the test list — the plan does not restate it.
 4. **Run the four checks** (below), then show the owner; the plan goes to the gate.
@@ -82,8 +112,9 @@ the four checks, and leave the plan at `Status: DRAFT` for a full fresh-session 
 **A disposition is a plan.** One that adds or changes a mechanism — a test, a cap, a pin,
 a constant, a change row — is written under the fact-trail rule (step 2) and walks the
 four checks over the fix before the plan goes back, the self-consistency check first: the
-plan's own new artifact must do what the disposition says it does (2026-08-27 lesson — the
-round-2 fixes on both eligibility-assistant tickets were the round-3 substantive findings).
+plan's own new artifact must do what the disposition says it does (2026-08-27 lesson, the
+`corpus` / `llm-seam` records located at step 2 above — the round-2 fixes on both tickets
+were the round-3 substantive findings).
 **Every disposition cell that changes text ends in a `Sites changed:` list** — file and
 row / section / decision ID for each edit the disposition made, including edits to sibling
 ticket files and the decision register. This list, with the plan-text hash the gate
@@ -94,7 +125,11 @@ When a finding repeats a class an earlier round already dispositioned, close the
 not the instance: run the sweep for further sites of the same class and **enumerate the
 sites checked in the disposition cell** — file and row, each with its outcome — never a
 scope phrase ("every clause of every row"); a scope phrase is a declared sweep, not a run
-one (the drift-gate skill holds the matching round rule).
+one (the drift-gate skill holds the matching round rule). A class is the same kind of
+wrong **and** the same kind of site — the definition is the gate agent's
+(`.claude/agents/drift-gate-agent.md`, origin tags); a finding on text the previous
+disposition wrote is a regression of that disposition, tagged `new`, and owes the fix, not a
+sweep.
 The round-3 escalation rule lives in `.claude/skills/drift-gate/`.
 
 ## Four checks (lessons of e1 and e6)
@@ -115,8 +150,13 @@ The round-3 escalation rule lives in `.claude/skills/drift-gate/`.
   claims stay verbatim, per the fix-wrong-claims rule in the `CLAUDE.md` preamble) or an
   explicit out-of-scope entry. The one exemption is `README.md` itself — its false
   claims are human-gated (TODO-12); the TODO-12 row in `docs/todo.md` is swept like any
-  other. This check exists because e6 gate rounds 2–4 each found one missed registry of
-  this class.
+  other. This check exists because e6 gate rounds 2–4 (`docs/workflow/e6.md` § Findings,
+  "Gate — round 2" through "round 4") each found one missed registry of this class. **Scope:** the sweep runs over `git ls-files` **minus `docs/workflow/plans/`** —
+  the item plan, its decision register and the ticket files. Those files quote the searched
+  terms in every change row, disposition cell and finding cell, so an in-scope plan file grows
+  the hit count on every re-run with no tree change. The
+  plan's own internal consistency is the gate agent's cites-resolve check, not the sweep's.
+  The contract `docs/workflow/<item>.md` stays in scope — it outlives the item.
 
 ## Template (the section; a ticket file carries the three header lines first)
 

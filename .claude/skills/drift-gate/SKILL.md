@@ -16,9 +16,9 @@ unchanged, per the pipeline). A ticket gate checks the SPEC rows its `Scope:` li
 names, plus that every frozen row is owned by some ticket. Rounds count per ticket file. The round log — not chat history or session memory — carries findings between
 sessions; item state must always be derivable from the two files alone.
 
-The mechanism is codified from the e1 prototype run (2026-08-06): a fresh-context read of
-the plan against the spec caught real gaps the authoring session could not see. The fresh
-context is the mechanism, not a nicety.
+The mechanism is codified from the e1 prototype run (`docs/workflow/e1/`, 2026-08-06): a
+fresh-context read of the plan against the spec caught real gaps the authoring session
+could not see. The fresh context is the mechanism, not a nicety.
 
 ## Two hard rules
 
@@ -76,14 +76,18 @@ stamp.
   not a raw count. The tag rides inside the cell and the tally inside the `checked:`
   line; the README round shape gains nothing new.
 - **Repeat of a dispositioned class → the class goes back, not the instance.** When a
-  finding is the same failure class as one dispositioned in an earlier round, the round
+  finding is the same failure class as one dispositioned in an earlier round — **the same
+  kind of wrong and the same kind of site, both** (the agent's definition, below; a match at
+  the abstraction "a claim the tree falsifies" is not a class, and a finding on text the
+  previous disposition wrote is `new`) — the round
   entry names the match, and stage 3 must close the class: the disposition cell
   **enumerates the sites the sweep checked — file and row, each with its outcome** — not
   just the cited site's fix; a scope phrase ("every clause of every row") is a declared
   sweep, not a run one, and the gate reads it as the class still open (one rule, stated
   in `.claude/skills/plan-authoring/`, which owns the sweep mechanics). A disposition
   that fixes only the instance leaves the class open for the next round to hunt one site
-  at a time — the e6 rounds-2–4 lesson.
+  at a time — the e6 rounds-2–4 lesson (`docs/workflow/e6.md` § Findings, "Gate — round 2"
+  through "round 4").
 - **Clean → stamp.** Set the Plan section to `Status: GATED <date>`, advance the
   contract-file header `Status:` line (ticket: its `Status:` line + table row), and close
   with a dry round: one `checked:` line naming the scope
@@ -98,8 +102,11 @@ finding: accept as a named residual, overrule, or change the spec (stage 2, expl
 decision). Each call is recorded in that finding's disposition cell; the next gate run
 honors recorded owner decisions rather than re-flagging them. A third (or later) round
 whose open findings are all `pre-existing` is an ordinary round — back to stage 3, no
-owner adjudication — because the plan did not regress, the read widened (2026-08-27: the
-rule as first written fired on rounds where most open findings had been in the text since
+owner adjudication — because the plan did not regress, the read widened (2026-08-27,
+eligibility-assistant `corpus` / `llm-seam` gate rounds, ticket files deleted at delivery:
+`git show a93f7c4^:docs/workflow/plans/eligibility-assistant/corpus.md`,
+`git show 8fa44ee^:docs/workflow/plans/eligibility-assistant/llm-seam.md` — the rule as
+first written fired on rounds where most open findings had been in the text since
 round 1). The origin tag is the agent's derivation from the record, not stage 3's call —
 and where the record cannot settle it, the tag is `new` and the rule fires: the stop
 condition fails toward escalation, never toward silence.
