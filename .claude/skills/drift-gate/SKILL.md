@@ -17,9 +17,8 @@ names, plus that every frozen row is owned by some ticket. Rounds count per tick
 sessions; item state must always be derivable from the two files alone.
 
 The mechanism is codified from the e1 prototype run (`docs/workflow/e1/`, 2026-08-06): a
-fresh-context read of
-the plan against the spec caught real gaps the authoring session could not see. The fresh
-context is the mechanism, not a nicety.
+fresh-context read of the plan against the spec caught real gaps the authoring session
+could not see. The fresh context is the mechanism, not a nicety.
 
 ## Two hard rules
 
