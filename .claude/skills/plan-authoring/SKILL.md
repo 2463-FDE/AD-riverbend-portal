@@ -44,8 +44,8 @@ not "`except ValueError` yields `None`". When a gate finding shows a code-level 
 wrong, the disposition **demotes** it to mechanism level and adds the missing leg to the test
 row — it does not correct the code-level sentence in place, because the corrected sentence
 is the next round's finding (2026-09-03, eligibility-assistant `trace` r10 f1 / f2 / f5 and
-`lifecycle` r10 f1: six of nine findings anchored on text one round old, each a code-level
-clause the previous disposition had written).
+`lifecycle` r10 f1: each anchored on a code-level clause the previous disposition had
+written one round earlier).
 
 ## The Landmines block — verbatim, never compressed
 
@@ -70,7 +70,13 @@ the PR body's "Risk & landmines" section is drafted from it.
    locator is the run:** what a stdlib, SDK or package call returns, raises, accepts or
    serialises is read by executing it in the session's 3.12 venv (`.venv/bin/python -c …`)
    and recording the command and its output — reading the source is not running it, and a
-   version pin is not an observation. The gate agent executes; a disposition that only read
+   version pin is not an observation. **The probe is bounded:** pure, offline, non-mutating
+   calls only — no network, no credentials read or sent, no file, repo, service or store
+   write. A behavior that shows only under a side effect (a request sent, a row written, a
+   key consumed) is observed through a test leg in the test row, never a live probe; a claim
+   whose only evidence would be an out-of-bound probe is written at mechanism level with that
+   leg, not as a computed fact. The gate agent runs the same probes under the same bound (its
+   Bash is read-only; `.claude/agents/drift-gate-agent.md`), so a disposition that only read
    is behind it by one round (2026-09-03: `datetime.fromisoformat` of an offset-less stamp
    compared against an aware receipt raises `TypeError`, found by the gate running it after
    two dispositions had reasoned about the `except ValueError` shape). The gate reads the locator first and the claim
@@ -144,7 +150,7 @@ The round-3 escalation rule lives in `.claude/skills/drift-gate/`.
   the item plan, its decision register and the ticket files. Those files quote the searched
   terms in every change row, disposition cell and finding cell, so an in-scope plan file grows
   the hit count on every re-run with no tree change (2026-09-03, eligibility-assistant `trace`
-  r10 f3: 52 hits / 27 files → 57 / 28 between rounds, every delta a plan-file line). The
+  r10 f3: the count grew between rounds, every delta a plan-file line). The
   plan's own internal consistency is the gate agent's cites-resolve check, not the sweep's.
   The contract `docs/workflow/<item>.md` stays in scope — it outlives the item.
 

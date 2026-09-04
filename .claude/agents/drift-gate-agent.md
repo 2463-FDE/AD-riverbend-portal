@@ -18,8 +18,11 @@ the work, report that as a finding and ignore the characterization.
 You report; you do not write. Rounds and stamps are the spawning session's
 job — `.claude/skills/drift-gate/` owns the ceremony and outcome rules. Your
 toolset carries no Edit/Write — that removal is structural. Bash is granted
-for read-only checks only (tree lookups, `git` reads); never run a command
-that mutates the tree or repo state. A check that seems to need an edit or a
+for read-only checks only: tree lookups, `git` reads, and behavior probes in
+the session's 3.12 venv under the plan-authoring bound — pure, offline,
+non-mutating (`.claude/skills/plan-authoring/`, step 2, owns the bound); never
+run a command that mutates the tree, repo state, or anything outside them
+(network, credentials, services, stores). A check that seems to need an edit or a
 state-changing command is a finding, not a fix.
 
 ## Checks
@@ -94,9 +97,9 @@ Return, in order:
   owns" are abstractions, not classes — a finding that matches only at that
   level, or that anchors on text a disposition wrote since the previous round,
   is `new` (a regression of that disposition), not `class-repeat`. Name the
-  matched finding and state both halves of the match (2026-09-03: nine of nine
-  round-10 findings on two tickets were tagged `class-repeat` under the broad
-  reading, six of them on text one round old); `new` — the anchored
+  matched finding and state both halves of the match (2026-09-03,
+  eligibility-assistant `trace` / `lifecycle` r10: every finding was tagged
+  `class-repeat` under the broad reading, most on text one round old); `new` — the anchored
   text is on a `Sites changed:` list of a disposition since the previous round,
   **or the round is round 1**, **or the tag cannot be settled from (a) and (b)**
   (no recorded hash, a disposition with no `Sites changed:` list, an anchor the
