@@ -76,7 +76,10 @@ stamp.
   not a raw count. The tag rides inside the cell and the tally inside the `checked:`
   line; the README round shape gains nothing new.
 - **Repeat of a dispositioned class → the class goes back, not the instance.** When a
-  finding is the same failure class as one dispositioned in an earlier round, the round
+  finding is the same failure class as one dispositioned in an earlier round — **the same
+  kind of wrong and the same kind of site, both** (the agent's definition, below; a match at
+  the abstraction "a claim the tree falsifies" is not a class, and a finding on text the
+  previous disposition wrote is `new`, 2026-09-03) — the round
   entry names the match, and stage 3 must close the class: the disposition cell
   **enumerates the sites the sweep checked — file and row, each with its outcome** — not
   just the cited site's fix; a scope phrase ("every clause of every row") is a declared

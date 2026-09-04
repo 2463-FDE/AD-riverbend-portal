@@ -85,7 +85,18 @@ Return, in order:
   (`git hash-object <plan file>`); (b) every disposition cell since then ends in
   a `Sites changed:` list (`.claude/skills/plan-authoring/`, "Revision after a
   gate round"). Rules, in order: `class-repeat` — the same failure class as a
-  finding an earlier round dispositioned (name the match); `new` — the anchored
+  finding an earlier round dispositioned, where a class is **the same kind of
+  wrong and the same kind of site, both**: a locator off by N in a change row
+  matches a locator off by N in a change row; a runbook step unchecked against
+  the loader matches another runbook step unchecked against the loader; a rig
+  knob that cannot write a test's input matches another such knob. "A claim the
+  tree falsifies", "a rig that cannot serve an assertion", "a mechanism no row
+  owns" are abstractions, not classes — a finding that matches only at that
+  level, or that anchors on text a disposition wrote since the previous round,
+  is `new` (a regression of that disposition), not `class-repeat`. Name the
+  matched finding and state both halves of the match (2026-09-03: nine of nine
+  round-10 findings on two tickets were tagged `class-repeat` under the broad
+  reading, six of them on text one round old); `new` — the anchored
   text is on a `Sites changed:` list of a disposition since the previous round,
   **or the round is round 1**, **or the tag cannot be settled from (a) and (b)**
   (no recorded hash, a disposition with no `Sites changed:` list, an anchor the
