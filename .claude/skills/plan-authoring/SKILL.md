@@ -84,8 +84,11 @@ the PR body's "Risk & landmines" section is drafted from it.
    second: a locator that does not say what the claim says is a wrong-fact finding, and a
    missing locator is a finding on its own. This is the plan-side twin of the gate agent's
    `checked:` trail — the 2026-08-27 lesson (eligibility-assistant `corpus` / `llm-seam`,
-   three rounds each): every substantive finding across six rounds was a tree or package
-   fact the plan asserted and the gate re-derived.
+   three rounds each; the ticket files were deleted at delivery and read from history:
+   `git show a93f7c4^:docs/workflow/plans/eligibility-assistant/corpus.md`,
+   `git show 8fa44ee^:docs/workflow/plans/eligibility-assistant/llm-seam.md`): every
+   substantive finding across six rounds was a tree or package fact the plan asserted and
+   the gate re-derived.
 3. **Fill the spec's planned test names** where planning sharpens them; the check column
    is the test list — the plan does not restate it.
 4. **Run the four checks** (below), then show the owner; the plan goes to the gate.
@@ -109,8 +112,9 @@ the four checks, and leave the plan at `Status: DRAFT` for a full fresh-session 
 **A disposition is a plan.** One that adds or changes a mechanism — a test, a cap, a pin,
 a constant, a change row — is written under the fact-trail rule (step 2) and walks the
 four checks over the fix before the plan goes back, the self-consistency check first: the
-plan's own new artifact must do what the disposition says it does (2026-08-27 lesson — the
-round-2 fixes on both eligibility-assistant tickets were the round-3 substantive findings).
+plan's own new artifact must do what the disposition says it does (2026-08-27 lesson, the
+`corpus` / `llm-seam` records located at step 2 above — the round-2 fixes on both tickets
+were the round-3 substantive findings).
 **Every disposition cell that changes text ends in a `Sites changed:` list** — file and
 row / section / decision ID for each edit the disposition made, including edits to sibling
 ticket files and the decision register. This list, with the plan-text hash the gate
@@ -146,8 +150,8 @@ The round-3 escalation rule lives in `.claude/skills/drift-gate/`.
   claims stay verbatim, per the fix-wrong-claims rule in the `CLAUDE.md` preamble) or an
   explicit out-of-scope entry. The one exemption is `README.md` itself — its false
   claims are human-gated (TODO-12); the TODO-12 row in `docs/todo.md` is swept like any
-  other. This check exists because e6 gate rounds 2–4 each found one missed registry of
-  this class. **Scope:** the sweep runs over `git ls-files` **minus `docs/workflow/plans/`** —
+  other. This check exists because e6 gate rounds 2–4 (`docs/workflow/e6.md` § Findings,
+  "Gate — round 2" through "round 4") each found one missed registry of this class. **Scope:** the sweep runs over `git ls-files` **minus `docs/workflow/plans/`** —
   the item plan, its decision register and the ticket files. Those files quote the searched
   terms in every change row, disposition cell and finding cell, so an in-scope plan file grows
   the hit count on every re-run with no tree change. The
